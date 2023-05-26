@@ -83,7 +83,7 @@ public class KafkaBrokerConfigurationDiff extends AbstractJsonDiff {
     /**
      * @return  Returns true if the configuration can be updated dynamically
      */
-    protected boolean canBeUpdatedDynamically() {
+    public boolean canBeUpdatedDynamically() {
         boolean result = true;
         for (AlterConfigOp entry : brokerConfigDiff) {
             if (isEntryReadOnly(entry.configEntry())) {
