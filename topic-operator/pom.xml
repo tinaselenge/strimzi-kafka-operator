@@ -28,10 +28,6 @@
             <artifactId>api</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.github.spotbugs</groupId>
-            <artifactId>spotbugs-annotations</artifactId>
-        </dependency>
-        <dependency>
             <groupId>io.kroxylicious.testing</groupId>
             <artifactId>testing-api</artifactId>
         </dependency>
@@ -173,6 +169,11 @@
             <groupId>io.strimzi</groupId>
             <artifactId>certificate-manager</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
     
