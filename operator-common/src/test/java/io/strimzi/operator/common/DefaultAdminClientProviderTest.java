@@ -48,6 +48,7 @@ public class DefaultAdminClientProviderTest {
     @Test
     public void testCustomConfig() {
         Properties customConfig = new Properties();
+        customConfig.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "my-kafka:9092");
         customConfig.setProperty(AdminClientConfig.RETRIES_CONFIG, "5"); // Override a value we have default for
         customConfig.setProperty(AdminClientConfig.RECONNECT_BACKOFF_MS_CONFIG, "13000"); // Override a value we do not use
 
