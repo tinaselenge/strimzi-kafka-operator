@@ -24,7 +24,6 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
@@ -78,7 +77,7 @@ class RackRolling {
 
     /** Return a future that completes when all of the given futures complete */
     @SuppressWarnings("rawtypes")
-    private static CompletableFuture<Void> allOf(List<? extends CompletableFuture<? extends Object>> futures) {
+    private static CompletableFuture<Void> allOf(List<? extends CompletableFuture<?>> futures) {
         CompletableFuture[] ts = futures.toArray(new CompletableFuture[0]);
         return CompletableFuture.allOf(ts);
     }
@@ -269,11 +268,6 @@ class RackRolling {
      * contain no replicas in common.
      */
     public static List<Set<Server>> cells(Collection<Server> brokers) {
-//        if (brokers.stream().allMatch(b -> b.rack != -1)) {
-//            // we know the racks of all brokers
-//        } else {
-//            // we don't know the racks of some brokers => can't do rack-wise rolling
-//        }
 
         // find brokers that are individually rollable
         var rollable = brokers.stream().collect(Collectors.toCollection(() ->
@@ -288,13 +282,6 @@ class RackRolling {
             var sorted = disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
             return sorted;
         }
-    }
-
-
-
-    /** Determine whether the given broker is rollable without affecting partition availability */
-    static boolean isRollable(Server broker, Map<String, Integer> minIrs) {
-        return true; // TODO
     }
 
     private static int activeController(Admin admin) throws InterruptedException, ExecutionException {
@@ -322,7 +309,7 @@ class RackRolling {
         return sorted.get(0);
     }
 
-    private static Set<Server> nextBatch(Admin admin) throws ExecutionException, InterruptedException {
+    private static Set<Server> nextBatch(Admin admin, Set<Integer> brokersNeedingRestart) throws ExecutionException, InterruptedException {
 
 
         // TODO figure out this KRaft stuff
@@ -333,10 +320,13 @@ class RackRolling {
 //                    return new Server(controllerId, null, Set.of(new Replica("::__cluster_metadata", 0, true)));
 //                }).toList();
 
+        // Get all the topics in the cluster
         Collection<TopicListing> topicListings = admin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get();
 
-        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
         // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
+        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
+
+        // Convert the TopicDescriptions to the Server and Replicas model
         Stream<TopicDescription> topicDescriptions = describeTopics(admin, topicIds);
         Map<Integer, Server> servers = new HashMap<>();
         topicDescriptions.forEach(topicDescription -> {
@@ -352,9 +342,18 @@ class RackRolling {
             });
         });
 
+        // TODO somewhere in here we need to take account of partition reassignments
+        //      e.g. if a partition is being reassigned we expect its ISR to change
+        //      (see https://cwiki.apache.org/confluence/display/KAFKA/KIP-455%3A+Create+an+Administrative+API+for+Replica+Reassignment#KIP455:CreateanAdministrativeAPIforReplicaReassignment-Algorithm
+        //      which guarantees that addingReplicas are honoured before removingReplicas)
+        //      If there are any removingReplicas our availability calculation won't account for the fact
+        //      that the controller may shrink the ISR during the reassignment.
+
+        // Split the set of all brokers replicating any partition
         var cells = cells(servers.values());
 
-        // TODO filter each cell by brokers that actually need to be restarted
+        // filter each cell by brokers that actually need to be restarted
+        cells = cells.stream().map(cell -> cell.stream().filter(server -> brokersNeedingRestart.contains(server.id())).collect(Collectors.toSet())).toList();
 
         int maxRollBatchSize = 10;
         var minIsrByTopic = describeTopicConfigs(admin, topicListings.stream().map(TopicListing::name).toList());
@@ -408,7 +407,7 @@ class RackRolling {
 
         int group = 0;
         for (var result : results) {
-            System.out.println("Group " + group + ": " + result.stream().map(b -> b.id()).collect(Collectors.toCollection(TreeSet::new)));
+            System.out.println("Group " + group + ": " + result.stream().map(Server::id).collect(Collectors.toCollection(TreeSet::new)));
             group++;
         }
     }
@@ -442,15 +441,16 @@ class RackRolling {
                 return new Context(serverId, State.UNKNOWN, System.currentTimeMillis(), null, 0);
             }
 
-            void transitionTo(State state) {
+            State transitionTo(State state) {
                 if (this.state() == state) {
-                    return;
+                    return state;
                 }
                 this.state = state;
                 if (state == State.RESTARTED) {
                     this.numRestarts++;
                 }
                 this.lastTransition = System.currentTimeMillis();
+                return state;
             }
 
         public int serverId() {
@@ -474,23 +474,6 @@ class RackRolling {
         }
 
         @Override
-        public boolean equals(Object obj) {
-            if (obj == this) return true;
-            if (obj == null || obj.getClass() != this.getClass()) return false;
-            var that = (Context) obj;
-            return this.serverId == that.serverId &&
-                    Objects.equals(this.state, that.state) &&
-                    this.lastTransition == that.lastTransition &&
-                    Objects.equals(this.reason, that.reason) &&
-                    this.numRestarts == that.numRestarts;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(serverId, state, lastTransition, reason, numRestarts);
-        }
-
-        @Override
         public String toString() {
             return "Context[" +
                     "serverId=" + serverId + ", " +
@@ -504,10 +487,12 @@ class RackRolling {
 
     private static boolean isNotReady(Integer nodeId) {
         // TODO kube get the pod and check the status
+        return false;
     }
 
     private static int getBrokerState(Integer nodeId) {
         // TODO http get the broker state from the agent endpoint
+        return 0;
     }
 
     private static State observe(Context context) {
@@ -540,8 +525,7 @@ class RackRolling {
 
     private static void awaitState(Context context, State targetState) throws InterruptedException {
         while (true) {
-            var state = observe(context);
-            context.transitionTo(state);
+            var state = context.transitionTo(observe(context));
             if (state == targetState) {
                 return;
             }
@@ -550,8 +534,8 @@ class RackRolling {
     }
 
     private static void restartInParallel(Set<Context> batch) throws InterruptedException {
-        for (Context context1 : batch) {
-            restartPod(context1);
+        for (Context context : batch) {
+            restartPod(context);
         }
         for (Context context : batch) {
             awaitState(context, State.SERVING);
@@ -572,7 +556,7 @@ class RackRolling {
         return false;
     }
 
-    public static void rollingRestart(Admin admin, List<Integer> nodes, Function<Integer, Set<RestartReason>> predicate) throws InterruptedException {
+    public static void rollingRestart(Admin admin, List<Integer> nodes, Function<Integer, Set<RestartReason>> predicate) throws InterruptedException, ExecutionException {
 
         var contexts = nodes.stream().map(Context::start).toList();
         // Create contexts
@@ -584,7 +568,7 @@ class RackRolling {
                 // restart unready brokers
                 context.transitionTo(observe(context));
             }
-            var byUnreadiness = contexts.stream().collect(Collectors.partitioningBy(context -> context.state() == State.NOT_READY);
+            var byUnreadiness = contexts.stream().collect(Collectors.partitioningBy(context -> context.state() == State.NOT_READY));
 
             for (var context : byUnreadiness.get(true)) {
                 context.reason = "Not ready";
@@ -614,8 +598,10 @@ class RackRolling {
             }
 
             // TODO the rest of the new algorithm
-            var batch = nextBatch(admin, reconfigurable.get(false));
-            restartInParallel(batch);
+            var batch = nextBatch(admin, reconfigurable.get(false).stream().map(Context::serverId).collect(Collectors.toSet()));
+            var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
+            var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
+            restartInParallel(batchOfContexts);
 
             // termination condition
             if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
