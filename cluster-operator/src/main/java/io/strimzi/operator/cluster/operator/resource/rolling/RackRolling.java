@@ -2,19 +2,11 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource;
+package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.model.RestartReason;
-import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.Config;
-import org.apache.kafka.clients.admin.DescribeClusterResult;
-import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
-import org.apache.kafka.common.Node;
-import org.apache.kafka.common.TopicCollection;
-import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.config.ConfigResource;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -26,117 +18,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 class RackRolling {
-    /**
-     * A replica, on a broker,
-     * @param topicName The name of the topic
-     * @param partitionId The partition id
-     * @param isrSize If the broker hosting this replica is in the ISR for the partition of this replica
-     *                this is the size of the ISR.
-     *                If the broker hosting this replica is NOT in the ISR for the partition of this replica
-     *                this is the negative of the size of the ISR.
-     *                In other words, the magnitude is the size of the ISR and the sign will be negative
-     *                if the broker hosting this replic is not in the ISR.
-     */
-    record Replica(String topicName, int partitionId, short isrSize) {
-
-        public Replica(Node broker, String topicName, int partitionId, Collection<Node> isr) {
-            this(topicName, partitionId, (short) (isr.contains(broker) ? isr.size() : -isr.size()));
-        }
-
-        @Override
-        public String toString() {
-            return topicName + "-" + partitionId;
-        }
-
-        /**
-         * @return The size of the ISR for the partition of this replica.
-         */
-        public short isrSize() {
-            return (short) Math.abs(isrSize);
-        }
-
-        /**
-         * @return true if the broker hosting this replica is in the ISR for the partition of this replica.
-         */
-        public boolean isInIsr() {
-            return isrSize > 0;
-        }
-    }
-
-    record Server(int id, String rack, Set<Replica> replicas) {
-    }
-
-    private final static int ADMIN_BATCH_SIZE = 200;
-
-    /** Return a future that completes when all of the given futures complete */
-    @SuppressWarnings("rawtypes")
-    private static CompletableFuture<Void> allOf(List<? extends CompletableFuture<?>> futures) {
-        CompletableFuture[] ts = futures.toArray(new CompletableFuture[0]);
-        return CompletableFuture.allOf(ts);
-    }
-
-    /** Splits the given {@code items} into batches no larger than {@code maxBatchSize}. */
-    private static <T> Set<List<T>> batch(List<T> items, int maxBatchSize) {
-        Set<List<T>> allBatches = new HashSet<>();
-        List<T> currentBatch = null;
-        for (var topicId : items) {
-            if (currentBatch == null || currentBatch.size() > maxBatchSize) {
-                currentBatch = new ArrayList<>();
-                allBatches.add(currentBatch);
-            }
-            currentBatch.add(topicId);
-        }
-        return allBatches;
-    }
-
-    private static Stream<TopicDescription> describeTopics(Admin admin, List<Uuid> topicIds) throws InterruptedException, ExecutionException {
-        var topicIdBatches = batch(topicIds, ADMIN_BATCH_SIZE);
-        var futures = new ArrayList<CompletableFuture<Map<Uuid, TopicDescription>>>();
-        for (var topicIdBatch : topicIdBatches) {
-            var mapKafkaFuture = admin.describeTopics(TopicCollection.ofTopicIds(topicIdBatch)).allTopicIds().toCompletionStage().toCompletableFuture();
-            futures.add(mapKafkaFuture);
-        }
-        allOf(futures).get();
-        var topicDescriptions = futures.stream().flatMap(cf -> {
-            try {
-                return cf.get().values().stream();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            }
-        });
-        return topicDescriptions;
-    }
-
-    private static Map<String, Integer> describeTopicConfigs(Admin admin, List<String> topicNames) throws InterruptedException, ExecutionException {
-        var topicIdBatches = batch(topicNames, ADMIN_BATCH_SIZE);
-        var futures = new ArrayList<CompletableFuture<Map<ConfigResource, Config>>>();
-        for (var topicIdBatch : topicIdBatches) {
-            var mapKafkaFuture = admin.describeConfigs(topicIdBatch.stream().map(name -> new ConfigResource(ConfigResource.Type.TOPIC, name)).collect(Collectors.toSet())).all().toCompletionStage().toCompletableFuture();
-            futures.add(mapKafkaFuture);
-        }
-        allOf(futures).get();
-        var topicDescriptions = futures.stream().flatMap(cf -> {
-            try {
-                return cf.get().entrySet().stream();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            }
-        });
-        return topicDescriptions.collect(Collectors.toMap(
-                entry -> entry.getKey().name(),
-                entry -> Integer.parseInt(entry.getValue().get("min.isr").value())));
-    }
 
     private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
         final boolean wouldByUnderReplicated;
@@ -183,7 +72,7 @@ class RackRolling {
      * Split the given cells into batches,
      * taking account of {@code acks=all} availability and the given maxBatchSize
      */
-    public static List<Set<Server>> batchCells(List<Set<Server>> cells,
+    static List<Set<Server>> batchCells(List<Set<Server>> cells,
                                                Map<String, Integer> minIsrByTopic,
                                                int maxBatchSize) {
         List<Set<Server>> result = new ArrayList<>();
@@ -267,7 +156,7 @@ class RackRolling {
      * into cells that can be rolled in parallel because they
      * contain no replicas in common.
      */
-    public static List<Set<Server>> cells(Collection<Server> brokers) {
+    static List<Set<Server>> cells(Collection<Server> brokers) {
 
         // find brokers that are individually rollable
         var rollable = brokers.stream().collect(Collectors.toCollection(() ->
@@ -284,20 +173,13 @@ class RackRolling {
         }
     }
 
-    private static int activeController(Admin admin) throws InterruptedException, ExecutionException {
-        // TODO when controllers not colocated with brokers, how do we find the active controller?
-        DescribeClusterResult dcr = admin.describeCluster();
-        var activeController = dcr.controller();
-        int controllerId = activeController.get().id();
-        return controllerId;
-    }
 
     /**
      * Pick the "best" batch to be restarted.
      * This is the largest batch of available servers excluding the
      * @return the "best" batch to be restarted
      */
-    public static Set<Server> pickBestBatchForRestart(List<Set<Server>> batches, int controllerId) {
+    static Set<Server> pickBestBatchForRestart(List<Set<Server>> batches, int controllerId) {
         var sorted = batches.stream().sorted(Comparator.comparing(Set::size)).toList();
         if (sorted.size() == 0) {
             return Set.of();
@@ -309,7 +191,9 @@ class RackRolling {
         return sorted.get(0);
     }
 
-    private static Set<Server> nextBatch(Admin admin, Set<Integer> brokersNeedingRestart) throws ExecutionException, InterruptedException {
+    private static Set<Server> nextBatch(RollClient rollClient,
+                                         Set<Integer> brokersNeedingRestart,
+                                         int maxRestartBatchSize) throws ExecutionException, InterruptedException {
 
 
         // TODO figure out this KRaft stuff
@@ -321,13 +205,13 @@ class RackRolling {
 //                }).toList();
 
         // Get all the topics in the cluster
-        Collection<TopicListing> topicListings = admin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get();
+        Collection<TopicListing> topicListings = rollClient.listTopics();
 
         // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
         var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
 
         // Convert the TopicDescriptions to the Server and Replicas model
-        Stream<TopicDescription> topicDescriptions = describeTopics(admin, topicIds);
+        Stream<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
         Map<Integer, Server> servers = new HashMap<>();
         topicDescriptions.forEach(topicDescription -> {
             topicDescription.partitions().forEach(partition -> {
@@ -355,11 +239,10 @@ class RackRolling {
         // filter each cell by brokers that actually need to be restarted
         cells = cells.stream().map(cell -> cell.stream().filter(server -> brokersNeedingRestart.contains(server.id())).collect(Collectors.toSet())).toList();
 
-        int maxRollBatchSize = 10;
-        var minIsrByTopic = describeTopicConfigs(admin, topicListings.stream().map(TopicListing::name).toList());
-        var batches = batchCells(cells, minIsrByTopic, maxRollBatchSize);
+        var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
+        var batches = batchCells(cells, minIsrByTopic, maxRestartBatchSize);
 
-        int controllerId = activeController(admin);
+        int controllerId = rollClient.activeController();
         var bestBatch = pickBestBatchForRestart(batches, controllerId);
         return bestBatch;
     }
@@ -412,151 +295,131 @@ class RackRolling {
         }
     }
 
-    enum State {
-        UNKNOWN, // the initial state
-        NOT_READY, // decided to restart right now or broker state > 3
-        RESTARTED, // after successful kube pod delete
-        STARTING,  // /liveness endpoint 200? Or just from Pod status?
-        RECOVERING, // broker state < 3
-        SERVING, // broker state== 3
-        LEADING_ALL_PREFERRED // broker state== 3 and leading all preferred replicas
+    static String podName(int nodeId) {
+        return "kafka-" + nodeId; // TODO implement this properly
     }
 
-    static final class Context {
-        private final int serverId;
-        private State state;
-        private long lastTransition;
-        private String reason;
-        private int numRestarts;
-
-        private Context(int serverId, State state, long lastTransition, String reason, int numRestarts) {
-            this.serverId = serverId;
-            this.state = state;
-            this.lastTransition = lastTransition;
-            this.reason = reason;
-            this.numRestarts = numRestarts;
-        }
-
-            static Context start(int serverId) {
-                return new Context(serverId, State.UNKNOWN, System.currentTimeMillis(), null, 0);
-            }
-
-            State transitionTo(State state) {
-                if (this.state() == state) {
-                    return state;
-                }
-                this.state = state;
-                if (state == State.RESTARTED) {
-                    this.numRestarts++;
-                }
-                this.lastTransition = System.currentTimeMillis();
-                return state;
-            }
-
-        public int serverId() {
-            return serverId;
-        }
-
-        public State state() {
-            return state;
-        }
-
-        public long lastTransition() {
-            return lastTransition;
-        }
-
-        public String reason() {
-            return reason;
-        }
-
-        public int numRestarts() {
-            return numRestarts;
-        }
-
-        @Override
-        public String toString() {
-            return "Context[" +
-                    "serverId=" + serverId + ", " +
-                    "state=" + state + ", " +
-                    "lastTransition=" + lastTransition + ", " +
-                    "reason=" + reason + ", " +
-                    "numRestarts=" + numRestarts + ']';
-        }
-
-        }
-
-    private static boolean isNotReady(Integer nodeId) {
-        // TODO kube get the pod and check the status
-        return false;
-    }
-
-    private static int getBrokerState(Integer nodeId) {
-        // TODO http get the broker state from the agent endpoint
-        return 0;
-    }
-
-    private static State observe(Context context) {
-        if (isNotReady(context.serverId())) {
-            return State.NOT_READY;
-        } else {
-            try {
-                int bs = getBrokerState(context.serverId());
-                if (bs < 3) {
-                    return State.RECOVERING;
-                } else if (bs == 3) {
-                    return State.SERVING;
-                } else {
-                    return State.NOT_READY;
-                }
-            } catch (Exception e) {
-                return State.NOT_READY;
-            }
-        }
-    }
-
-    private static void restartPod(Context context) {
-        if (context.numRestarts() > 3) {
+    private static void restartServer(RollClient rollClient, Context context, int maxRestarts) {
+        if (context.numRestarts() > maxRestarts) {
             throw new RuntimeException("Too many restarts"); // TODO proper exception type
         }
-        // TODO kube delete the pod
+        rollClient.deletePod(podName(context.serverId()));
         context.transitionTo(State.RESTARTED);
         // TODO kube create an Event with the context.reason
     }
 
-    private static void awaitState(Context context, State targetState) throws InterruptedException {
-        while (true) {
-            var state = context.transitionTo(observe(context));
-            if (state == targetState) {
-                return;
-            }
-            Thread.sleep(1000L); // TODO tidy this up
+    private static void reconfigureServer(RollClient rollClient, Context context, int maxReconfigs) {
+        if (context.numReconfigs() > maxReconfigs) {
+            throw new RuntimeException("Too many reconfigs");
         }
-    }
-
-    private static void restartInParallel(Set<Context> batch) throws InterruptedException {
-        for (Context context : batch) {
-            restartPod(context);
-        }
-        for (Context context : batch) {
-            awaitState(context, State.SERVING);
-        }
-        for (Context context : batch) {
-            // TODO elect preferred leaders
-        }
-    }
-
-    private static void reconfigure(Context context) {
-        // TODO Admin incrementalAlterConfig
-        // TODO update context.state
+        rollClient.reconfigureServer(context.serverId());
+        context.transitionTo(State.RECONFIGURED);
         // TODO create kube Event
+    }
+
+    private static long await(BooleanSupplier done, long timeoutMs) throws InterruptedException, TimeoutException {
+        long t0 = System.nanoTime();
+        long deadlineNanos = t0 + timeoutMs * 1_000_000;
+        while (true) {
+            if (done.getAsBoolean()) {
+                return Math.max(deadlineNanos - System.nanoTime(), 0) / 1_000_000L;
+            }
+            long sleepNs = Math.min(1_000_000L, deadlineNanos - System.nanoTime());
+            if (sleepNs < 0) {
+                throw new TimeoutException();
+            }
+            Thread.sleep(sleepNs / 1_000_000L, (int) (sleepNs % 1_000_000L));
+        }
+    }
+
+    private static long awaitState(RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
+        return await(() -> {
+            var state = context.transitionTo(rollClient.observe(context.serverId()));
+            return state == targetState;
+        }, timeoutMs);
+    }
+
+    private static long awaitPreferred(RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
+        return await(() -> {
+            var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.serverId());
+            if (remainingReplicas == 0) {
+                context.transitionTo(State.LEADING_ALL_PREFERRED);
+            }
+            return remainingReplicas == 0;
+        }, timeoutMs);
+    }
+
+    private static void restartInParallel(RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws InterruptedException, TimeoutException {
+        for (Context context : batch) {
+            restartServer(rollClient, context, maxRestarts);
+        }
+        long remainingTimeoutMs = timeoutMs;
+        for (Context context : batch) {
+            remainingTimeoutMs = awaitState(rollClient, context, State.SERVING, remainingTimeoutMs);
+        }
+        var serverIds = batch.stream().map(Context::serverId).collect(Collectors.toCollection(ArrayList::new));
+        await(() -> {
+            var toRemove = new ArrayList<Integer>();
+            for (var serverId : serverIds) {
+                if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
+                    toRemove.add(serverId);
+                }
+            }
+            serverIds.removeAll(toRemove);
+            return serverIds.isEmpty();
+        }, remainingTimeoutMs);
     }
 
     private static boolean isReconfigurable(Context context) {
         // TODO reuse existing logic to determining whether we can do a dynamic reconfiguration
+        //      some of this code will probably belong in RollClientImpl
         return false;
     }
 
-    public static void rollingRestart(Admin admin, List<Integer> nodes, Function<Integer, Set<RestartReason>> predicate) throws InterruptedException, ExecutionException {
+    /**
+     * Do a rolling restart (or reconfigure) of some of the Kafka servers given in {@code nodes}.
+     * Servers that are not ready (in the Kubernetes sense) will always be considered for restart before any others.
+     * The given {@code predicate} will be called for each of the remaining servers and those for which the function returns a non-empty
+     * list of reasons will be restarted or reconfigured.
+     * When a server is restarted this method guarantees to wait for it to enter the running broker state and
+     * become the leader of all its preferred replicas.
+     * If a server is not restarted by this method (because the {@code predicate} function returned empty), then
+     * it may not be the leader of all its preferred replicas.
+     * If this method completes normally then all initially unready servers and the servers for which the {@code predicate} function returned
+     * a non-empty list of reasons (which may be no servers) will have been successfully restarted/reconfigured.
+     * In other words, successful return from this method indicates that all servers seem to be up and
+     * "functioning normally".
+     * If a server fails to restart or recover its logs within a certain time this method will throw TimeoutException.
+     *
+     * The expected worst case execution time of this function is approximately
+     * {@code (timeoutMs * maxRestarts + postReconfigureTimeoutMs) * size(nodes)}.
+     * This is reached when:
+     * <ol>
+     *     <li>We initially attempt to reconfigure all nodes</li>
+     *     <li>Those reconfigurations all fail, so we resort to restarts</li>
+     *     <li>We require {@code maxRestarts} restarts for each node, and each restart uses the
+     *         maximum {@code timeoutMs}.</li>
+     * </ol>
+     *
+     * @param rollClient The roll client.
+     * @param nodes The nodes.
+     * @param predicate The predicate.
+     * @param postReconfigureTimeoutMs The maximum time to wait after a reconfiguration.
+     * @param postRestartTimeoutMs The maximum time to wait after a restart.
+     * @param maxRestartBatchSize The maximum number of servers that might be restarted at once.
+     * @param maxRestarts The maximum number of restarts attempted for any individual server
+     * @throws InterruptedException
+     * @throws ExecutionException
+     * @throws TimeoutException
+     */
+    public static void rollingRestart(RollClient rollClient,
+                                      List<Integer> nodes,
+                                      Function<Integer, Set<RestartReason>> predicate,
+                                      long postReconfigureTimeoutMs,
+                                      long postRestartTimeoutMs,
+                                      int maxRestartBatchSize,
+                                      int maxRestarts)
+            throws InterruptedException, ExecutionException, TimeoutException {
 
         var contexts = nodes.stream().map(Context::start).toList();
         // Create contexts
@@ -566,15 +429,15 @@ class RackRolling {
 
             for (var context : contexts) {
                 // restart unready brokers
-                context.transitionTo(observe(context));
+                context.transitionTo(rollClient.observe(context.serverId()));
             }
             var byUnreadiness = contexts.stream().collect(Collectors.partitioningBy(context -> context.state() == State.NOT_READY));
 
             for (var context : byUnreadiness.get(true)) {
-                context.reason = "Not ready";
-                restartPod(context);
-                awaitState(context, State.SERVING);
-                // TODO elect preferred leaders
+                context.reason("Not ready");
+                restartServer(rollClient, context, maxRestarts);
+                long remainingTimeoutMs = awaitState(rollClient, context, State.SERVING, postRestartTimeoutMs);
+                awaitPreferred(rollClient, context, remainingTimeoutMs);
                 continue OUTER;
             }
 
@@ -583,25 +446,28 @@ class RackRolling {
                 if (reasons.isEmpty()) {
                     return false;
                 } else {
-                    context.reason = reasons.toString();
+                    context.reason(reasons.toString());
                     return true;
                 }
             }).toList();
 
-            var reconfigurable = actable.stream().collect(Collectors.partitioningBy(context -> isReconfigurable(context)));
+            int maxReconfigs = 1;
+            var reconfigurable = actable.stream()
+                    .filter(context -> context.numReconfigs() < maxReconfigs)
+                    .collect(Collectors.partitioningBy(context -> isReconfigurable(context)));
             for (var context : reconfigurable.get(true)) {
-                reconfigure(context);
-                // TODO decide what our post-reconfigure checks are and wait for them to become true
                 // TODO decide on parallel/batching dynamic reconfiguration
-                // TODO prevent the same context being seen as reconfigurable each time around to loop (prevent non-termination)
+                reconfigureServer(rollClient, context, maxReconfigs);
+                Thread.sleep(postReconfigureTimeoutMs / 2);
+                awaitPreferred(rollClient, context, postReconfigureTimeoutMs / 2);
                 continue OUTER;
             }
 
-            // TODO the rest of the new algorithm
-            var batch = nextBatch(admin, reconfigurable.get(false).stream().map(Context::serverId).collect(Collectors.toSet()));
+            // the rest of the new algorithm
+            var batch = nextBatch(rollClient, reconfigurable.get(false).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
             var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
-            restartInParallel(batchOfContexts);
+            restartInParallel(rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
 
             // termination condition
             if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
