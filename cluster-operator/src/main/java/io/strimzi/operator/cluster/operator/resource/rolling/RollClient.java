@@ -35,6 +35,7 @@ interface RollClient {
         } else {
             try {
                 int bs = getBrokerState(serverId);
+                System.out.println(bs);
                 if (bs < 3) {
                     return State.RECOVERING;
                 } else if (bs == 3) {
