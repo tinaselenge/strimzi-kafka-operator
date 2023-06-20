@@ -21,7 +21,7 @@ public class RackRollerTest {
     @Test
     public void dosuccessfulRolling() throws ExecutionException, InterruptedException, TimeoutException {
         RollClient client = mock(MockRollClient.class);
-        RackRolling.rollingRestart(client, asList(0), new Function<Integer, Set<RestartReason>>() {
+        RackRolling.rollingRestart(client, asList(0,1,2), new Function<Integer, Set<RestartReason>>() {
             @Override
             public Set<RestartReason> apply(Integer integer) {
                 return Collections.emptySet();
