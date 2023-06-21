@@ -4,7 +4,11 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.RestartReason;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
+import io.strimzi.operator.common.Reconciliation;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
@@ -370,10 +374,26 @@ class RackRolling {
         }, remainingTimeoutMs);
     }
 
-    private static boolean isReconfigurable(Context context) {
-        // TODO reuse existing logic to determining whether we can do a dynamic reconfiguration
-        //      some of this code will probably belong in RollClientImpl
-        return false;
+    private static Map<Boolean, List<Context>> partitionByReconfigurability(Reconciliation reconciliation,
+                                                                            KafkaVersion kafkaVersion,
+                                                                            Function<Integer, String> kafkaConfigProvider,
+                                                                            String desiredLogging,
+                                                                            RollClient rollClient,
+                                                                            List<Context> contexts) {
+        var brokerConfigs = rollClient.describeBrokerConfigs(contexts.stream()
+                .map(Context::serverId).toList());
+
+        return contexts.stream().collect(Collectors.partitioningBy(context -> {
+            RollClient.Configs configPair = brokerConfigs.get(context.serverId());
+            var diff = new KafkaBrokerConfigurationDiff(reconciliation,
+                    configPair.brokerConfigs(),
+                    kafkaConfigProvider.apply(context.serverId()),
+                    kafkaVersion,
+                    context.serverId());
+            var loggingDiff = new KafkaBrokerLoggingConfigurationDiff(reconciliation, configPair.brokerLoggerConfigs(), desiredLogging);
+            return !diff.isEmpty() && diff.canBeUpdatedDynamically()
+                    && !loggingDiff.isEmpty();
+        }));
     }
 
     /**
@@ -415,6 +435,10 @@ class RackRolling {
     public static void rollingRestart(RollClient rollClient,
                                       List<Integer> nodes,
                                       Function<Integer, Set<RestartReason>> predicate,
+                                      Reconciliation reconciliation,
+                                      KafkaVersion kafkaVersion,
+                                      Function<Integer, String> kafkaConfigProvider,
+                                      String desiredLogging,
                                       long postReconfigureTimeoutMs,
                                       long postRestartTimeoutMs,
                                       int maxRestartBatchSize,
@@ -451,10 +475,19 @@ class RackRolling {
                 }
             }).toList();
 
+            if (actable.isEmpty()) {
+                break OUTER;
+            }
+
             int maxReconfigs = 1;
-            var reconfigurable = actable.stream()
-                    .filter(context -> context.numReconfigs() < maxReconfigs)
-                    .collect(Collectors.partitioningBy(context -> isReconfigurable(context)));
+            var potentiallyReconfigurable = actable.stream()
+                    .filter(context -> context.numReconfigs() < maxReconfigs).toList();
+            var reconfigurable = partitionByReconfigurability(reconciliation,
+                    kafkaVersion,
+                    kafkaConfigProvider,
+                    desiredLogging,
+                    rollClient,
+                    potentiallyReconfigurable);
             for (var context : reconfigurable.get(true)) {
                 // TODO decide on parallel/batching dynamic reconfiguration
                 reconfigureServer(rollClient, context, maxReconfigs);

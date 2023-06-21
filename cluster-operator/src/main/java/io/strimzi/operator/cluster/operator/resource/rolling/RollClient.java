@@ -4,9 +4,11 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
 
 import java.util.Collection;
 import java.util.List;
@@ -101,4 +103,13 @@ interface RollClient {
      * @return The number of replicas on the server which it is not leading, but is preferred leader
      */
     int tryElectAllPreferredLeaders(int serverId);
+
+    /**
+     * Return the broker configs and broker logger configs for each of the given brokers
+     * @param toList The brokers to get the configs for
+     * @return A map from broker id to configs
+     */
+    Map<Integer, Configs> describeBrokerConfigs(List<Integer> toList);
+
+    static record Configs(Config brokerConfigs, Config brokerLoggerConfigs) { }
 }

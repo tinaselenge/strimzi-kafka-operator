@@ -74,7 +74,7 @@ public class KafkaBrokerConfigurationDiff extends AbstractJsonDiff {
      * @param kafkaVersion      Kafka version
      * @param brokerId          Broker ID
      */
-    protected KafkaBrokerConfigurationDiff(Reconciliation reconciliation, Config brokerConfigs, String desired, KafkaVersion kafkaVersion, int brokerId) {
+    public KafkaBrokerConfigurationDiff(Reconciliation reconciliation, Config brokerConfigs, String desired, KafkaVersion kafkaVersion, int brokerId) {
         this.reconciliation = reconciliation;
         this.configModel = KafkaConfiguration.readConfigModel(kafkaVersion);
         this.diff = diff(brokerId, desired, brokerConfigs, configModel);
@@ -90,7 +90,7 @@ public class KafkaBrokerConfigurationDiff extends AbstractJsonDiff {
     /**
      * @return  Returns true if the configuration can be updated dynamically
      */
-    protected boolean canBeUpdatedDynamically() {
+    public boolean canBeUpdatedDynamically() {
         boolean result = true;
         for (AlterConfigOp entry : diff) {
             if (isEntryReadOnly(entry.configEntry())) {
