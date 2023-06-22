@@ -68,7 +68,4 @@ public class RackRollingTest {
 
     // TODO: Make the test when "no partitions on one broker" case
 
-
-
-
 }
