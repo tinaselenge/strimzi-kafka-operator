@@ -199,7 +199,8 @@ class RackRolling {
                                          Set<Integer> brokersNeedingRestart,
                                          int maxRestartBatchSize) throws ExecutionException, InterruptedException {
 
-
+        Map<Integer, Server> servers = new HashMap<>();
+        
         // TODO figure out this KRaft stuff
 //        var quorum = admin.describeMetadataQuorum().quorumInfo().get();
 //        var controllers = quorum.voters().stream()
@@ -216,7 +217,7 @@ class RackRolling {
 
         // Convert the TopicDescriptions to the Server and Replicas model
         Stream<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
-        Map<Integer, Server> servers = new HashMap<>();
+
         topicDescriptions.forEach(topicDescription -> {
             topicDescription.partitions().forEach(partition -> {
                 partition.replicas().forEach(replicatingBroker -> {
@@ -228,6 +229,12 @@ class RackRolling {
                             partition.isr()));
                 });
             });
+        });
+
+        // Add any servers which we know about but which were absent from any partition metadata
+        // i.e. brokers without any assigned partitions
+        brokersNeedingRestart.stream().forEach(server -> {
+            servers.putIfAbsent(server, new Server(server, null, Set.of()));
         });
 
         // TODO somewhere in here we need to take account of partition reassignments
