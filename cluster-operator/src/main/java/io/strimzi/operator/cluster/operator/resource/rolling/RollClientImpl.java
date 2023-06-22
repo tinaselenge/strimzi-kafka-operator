@@ -145,4 +145,9 @@ class RollClientImpl implements RollClient {
         throw new UnsupportedOperationException("TODO");
     }
 
+    @Override
+    public Map<Integer, Configs> describeBrokerConfigs(List<Integer> toList) {
+        return null;
+    }
+
 }
