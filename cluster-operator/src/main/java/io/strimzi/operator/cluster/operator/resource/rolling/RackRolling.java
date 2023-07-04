@@ -25,7 +25,6 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -366,7 +365,7 @@ class RackRolling {
             serverContextWrtIds.put(id, context);
         }
 
-        await(() -> {
+        Alarm.timer(time, remainingTimeoutMs).poll(1_000, () -> {
             var toRemove = new ArrayList<Integer>();
             for (var serverId : serverIds) {
                 if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
@@ -374,17 +373,9 @@ class RackRolling {
                     toRemove.add(serverId);
                 }
             }
+            serverIds.removeAll(toRemove);
+            return serverIds.isEmpty();
         });
-//        Alarm.timer(time, remainingTimeoutMs).poll(1_000, () -> {
-//            var toRemove = new ArrayList<Integer>();
-//            for (var serverId : serverIds) {
-//                if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
-//                    toRemove.add(serverId);
-//                }
-//            }
-//            serverIds.removeAll(toRemove);
-//            return serverIds.isEmpty();
-//        });
     }
 
     private static Map<Boolean, List<Context>> partitionByReconfigurability(Reconciliation reconciliation,

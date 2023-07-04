@@ -8,7 +8,6 @@ import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.config.ConfigResource;
 
 import java.util.Collection;
 import java.util.List;
