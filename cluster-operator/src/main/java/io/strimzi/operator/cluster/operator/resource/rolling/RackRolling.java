@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -233,7 +234,7 @@ class RackRolling {
 
         // Add any servers which we know about but which were absent from any partition metadata
         // i.e. brokers without any assigned partitions
-        brokersNeedingRestart.stream().forEach(server -> {
+        brokersNeedingRestart.forEach(server -> {
             servers.putIfAbsent(server, new Server(server, null, Set.of()));
         });
 
@@ -368,11 +369,20 @@ class RackRolling {
         for (Context context : batch) {
             remainingTimeoutMs = awaitState(rollClient, context, State.SERVING, remainingTimeoutMs);
         }
-        var serverIds = batch.stream().map(Context::serverId).collect(Collectors.toCollection(ArrayList::new));
+
+        var serverContextWrtIds = new HashMap<Integer, Context>();
+        var serverIds = new ArrayList<Integer>();
+        for (Context context : batch) {
+            Integer id = context.serverId();
+            serverIds.add(id);
+            serverContextWrtIds.put(id, context);
+        }
+
         await(() -> {
             var toRemove = new ArrayList<Integer>();
             for (var serverId : serverIds) {
                 if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
+                    serverContextWrtIds.get(serverId).transitionTo(State.LEADING_ALL_PREFERRED);
                     toRemove.add(serverId);
                 }
             }
