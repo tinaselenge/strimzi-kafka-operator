@@ -185,7 +185,13 @@ public class RackRollingTest {
         when(client.describeTopics(topicListings.stream().map(TopicListing::topicId).toList())).thenAnswer(i -> Stream.of(new TopicDescription("topic-1", true,
                 List.of(new TopicPartitionInfo(0,
                         nodeList.get(0),
-                        nodeList, nodeList)))));
+                        List.of(nodeList.get(0)), List.of(nodeList.get(0))))), new TopicDescription("topic-1", true,
+                List.of(new TopicPartitionInfo(1,
+                        nodeList.get(0),
+                        List.of(nodeList.get(1)), List.of(nodeList.get(1))))), new TopicDescription("topic-1", true,
+                List.of(new TopicPartitionInfo(2,
+                        nodeList.get(0),
+                        List.of(nodeList.get(2)), List.of(nodeList.get(2)))))));
 
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
         for (Integer brokerId: brokerIds) {
@@ -233,7 +239,13 @@ public class RackRollingTest {
         when(client.describeTopics(topicListings.stream().map(TopicListing::topicId).toList())).thenAnswer(i -> Stream.of(new TopicDescription("topic-1", true,
                 List.of(new TopicPartitionInfo(0,
                         nodeList.get(0),
-                        nodeList, nodeList)))));
+                        List.of(nodeList.get(0)), List.of(nodeList.get(0))))), new TopicDescription("topic-1", true,
+                List.of(new TopicPartitionInfo(1,
+                        nodeList.get(0),
+                        List.of(nodeList.get(1)), List.of(nodeList.get(1))))), new TopicDescription("topic-1", true,
+                List.of(new TopicPartitionInfo(2,
+                        nodeList.get(0),
+                        List.of(nodeList.get(2)), List.of(nodeList.get(2)))))));
 
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
         for (Integer brokerId: brokerIds) {
