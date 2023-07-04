@@ -24,7 +24,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
-import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -329,39 +328,28 @@ class RackRolling {
         // TODO create kube Event
     }
 
-    private static long await(BooleanSupplier done, long timeoutMs) throws InterruptedException, TimeoutException {
-        long t0 = System.nanoTime();
-        long deadlineNanos = t0 + timeoutMs * 1_000_000;
-        while (true) {
-            if (done.getAsBoolean()) {
-                return Math.max(deadlineNanos - System.nanoTime(), 0) / 1_000_000L;
-            }
-            long sleepNs = Math.min(1_000_000L, deadlineNanos - System.nanoTime());
-            if (sleepNs < 0) {
-                throw new TimeoutException();
-            }
-            Thread.sleep(sleepNs / 1_000_000L, (int) (sleepNs % 1_000_000L));
-        }
-    }
 
     private static long awaitState(RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
-        return await(() -> {
+        var time = Time.SYSTEM_TIME;
+        return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
             var state = context.transitionTo(rollClient.observe(context.serverId()));
             return state == targetState;
-        }, timeoutMs);
+        });
     }
 
     private static long awaitPreferred(RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
-        return await(() -> {
+        var time = Time.SYSTEM_TIME;
+        return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
             var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.serverId());
             if (remainingReplicas == 0) {
                 context.transitionTo(State.LEADING_ALL_PREFERRED);
             }
             return remainingReplicas == 0;
-        }, timeoutMs);
+        });
     }
 
     private static void restartInParallel(RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws InterruptedException, TimeoutException {
+        var time = Time.SYSTEM_TIME;
         for (Context context : batch) {
             restartServer(rollClient, context, maxRestarts);
         }
@@ -386,9 +374,17 @@ class RackRolling {
                     toRemove.add(serverId);
                 }
             }
-            serverIds.removeAll(toRemove);
-            return serverIds.isEmpty();
-        }, remainingTimeoutMs);
+        });
+//        Alarm.timer(time, remainingTimeoutMs).poll(1_000, () -> {
+//            var toRemove = new ArrayList<Integer>();
+//            for (var serverId : serverIds) {
+//                if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
+//                    toRemove.add(serverId);
+//                }
+//            }
+//            serverIds.removeAll(toRemove);
+//            return serverIds.isEmpty();
+//        });
     }
 
     private static Map<Boolean, List<Context>> partitionByReconfigurability(Reconciliation reconciliation,
