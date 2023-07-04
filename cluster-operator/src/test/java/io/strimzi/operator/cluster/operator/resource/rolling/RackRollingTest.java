@@ -1,3 +1,7 @@
+/*
+ * Copyright Strimzi authors.
+ * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
+ */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
@@ -10,21 +14,27 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
 import org.junit.Test;
-import org.mockito.Mockito;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class RackRollingTest {
 
-    public String EMPTY_CONFIG_SUPPLIER = "";
+    static final String EMPTY_CONFIG_SUPPLIER = "";
 
     @Test
     public void shouldRestartNoBrokersIfNoReason() throws ExecutionException, InterruptedException, TimeoutException {
@@ -160,7 +170,7 @@ public class RackRollingTest {
         var brokerIds = List.of(0, 1, 2);
         RollClient client = mock(RollClient.class);
 
-        for (Integer brokerId: brokerIds){
+        for (Integer brokerId: brokerIds) {
             when(client.isNotReady(brokerId)).thenReturn(false);
         }
 
@@ -170,7 +180,7 @@ public class RackRollingTest {
 
 
         Collection<TopicListing> topicListings = new HashSet<>();
-        for (Integer brokerId: brokerIds){
+        for (Integer brokerId: brokerIds) {
             Uuid id = Uuid.randomUuid();
             topicListings.add(new TopicListing("topic-" + brokerId, id, true));
         }
@@ -214,7 +224,7 @@ public class RackRollingTest {
         var brokerIds = List.of(0, 1, 2);
         RollClient client = mock(RollClient.class);
 
-        for (Integer brokerId: brokerIds){
+        for (Integer brokerId: brokerIds) {
             when(client.isNotReady(brokerId)).thenReturn(false);
         }
 
@@ -224,7 +234,7 @@ public class RackRollingTest {
 
 
         Collection<TopicListing> topicListings = new HashSet<>();
-        for (Integer brokerId: brokerIds){
+        for (Integer brokerId: brokerIds) {
             Uuid id = Uuid.randomUuid();
             topicListings.add(new TopicListing("topic-" + brokerId, id, true));
         }
