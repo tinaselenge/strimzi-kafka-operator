@@ -16,7 +16,7 @@ class AlarmTest {
     @Test
     public void testRemaining() throws InterruptedException, TimeoutException {
         var tx = time.nanoTime();
-        var alarm = Alarm.timer(time, 1_000);
+        var alarm = Alarm.timer(time, 1_000, () -> "message");
         assertEquals(1_000, alarm.remainingMs());
         time.tickNanos(100_000_000);
         assertEquals(900, alarm.remainingMs());
@@ -39,8 +39,10 @@ class AlarmTest {
         time.tickNanos(1);
 
         // We expect subsequent attampts to sleep to throw
-        assertThrows(TimeoutException.class, () -> alarm.sleep(0));
-        assertThrows(TimeoutException.class, () -> alarm.sleep(1));
+        assertEquals("message",
+                assertThrows(TimeoutException.class, () -> alarm.sleep(0)).getMessage());
+        assertEquals("message",
+                assertThrows(TimeoutException.class, () -> alarm.sleep(1)).getMessage());
     }
 
 }
