@@ -39,13 +39,16 @@ public class Alarm {
     }
 
     public static Alarm timer(Time time, long timeoutMs) {
+        if (timeoutMs < 0) {
+            throw new IllegalArgumentException();
+        }
         long start = time.nanoTime();
         long deadline = start + 1_000_000 * timeoutMs;
         return new Alarm(time, deadline);
     }
 
     public long remainingMs() {
-        return Math.max(deadline - System.nanoTime(), 0) / 1_000_000L;
+        return Math.max(deadline - time.nanoTime(), 0) / 1_000_000L;
     }
 
     /**
@@ -53,12 +56,16 @@ public class Alarm {
      * (and subject to the precision and accuracy of) the configured {@link Time} instance.
      * The actual sleep time will be less than {@code ms} if using {@code ms} would exceed this
      * alarm's deadline.
+     * The thread does not lose ownership of any monitors.
      * @param ms The number of milliseconds to sleep for.
      * @throws TimeoutException
      * @throws InterruptedException
      */
     public void sleep(long ms) throws TimeoutException, InterruptedException {
-        long sleepNs = Math.min(1_000_000L * ms, deadline - System.nanoTime());
+        if (ms < 0) {
+            throw new IllegalArgumentException();
+        }
+        long sleepNs = Math.min(1_000_000L * ms, deadline - time.nanoTime());
         if (sleepNs < 0) {
             throw new TimeoutException();
         }
@@ -77,6 +84,9 @@ public class Alarm {
      * @throws TimeoutException     The {@link #remainingMs()} has reached zero.
      */
     public long poll(long pollIntervalMs, BooleanSupplier done) throws InterruptedException, TimeoutException {
+        if (pollIntervalMs <= 0) {
+            throw new IllegalArgumentException();
+        }
         while (true) {
             if (done.getAsBoolean()) {
                 return this.remainingMs();
