@@ -23,11 +23,23 @@ public interface Time {
         public void sleep(long millis, int nanos) throws InterruptedException {
             Thread.sleep(millis, nanos);
         }
+
+        @Override
+        public String toString() {
+            return "SYSTEM_TIME";
+        }
     };
 
 
     public static class TestTime implements Time {
         long time = 0;
+
+        public void tickNanos(long advanceNs) {
+            if (advanceNs < 0) {
+                throw new IllegalArgumentException();
+            }
+            time += advanceNs;
+        }
 
         @Override
         public long nanoTime() {
@@ -36,7 +48,15 @@ public interface Time {
 
         @Override
         public void sleep(long millis, int nanos) throws InterruptedException {
+            if (millis < 0 || nanos < 0 || nanos > 999_999) {
+                throw new IllegalArgumentException();
+            }
             time += 1_000_000 * millis + nanos;
+        }
+
+        @Override
+        public String toString() {
+            return "TestTime";
         }
     }
 
