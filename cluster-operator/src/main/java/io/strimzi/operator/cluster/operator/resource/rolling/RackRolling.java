@@ -329,14 +329,21 @@ class RackRolling {
 
 
     private static long awaitState(Time time, RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
-        return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
+        return Alarm.timer(
+                time,
+                timeoutMs,
+                () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
+        ).poll(1_000, () -> {
             var state = context.transitionTo(rollClient.observe(context.serverId()));
             return state == targetState;
         });
     }
 
     private static long awaitPreferred(Time time, RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
-        return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
+        return Alarm.timer(time,
+                timeoutMs,
+                () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
+        .poll(1_000, () -> {
             var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.serverId());
             if (remainingReplicas == 0) {
                 context.transitionTo(State.LEADING_ALL_PREFERRED);
@@ -362,7 +369,11 @@ class RackRolling {
             serverContextWrtIds.put(id, context);
         }
 
-        Alarm.timer(time, remainingTimeoutMs).poll(1_000, () -> {
+        Alarm.timer(time,
+                remainingTimeoutMs,
+                () -> "Servers "+ serverIds + " failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " +
+                        serverIds.stream().map(serverId -> serverContextWrtIds.get(serverId)).collect(Collectors.toSet()))
+        .poll(1_000, () -> {
             var toRemove = new ArrayList<Integer>();
             for (var serverId : serverIds) {
                 if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
