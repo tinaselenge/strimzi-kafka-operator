@@ -6,6 +6,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * Timing utility for polling loops which allows to set an alarm (in terms of a duration from "now") and
@@ -32,19 +33,21 @@ public class Alarm {
 
     final Time time;
     final long deadline;
+    private final Supplier<String> timeoutMessageSupplier;
 
-    private Alarm(Time time, long deadline) {
+    private Alarm(Time time, long deadline, Supplier<String> timeoutMessageSupplier) {
         this.time = time;
         this.deadline = deadline;
+        this.timeoutMessageSupplier = timeoutMessageSupplier;
     }
 
-    public static Alarm timer(Time time, long timeoutMs) {
+    public static Alarm timer(Time time, long timeoutMs, Supplier<String> timeoutMessageSupplier) {
         if (timeoutMs < 0) {
             throw new IllegalArgumentException();
         }
         long start = time.nanoTime();
         long deadline = start + 1_000_000 * timeoutMs;
-        return new Alarm(time, deadline);
+        return new Alarm(time, deadline, timeoutMessageSupplier);
     }
 
     public long remainingMs() {
@@ -66,8 +69,8 @@ public class Alarm {
             throw new IllegalArgumentException();
         }
         long sleepNs = Math.min(1_000_000L * ms, deadline - time.nanoTime());
-        if (sleepNs < 0) {
-            throw new TimeoutException();
+        if (sleepNs <= 0) {
+            throw new TimeoutException(timeoutMessageSupplier.get());
         }
         time.sleep(sleepNs / 1_000_000L, (int) (sleepNs % 1_000_000L));
     }
@@ -87,7 +90,9 @@ public class Alarm {
         if (pollIntervalMs <= 0) {
             throw new IllegalArgumentException();
         }
+        int attempt = 0;
         while (true) {
+            attempt++;
             if (done.getAsBoolean()) {
                 return this.remainingMs();
             }
