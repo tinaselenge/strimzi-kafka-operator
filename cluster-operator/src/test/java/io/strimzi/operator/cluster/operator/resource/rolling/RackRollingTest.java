@@ -36,6 +36,8 @@ public class RackRollingTest {
 
     static final String EMPTY_CONFIG_SUPPLIER = "";
 
+    private final Time time = new Time.TestTime();
+
     @Test
     public void shouldRestartNoBrokersIfNoReason() throws ExecutionException, InterruptedException, TimeoutException {
         var brokerId = 0;
@@ -44,7 +46,7 @@ public class RackRollingTest {
         when(client.isNotReady(brokerId)).thenReturn(false);
 
         doReturn(State.SERVING).when(client).observe(brokerId);
-        RackRolling.rollingRestart(client, asList(brokerId),
+        RackRolling.rollingRestart(time, client, asList(brokerId),
                 integer -> Set.of(),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
@@ -65,7 +67,7 @@ public class RackRollingTest {
         //Assuming the pods is Serving
         doReturn(State.SERVING).when(client).observe(brokerId);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())))).when(client).describeBrokerConfigs(List.of(0));
-        RackRolling.rollingRestart(client, asList(brokerId),
+        RackRolling.rollingRestart(time, client, asList(brokerId),
                 integer -> Set.of(RestartReason.MANUAL_ROLLING_UPDATE),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
@@ -96,7 +98,7 @@ public class RackRollingTest {
 
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())))).when(client).describeBrokerConfigs(List.of(0));
         doReturn(0).when(client).tryElectAllPreferredLeaders(0);
-        RackRolling.rollingRestart(client, List.of(brokerId),
+        RackRolling.rollingRestart(time, client, List.of(brokerId),
                 integer -> Set.of(RestartReason.MANUAL_ROLLING_UPDATE),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
@@ -126,7 +128,7 @@ public class RackRollingTest {
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())))).when(client).describeBrokerConfigs(List.of(0));
         doReturn(0).when(client).tryElectAllPreferredLeaders(0);
         doReturn(State.SERVING).when(client).observe(0);
-        RackRolling.rollingRestart(client, asList(brokerId),
+        RackRolling.rollingRestart(time, client, asList(brokerId),
                 integer -> Set.of(),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
@@ -156,7 +158,7 @@ public class RackRollingTest {
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())))).when(client).describeBrokerConfigs(List.of(0));
         doReturn(0).when(client).tryElectAllPreferredLeaders(0);
         doReturn(State.SERVING).when(client).observe(0);
-        RackRolling.rollingRestart(client, List.of(brokerId),
+        RackRolling.rollingRestart(time, client, List.of(brokerId),
                 integer -> Set.of(),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
@@ -211,7 +213,7 @@ public class RackRollingTest {
         doReturn(configPair).when(client).describeBrokerConfigs(any());
         doReturn(0).when(client).tryElectAllPreferredLeaders(0);
 
-        RackRolling.rollingRestart(client, brokerIds, integer -> Set.of(),
+        RackRolling.rollingRestart(time, client, brokerIds, integer -> Set.of(),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,
                 null, 1000, 1000, 3, 5);
@@ -265,7 +267,7 @@ public class RackRollingTest {
         doReturn(configPair).when(client).describeBrokerConfigs(any());
         doReturn(0).when(client).tryElectAllPreferredLeaders(0);
 
-        RackRolling.rollingRestart(client, brokerIds,
+        RackRolling.rollingRestart(time, client, brokerIds,
                 integer -> Set.of(RestartReason.MANUAL_ROLLING_UPDATE),
                 Reconciliation.DUMMY_RECONCILIATION, KafkaVersionTestUtils.getLatestVersion(),
                 integer -> EMPTY_CONFIG_SUPPLIER,

@@ -328,16 +328,14 @@ class RackRolling {
     }
 
 
-    private static long awaitState(RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
-        var time = Time.SYSTEM_TIME;
+    private static long awaitState(Time time, RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
         return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
             var state = context.transitionTo(rollClient.observe(context.serverId()));
             return state == targetState;
         });
     }
 
-    private static long awaitPreferred(RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
-        var time = Time.SYSTEM_TIME;
+    private static long awaitPreferred(Time time, RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
         return Alarm.timer(time, timeoutMs).poll(1_000, () -> {
             var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.serverId());
             if (remainingReplicas == 0) {
@@ -347,14 +345,13 @@ class RackRolling {
         });
     }
 
-    private static void restartInParallel(RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws InterruptedException, TimeoutException {
-        var time = Time.SYSTEM_TIME;
+    private static void restartInParallel(Time time, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws InterruptedException, TimeoutException {
         for (Context context : batch) {
             restartServer(rollClient, context, maxRestarts);
         }
         long remainingTimeoutMs = timeoutMs;
         for (Context context : batch) {
-            remainingTimeoutMs = awaitState(rollClient, context, State.SERVING, remainingTimeoutMs);
+            remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, remainingTimeoutMs);
         }
 
         var serverContextWrtIds = new HashMap<Integer, Context>();
@@ -436,7 +433,8 @@ class RackRolling {
      * @throws ExecutionException
      * @throws TimeoutException
      */
-    public static void rollingRestart(RollClient rollClient,
+    public static void rollingRestart(Time time,
+                                      RollClient rollClient,
                                       List<Integer> nodes,
                                       Function<Integer, Set<RestartReason>> predicate,
                                       Reconciliation reconciliation,
@@ -464,8 +462,8 @@ class RackRolling {
             for (var context : byUnreadiness.get(true)) {
                 context.reason("Not ready");
                 restartServer(rollClient, context, maxRestarts);
-                long remainingTimeoutMs = awaitState(rollClient, context, State.SERVING, postRestartTimeoutMs);
-                awaitPreferred(rollClient, context, remainingTimeoutMs);
+                long remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, postRestartTimeoutMs);
+                awaitPreferred(time, rollClient, context, remainingTimeoutMs);
                 continue OUTER;
             }
 
@@ -496,7 +494,7 @@ class RackRolling {
                 // TODO decide on parallel/batching dynamic reconfiguration
                 reconfigureServer(rollClient, context, maxReconfigs);
                 Thread.sleep(postReconfigureTimeoutMs / 2);
-                awaitPreferred(rollClient, context, postReconfigureTimeoutMs / 2);
+                awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
                 continue OUTER;
             }
 
@@ -504,7 +502,7 @@ class RackRolling {
             var batch = nextBatch(rollClient, reconfigurable.get(false).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
             var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
-            restartInParallel(rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+            restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
 
             // termination condition
             if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
