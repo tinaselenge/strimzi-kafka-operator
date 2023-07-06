@@ -13,6 +13,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
  */
 public interface Time {
 
+    /** The system's time */
     public final Time SYSTEM_TIME = new Time() {
         @Override
         public long nanoTime() {
@@ -30,10 +31,16 @@ public interface Time {
         }
     };
 
-
+    /**
+     * A {@code Time} implementation used for testing.
+     */
     public static class TestTime implements Time {
         long time = 0;
 
+        /**
+         * Advance the time by the given number of nanoseconds.
+         * @param advanceNs The number of nanoseconds by which the time should be advanced.
+         */
         public void tickNanos(long advanceNs) {
             if (advanceNs < 0) {
                 throw new IllegalArgumentException();
