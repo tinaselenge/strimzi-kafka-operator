@@ -506,4 +506,14 @@ public class RackRollingTest {
         }
     }
 
+    // TODO assertions that the active controller is last
+    // TODO assertions that controllers are always in different batches
+    // TODO test that exceeding maxRestart results in exception
+    // TODO test that exceeding postReconfigureTimeousMs results in exception
+    // TODO test that exceeding postRestartTimeousMs results in exception in all the possible cases:
+    //    the broker state not becoming ready (and that we don't retry restarting in this case)
+    //    tryElectAllPreferredLeaders not returning 0
+
+    // TODO handling of exceptions from the admin client
+
 }
