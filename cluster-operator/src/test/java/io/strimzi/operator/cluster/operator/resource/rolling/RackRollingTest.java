@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -97,6 +96,32 @@ public class RackRollingTest {
                 .observe(nodeRef);
     }
 
+    private Set<TopicListing> topicListing = new HashSet<>();
+    private Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
+
+    private void addTopic(String topicName, Node leader) {
+        addTopic(topicName, leader, List.of(leader), List.of(leader));
+    }
+    private void addTopic(String topicName, Node leader, List<Node> replicas, List<Node> isr) {
+        Uuid topicId = Uuid.randomUuid();
+        topicListing.add(new TopicListing(topicName, topicId, false));
+        topicDescriptions.put(topicId, new TopicDescription(topicName, false,
+                List.of(new TopicPartitionInfo(0,
+                        leader, replicas, isr))));
+    }
+
+    private void mockTopics(RollClient client) throws ExecutionException, InterruptedException {
+        doReturn(topicListing)
+                .when(client)
+                .listTopics();
+        doAnswer(i -> {
+                List<Uuid> topicIds = i.getArgument(0);
+                return topicIds.stream().map(tid -> topicDescriptions.get(tid)).toList();
+            })
+                .when(client)
+                .describeTopics(any());
+    }
+
     // TODO: Currently this test fails since no partitions are present on the broker(one of the edge case),
     //  We should make this test working
     @Test
@@ -144,13 +169,8 @@ public class RackRollingTest {
 
         RollClient client = mock(RollClient.class);
         mockHealthyBroker(client, nodeRef);
-        doReturn(Set.of(new TopicListing("topic-A", topicAId, true)))
-                .when(client)
-                .listTopics();
-        doReturn(List.of(new TopicDescription("topic-A", false,
-                List.of(new TopicPartitionInfo(0, node, List.of(node), List.of(node))))))
-                .when(client)
-                .describeTopics(List.of(topicAId));
+        addTopic("topic-A", node);
+        mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
                 .when(client)
                 .describeBrokerConfigs(List.of(nodeRef));
@@ -196,15 +216,8 @@ public class RackRollingTest {
         doCallRealMethod()
                 .when(client)
                 .observe(nodeRef);
-        doReturn(Set.of(new TopicListing("topic-A", topicAId, true)))
-                .when(client)
-                .listTopics();
-        doReturn(List.of(new TopicDescription("topic-A", true,
-                List.of(new TopicPartitionInfo(0,
-                        node,
-                        List.of(node), List.of(node))))))
-                .when(client)
-                .describeTopics(List.of(topicAId));
+        addTopic("topic-A", node);
+        mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
                 .when(client)
                 .describeBrokerConfigs(List.of(nodeRef));
@@ -250,15 +263,8 @@ public class RackRollingTest {
         doCallRealMethod()
                 .when(client)
                 .observe(nodeRef);
-        doReturn(Set.of(new TopicListing("topic-A", topicAId, true)))
-                .when(client)
-                .listTopics();
-        doReturn(List.of(new TopicDescription("topic-A", true,
-                List.of(new TopicPartitionInfo(0,
-                        node,
-                        List.of(node), List.of(node))))))
-                .when(client)
-                .describeTopics(List.of(topicAId));
+        addTopic("topic-A", node);
+        mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
                 new ConfigEntry("compression.type", "zstd")
         )), new Config(Set.of()))))
@@ -308,31 +314,15 @@ public class RackRollingTest {
         for (var nodeRef: nodeRefs) {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
-        Collection<TopicListing> topicListings = new HashSet<>();
-        for (var nodeRef: nodeRefs) {
-            Uuid topicId = Uuid.randomUuid();
-            topicListings.add(new TopicListing("topic-" + nodeRef.nodeId(), topicId, true));
-        }
 
         RollClient client = mock(RollClient.class);
         for (var nodeRef: nodeRefs) {
             mockHealthyBroker(client, nodeRef);
         }
-        doReturn(topicListings)
-                .when(client)
-                .listTopics();
-        doAnswer(i -> List.of(new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(0,
-                        nodeList.get(0),
-                        List.of(nodeList.get(0)), List.of(nodeList.get(0))))), new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(1,
-                        nodeList.get(0),
-                        List.of(nodeList.get(1)), List.of(nodeList.get(1))))), new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(2,
-                        nodeList.get(0),
-                        List.of(nodeList.get(2)), List.of(nodeList.get(2)))))))
-                .when(client)
-                .describeTopics(topicListings.stream().map(TopicListing::topicId).toList());
+        addTopic("topic-0", nodeList.get(0));
+        addTopic("topic-1", nodeList.get(1));
+        addTopic("topic-2", nodeList.get(2));
+        mockTopics(client);
         doReturn(configPair)
                 .when(client)
                 .describeBrokerConfigs(any());
@@ -374,31 +364,15 @@ public class RackRollingTest {
         for (var nodeRef: nodeRefs) {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
-        Collection<TopicListing> topicListings = new HashSet<>();
-        for (var nodeRef: nodeRefs) {
-            Uuid id = Uuid.randomUuid();
-            topicListings.add(new TopicListing("topic-" + nodeRef.nodeId(), id, true));
-        }
 
         RollClient client = mock(RollClient.class);
         for (var nodeRef: nodeRefs) {
             mockHealthyBroker(client, nodeRef);
         }
-        doReturn(topicListings)
-                .when(client)
-                .listTopics();
-        doAnswer(i -> List.of(new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(0,
-                        nodeList.get(0),
-                        List.of(nodeList.get(0)), List.of(nodeList.get(0))))), new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(1,
-                        nodeList.get(0),
-                        List.of(nodeList.get(1)), List.of(nodeList.get(1))))), new TopicDescription("topic-1", true,
-                List.of(new TopicPartitionInfo(2,
-                        nodeList.get(0),
-                        List.of(nodeList.get(2)), List.of(nodeList.get(2)))))))
-                .when(client)
-                .describeTopics(topicListings.stream().map(TopicListing::topicId).toList());
+        addTopic("topic-0", nodeList.get(0));
+        addTopic("topic-1", nodeList.get(1));
+        addTopic("topic-2", nodeList.get(2));
+        mockTopics(client);
         doReturn(configPair)
                 .when(client)
                 .describeBrokerConfigs(any());
