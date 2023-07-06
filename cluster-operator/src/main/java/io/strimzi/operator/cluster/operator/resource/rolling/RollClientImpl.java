@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
@@ -56,9 +57,12 @@ class RollClientImpl implements RollClient {
 
     private final KubernetesClient client;
 
-    RollClientImpl(KubernetesClient client, Admin admin) {
+    private final KafkaAgentClient kafkaAgentClient;
+
+    RollClientImpl(KubernetesClient client, Admin admin, KafkaAgentClient kafkaAgentClient) {
         this.client = client;
         this.admin = admin;
+        this.kafkaAgentClient = kafkaAgentClient;
     }
 
     @Override
@@ -67,8 +71,9 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public int getBrokerState(Integer nodeId) {
-        throw new UnsupportedOperationException("TODO");
+    public BrokerState getBrokerState(Integer nodeId) {
+        String podName = null; // TODO convert the nodeId to a podname
+        return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
     }
 
     @Override

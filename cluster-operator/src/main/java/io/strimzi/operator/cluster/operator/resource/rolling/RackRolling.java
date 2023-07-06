@@ -371,19 +371,19 @@ class RackRolling {
 
         Alarm.timer(time,
                 remainingTimeoutMs,
-                () -> "Servers "+ serverIds + " failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " +
+                () -> "Servers " + serverIds + " failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " +
                         serverIds.stream().map(serverId -> serverContextWrtIds.get(serverId)).collect(Collectors.toSet()))
-        .poll(1_000, () -> {
-            var toRemove = new ArrayList<Integer>();
-            for (var serverId : serverIds) {
-                if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
-                    serverContextWrtIds.get(serverId).transitionTo(State.LEADING_ALL_PREFERRED);
-                    toRemove.add(serverId);
+            .poll(1_000, () -> {
+                var toRemove = new ArrayList<Integer>();
+                for (var serverId : serverIds) {
+                    if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
+                        serverContextWrtIds.get(serverId).transitionTo(State.LEADING_ALL_PREFERRED);
+                        toRemove.add(serverId);
+                    }
                 }
-            }
-            serverIds.removeAll(toRemove);
-            return serverIds.isEmpty();
-        });
+                serverIds.removeAll(toRemove);
+                return serverIds.isEmpty();
+            });
     }
 
     private static Map<Boolean, List<Context>> partitionByReconfigurability(Reconciliation reconciliation,
