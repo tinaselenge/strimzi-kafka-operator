@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.model.KafkaVersion;
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
@@ -306,15 +307,15 @@ class RackRolling {
         }
     }
 
-    static String podName(int nodeId) {
-        return "kafka-" + nodeId; // TODO implement this properly
+    static String podName(NodeRef nodeRef) {
+        return nodeRef.podName();
     }
 
     private static void restartServer(RollClient rollClient, Context context, int maxRestarts) {
         if (context.numRestarts() > maxRestarts) {
             throw new RuntimeException("Too many restarts"); // TODO proper exception type
         }
-        rollClient.deletePod(podName(context.serverId()));
+        rollClient.deletePod(context.nodeRef());
         context.transitionTo(State.RESTARTED);
         // TODO kube create an Event with the context.reason
     }
@@ -323,7 +324,7 @@ class RackRolling {
         if (context.numReconfigs() > maxReconfigs) {
             throw new RuntimeException("Too many reconfigs");
         }
-        rollClient.reconfigureServer(context.serverId(), context.brokerConfigDiff(), context.loggingDiff());
+        rollClient.reconfigureServer(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
         context.transitionTo(State.RECONFIGURED);
         // TODO create kube Event
     }
@@ -335,7 +336,7 @@ class RackRolling {
                 timeoutMs,
                 () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
         ).poll(1_000, () -> {
-            var state = context.transitionTo(rollClient.observe(context.serverId()));
+            var state = context.transitionTo(rollClient.observe(context.nodeRef()));
             return state == targetState;
         });
     }
@@ -345,7 +346,7 @@ class RackRolling {
                 timeoutMs,
                 () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
         .poll(1_000, () -> {
-            var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.serverId());
+            var remainingReplicas = rollClient.tryElectAllPreferredLeaders(context.nodeRef());
             if (remainingReplicas == 0) {
                 context.transitionTo(State.LEADING_ALL_PREFERRED);
             }
@@ -363,27 +364,27 @@ class RackRolling {
         }
 
         var serverContextWrtIds = new HashMap<Integer, Context>();
-        var serverIds = new ArrayList<Integer>();
+        var nodeRefs = new ArrayList<NodeRef>();
         for (Context context : batch) {
             Integer id = context.serverId();
-            serverIds.add(id);
+            nodeRefs.add(context.nodeRef());
             serverContextWrtIds.put(id, context);
         }
 
         Alarm.timer(time,
                 remainingTimeoutMs,
-                () -> "Servers " + serverIds + " failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " +
-                        serverIds.stream().map(serverId -> serverContextWrtIds.get(serverId)).collect(Collectors.toSet()))
+                () -> "Servers " + nodeRefs + " failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " +
+                        nodeRefs.stream().map(nodeRef -> serverContextWrtIds.get(nodeRef.nodeId())).collect(Collectors.toSet()))
             .poll(1_000, () -> {
-                var toRemove = new ArrayList<Integer>();
-                for (var serverId : serverIds) {
-                    if (rollClient.tryElectAllPreferredLeaders(serverId) == 0) {
-                        serverContextWrtIds.get(serverId).transitionTo(State.LEADING_ALL_PREFERRED);
-                        toRemove.add(serverId);
+                var toRemove = new ArrayList<NodeRef>();
+                for (var nodeRef : nodeRefs) {
+                    if (rollClient.tryElectAllPreferredLeaders(nodeRef) == 0) {
+                        serverContextWrtIds.get(nodeRef.nodeId()).transitionTo(State.LEADING_ALL_PREFERRED);
+                        toRemove.add(nodeRef);
                     }
                 }
-                serverIds.removeAll(toRemove);
-                return serverIds.isEmpty();
+                nodeRefs.removeAll(toRemove);
+                return nodeRefs.isEmpty();
             });
     }
 
@@ -395,7 +396,7 @@ class RackRolling {
                                                                            Map<Plan, List<Context>> byPlan) {
         var contexts = byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of());
         var brokerConfigs = rollClient.describeBrokerConfigs(contexts.stream()
-                .map(Context::serverId).toList());
+                .map(Context::nodeRef).toList());
 
         var xxx = contexts.stream().collect(Collectors.groupingBy(context -> {
             RollClient.Configs configPair = brokerConfigs.get(context.serverId());
@@ -472,7 +473,7 @@ class RackRolling {
      */
     public static void rollingRestart(Time time,
                                       RollClient rollClient,
-                                      List<Integer> nodes,
+                                      List<NodeRef> nodes,
                                       Function<Integer, RestartReasons> predicate,
                                       Reconciliation reconciliation,
                                       KafkaVersion kafkaVersion,
@@ -492,7 +493,7 @@ class RackRolling {
 
             for (var context : contexts) {
                 // restart unready brokers
-                context.transitionTo(rollClient.observe(context.serverId()));
+                context.transitionTo(rollClient.observe(context.nodeRef()));
             }
 
             int maxReconfigs = 1;

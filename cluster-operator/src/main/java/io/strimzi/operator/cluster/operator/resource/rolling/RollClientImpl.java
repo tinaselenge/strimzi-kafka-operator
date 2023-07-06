@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
@@ -67,18 +68,18 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public boolean isNotReady(Integer nodeId) {
+    public boolean isNotReady(NodeRef nodeRef) {
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
-    public BrokerState getBrokerState(Integer nodeId) {
+    public BrokerState getBrokerState(NodeRef nodeRef) {
         String podName = null; // TODO convert the nodeId to a podname
         return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
     }
 
     @Override
-    public void deletePod(String podName) {
+    public void deletePod(NodeRef nodeRef) {
         throw new UnsupportedOperationException("TODO");
     }
 
@@ -142,17 +143,17 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public void reconfigureServer(int serverId, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
+    public void reconfigureServer(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
-    public int tryElectAllPreferredLeaders(int serverId) {
+    public int tryElectAllPreferredLeaders(NodeRef nodeRef) {
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
-    public Map<Integer, Configs> describeBrokerConfigs(List<Integer> toList) {
+    public Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) {
         return null;
     }
 
