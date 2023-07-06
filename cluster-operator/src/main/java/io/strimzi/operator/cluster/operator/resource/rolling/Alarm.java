@@ -41,15 +41,24 @@ public class Alarm {
         this.timeoutMessageSupplier = timeoutMessageSupplier;
     }
 
+    /**
+     * Creates an Alerm
+     * @param time The source of time
+     * @param timeoutMs The timeout for this alarm.
+     * @param timeoutMessageSupplier The exception message
+     * @return The alarm
+     */
     public static Alarm timer(Time time, long timeoutMs, Supplier<String> timeoutMessageSupplier) {
         if (timeoutMs < 0) {
             throw new IllegalArgumentException();
         }
-        long start = time.nanoTime();
-        long deadline = start + 1_000_000 * timeoutMs;
+        long deadline = time.nanoTime() + 1_000_000 * timeoutMs;
         return new Alarm(time, deadline, timeoutMessageSupplier);
     }
 
+    /**
+     * @return The remaining number of milliseconds until the deadline passed
+     */
     public long remainingMs() {
         return Math.max(deadline - time.nanoTime(), 0) / 1_000_000L;
     }
@@ -61,8 +70,8 @@ public class Alarm {
      * alarm's deadline.
      * The thread does not lose ownership of any monitors.
      * @param ms The number of milliseconds to sleep for.
-     * @throws TimeoutException
-     * @throws InterruptedException
+     * @throws TimeoutException If the Alarm's deadline has passed
+     * @throws InterruptedException If the current thread is interrupted
      */
     public void sleep(long ms) throws TimeoutException, InterruptedException {
         if (ms < 0) {

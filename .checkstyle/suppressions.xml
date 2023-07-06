@@ -33,4 +33,8 @@
     <suppress checks="UnnecessaryParentheses"
               files="io[/\\]strimzi[/\\].*"/>
 
+    <!-- We don't require the Strimzi copyright head of source code which originates from external projects -->
+    <suppress checks="RegexpHeader"
+              files="io[/\\]strimzi[/\\]operator[/\\]cluster[/\\]operator[/\\]resource[/\\]rolling[/\\]BrokerState\.java"/>
+
 </suppressions>
