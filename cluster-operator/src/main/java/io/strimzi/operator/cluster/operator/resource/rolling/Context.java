@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
@@ -16,7 +17,7 @@ import java.time.format.DateTimeFormatter;
  * Per-server context information during a rolling restart/reconfigure
  */
 final class Context {
-    private final int serverId;
+    private final NodeRef nodeRef;
     private State state;
     private long lastTransition;
     private RestartReasons reason;
@@ -25,16 +26,16 @@ final class Context {
     private KafkaBrokerLoggingConfigurationDiff loggingDiff;
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(int serverId, State state, long lastTransition, RestartReasons reason, int numRestarts) {
-        this.serverId = serverId;
+    private Context(NodeRef nodeRef, State state, long lastTransition, RestartReasons reason, int numRestarts) {
+        this.nodeRef = nodeRef;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
         this.numRestarts = numRestarts;
     }
 
-    static Context start(int serverId) {
-        return new Context(serverId, State.UNKNOWN, System.currentTimeMillis(), null, 0);
+    static Context start(NodeRef nodeRef) {
+        return new Context(nodeRef, State.UNKNOWN, System.currentTimeMillis(), null, 0);
     }
 
     State transitionTo(State state) {
@@ -53,7 +54,11 @@ final class Context {
     }
 
     public int serverId() {
-        return serverId;
+        return nodeRef.nodeId();
+    }
+
+    public NodeRef nodeRef() {
+        return nodeRef;
     }
 
     public State state() {
@@ -84,7 +89,7 @@ final class Context {
     public String toString() {
 
         return "Context[" +
-                "serverId=" + serverId + ", " +
+                "nodeRef=" + nodeRef + ", " +
                 "state=" + state + ", " +
                 "lastTransition=" + DateTimeFormatter.ISO_DATE_TIME.format(Instant.ofEpochMilli(lastTransition).atZone(ZoneId.systemDefault())) + ", " +
                 "reason=" + reason + ", " +

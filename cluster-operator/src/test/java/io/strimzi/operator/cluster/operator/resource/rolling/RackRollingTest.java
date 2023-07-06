@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.common.Reconciliation;
@@ -29,7 +30,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
@@ -60,7 +60,7 @@ public class RackRollingTest {
     @Test
     public void shouldNotRestartBrokersWhenAllHealthyAndNoReasons() throws ExecutionException, InterruptedException, TimeoutException {
         // given
-        var brokerId = 0;
+        var brokerId = new NodeRef("pool-kafka-0", 0, "pool", false, false);
 
         RollClient client = mock(RollClient.class);
         mockHealthyBroker(client, brokerId);
@@ -80,21 +80,21 @@ public class RackRollingTest {
                 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(anyInt(), any(), any());
+        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
         Mockito.verify(client, never()).deletePod(any());
-        Mockito.verify(client, never()).tryElectAllPreferredLeaders(anyInt());
+        Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
     }
 
-    private static void mockHealthyBroker(RollClient client, int brokerId) {
+    private static void mockHealthyBroker(RollClient client, NodeRef nodeRef) {
         doReturn(false)
                 .when(client)
-                .isNotReady(brokerId);
+                .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING)
                 .when(client)
-                .getBrokerState(brokerId);
+                .getBrokerState(nodeRef);
         doCallRealMethod()
                 .when(client)
-                .observe(brokerId);
+                .observe(nodeRef);
     }
 
     // TODO: Currently this test fails since no partitions are present on the broker(one of the edge case),
@@ -103,13 +103,13 @@ public class RackRollingTest {
     public void shouldRestartBrokerIfReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerId = 0;
+        var brokerId = new NodeRef("pool-kafka-0", 0, "pool", false, false);
 
         RollClient client = mock(RollClient.class);
         mockHealthyBroker(client, brokerId);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
                 .when(client)
-                .describeBrokerConfigs(List.of(0));
+                .describeBrokerConfigs(List.of(brokerId));
 
         // when
         RackRolling.rollingRestart(time,
@@ -126,9 +126,9 @@ public class RackRollingTest {
                 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(anyInt(), any(), any());
+        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(any());
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(anyInt());
+        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(any());
     }
 
 
@@ -138,7 +138,7 @@ public class RackRollingTest {
     public void shouldRestartBrokerWithTopicWithReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerId = 0;
+        var brokerId = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
@@ -153,10 +153,10 @@ public class RackRollingTest {
                 .describeTopics(List.of(topicAId));
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
                 .when(client)
-                .describeBrokerConfigs(List.of(0));
+                .describeBrokerConfigs(List.of(brokerId));
         doReturn(0)
                 .when(client)
-                .tryElectAllPreferredLeaders(0);
+                .tryElectAllPreferredLeaders(brokerId);
 
         // when
         RackRolling.rollingRestart(time,
@@ -173,16 +173,16 @@ public class RackRollingTest {
                 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(anyInt(), any(), any());
+        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(any());
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(anyInt());
+        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(any());
     }
 
     @Test
     public void shouldRestartNotReadyBrokerWithTopicWithNoReason() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerId = 0;
+        var brokerId = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
@@ -195,7 +195,7 @@ public class RackRollingTest {
                 .getBrokerState(brokerId);
         doCallRealMethod()
                 .when(client)
-                .observe(0);
+                .observe(brokerId);
         doReturn(Set.of(new TopicListing("topic-A", topicAId, true)))
                 .when(client)
                 .listTopics();
@@ -207,10 +207,10 @@ public class RackRollingTest {
                 .describeTopics(List.of(topicAId));
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
                 .when(client)
-                .describeBrokerConfigs(List.of(0));
+                .describeBrokerConfigs(List.of(brokerId));
         doReturn(0)
                 .when(client)
-                .tryElectAllPreferredLeaders(0);
+                .tryElectAllPreferredLeaders(brokerId);
 
         // when
         RackRolling.rollingRestart(time,
@@ -227,16 +227,16 @@ public class RackRollingTest {
                 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(anyInt(), any(), any());
+        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(any());
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(anyInt());
+        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(any());
     }
 
     @Test
     public void shouldReconfigureBrokerWithChangedReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerId = 0;
+        var brokerId = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
@@ -249,7 +249,7 @@ public class RackRollingTest {
                 .getBrokerState(brokerId);
         doCallRealMethod()
                 .when(client)
-                .observe(0);
+                .observe(brokerId);
         doReturn(Set.of(new TopicListing("topic-A", topicAId, true)))
                 .when(client)
                 .listTopics();
@@ -263,13 +263,13 @@ public class RackRollingTest {
                 new ConfigEntry("compression.type", "zstd")
         )), new Config(Set.of()))))
                 .when(client)
-                .describeBrokerConfigs(List.of(0));
+                .describeBrokerConfigs(List.of(brokerId));
         doReturn(0)
                 .when(client)
-                .tryElectAllPreferredLeaders(0);
+                .tryElectAllPreferredLeaders(brokerId);
         doReturn(State.SERVING)
                 .when(client)
-                .observe(0);
+                .observe(brokerId);
 
         // when
         RackRolling.rollingRestart(time,
@@ -296,23 +296,26 @@ public class RackRollingTest {
     public void shouldRestartMultipleBrokersWithTopicWithNoReason() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerIds = List.of(0, 1, 2);
+        var brokerIds = List.of(
+                new NodeRef("pool-kafka-0", 0, "pool", false, false),
+                new NodeRef("pool-kafka-1", 1, "pool", false, false),
+                new NodeRef("pool-kafka-2", 2, "pool", false, false));
         List<Node> nodeList = new ArrayList<>();
-        for (Integer brokerId: brokerIds) {
-            nodeList.add(new Node(brokerId, Node.noNode().host(), Node.noNode().port()));
+        for (var brokerId: brokerIds) {
+            nodeList.add(new Node(brokerId.nodeId(), Node.noNode().host(), Node.noNode().port()));
         }
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
-        for (Integer brokerId: brokerIds) {
-            configPair.put(brokerId, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
+        for (var brokerId: brokerIds) {
+            configPair.put(brokerId.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
         Collection<TopicListing> topicListings = new HashSet<>();
-        for (Integer brokerId: brokerIds) {
+        for (var brokerId: brokerIds) {
             Uuid topicId = Uuid.randomUuid();
-            topicListings.add(new TopicListing("topic-" + brokerId, topicId, true));
+            topicListings.add(new TopicListing("topic-" + brokerId.nodeId(), topicId, true));
         }
 
         RollClient client = mock(RollClient.class);
-        for (Integer brokerId: brokerIds) {
+        for (var brokerId: brokerIds) {
             mockHealthyBroker(client, brokerId);
         }
         doReturn(topicListings)
@@ -335,7 +338,7 @@ public class RackRollingTest {
                 .describeBrokerConfigs(any());
         doReturn(0)
                 .when(client)
-                .tryElectAllPreferredLeaders(0);
+                .tryElectAllPreferredLeaders(brokerIds.get(0));
 
         // when
         RackRolling.rollingRestart(time,
@@ -359,23 +362,26 @@ public class RackRollingTest {
     public void shouldRestartMultipleBrokersWithTopicWithReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
-        var brokerIds = List.of(0, 1, 2);
+        var brokerIds = List.of(
+                new NodeRef("pool-kafka-0", 0, "pool", false, false),
+                new NodeRef("pool-kafka-1", 1, "pool", false, false),
+                new NodeRef("pool-kafka-2", 2, "pool", false, false));
         List<Node> nodeList = new ArrayList<>();
-        for (Integer brokerId: brokerIds) {
-            nodeList.add(new Node(brokerId, Node.noNode().host(), Node.noNode().port()));
+        for (var brokerId: brokerIds) {
+            nodeList.add(new Node(brokerId.nodeId(), Node.noNode().host(), Node.noNode().port()));
         }
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
-        for (Integer brokerId: brokerIds) {
-            configPair.put(brokerId, new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
+        for (var brokerId: brokerIds) {
+            configPair.put(brokerId.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
         Collection<TopicListing> topicListings = new HashSet<>();
-        for (Integer brokerId: brokerIds) {
+        for (var brokerId: brokerIds) {
             Uuid id = Uuid.randomUuid();
-            topicListings.add(new TopicListing("topic-" + brokerId, id, true));
+            topicListings.add(new TopicListing("topic-" + brokerId.nodeId(), id, true));
         }
 
         RollClient client = mock(RollClient.class);
-        for (Integer brokerId: brokerIds) {
+        for (var brokerId: brokerIds) {
             mockHealthyBroker(client, brokerId);
         }
         doReturn(topicListings)
@@ -398,7 +404,7 @@ public class RackRollingTest {
                 .describeBrokerConfigs(any());
         doReturn(0)
                 .when(client)
-                .tryElectAllPreferredLeaders(0);
+                .tryElectAllPreferredLeaders(brokerIds.get(0));
 
         // when
         RackRolling.rollingRestart(time,
@@ -415,7 +421,7 @@ public class RackRollingTest {
                 5);
 
         // then
-        for (Integer brokerId: brokerIds) {
+        for (var brokerId: brokerIds) {
             Mockito.verify(client, never()).reconfigureServer(eq(brokerId), any(), any());
             // TODO Mockito.verify(client, times(1)).deletePod(eq(brokerId)); need to map between server id and pod name
             Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(brokerId));
