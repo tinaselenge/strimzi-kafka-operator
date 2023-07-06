@@ -23,7 +23,7 @@ interface RollClient {
     boolean isNotReady(Integer nodeId);
 
     /** @return The broker state, according to the Kafka Agent */
-    int getBrokerState(Integer nodeId);
+    BrokerState getBrokerState(Integer nodeId);
 
     /**
      * Makes observations of server of the given context, and return the corresponding state.
@@ -35,10 +35,10 @@ interface RollClient {
             return State.NOT_READY;
         } else {
             try {
-                int bs = getBrokerState(serverId);
-                if (bs < 3) {
+                var bs = getBrokerState(serverId);
+                if (bs.value() < BrokerState.RUNNING.value()) {
                     return State.RECOVERING;
-                } else if (bs == 3) {
+                } else if (bs.value() == BrokerState.RUNNING.value()) {
                     return State.SERVING;
                 } else {
                     return State.NOT_READY;
