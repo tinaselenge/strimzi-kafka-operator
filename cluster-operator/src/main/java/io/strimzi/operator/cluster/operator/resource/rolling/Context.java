@@ -4,6 +4,10 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+
 /**
  * Per-server context information during a rolling restart/reconfigure
  */
@@ -72,10 +76,11 @@ final class Context {
 
     @Override
     public String toString() {
+
         return "Context[" +
                 "serverId=" + serverId + ", " +
                 "state=" + state + ", " +
-                "lastTransition=" + lastTransition + ", " +
+                "lastTransition=" + DateTimeFormatter.ISO_DATE_TIME.format(Instant.ofEpochMilli(lastTransition).atZone(ZoneId.systemDefault())) + ", " +
                 "reason=" + reason + ", " +
                 "numRestarts=" + numRestarts + ']';
     }
