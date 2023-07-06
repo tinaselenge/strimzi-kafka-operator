@@ -164,15 +164,14 @@ public class RackRollingTest {
         var brokerId = 0;
         RollClient client = mock(RollClient.class);
 
-        // TODO is this right, client.isNotReady -> False, but observer -> NOT_READY??
-        doReturn(true)
+        doReturn(true, false)
                 .when(client)
                 .isNotReady(brokerId);
+        doReturn(1, 2, 3)
+                .when(client)
+                .getBrokerState(brokerId);
         doCallRealMethod().when(client)
                 .observe(0);
-//        doReturn(State.NOT_READY)
-//                .when(client)
-//                .observe(0);
 
         Uuid id = Uuid.randomUuid();
         doReturn(Set.of(new TopicListing("topic-A", id, true)))
@@ -204,8 +203,8 @@ public class RackRollingTest {
                 KafkaVersionTestUtils.getLatestVersion(),
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                1000,
-                1000,
+                30_000,
+                120_000,
                 1,
                 1);
 
