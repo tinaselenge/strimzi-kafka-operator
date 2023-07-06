@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import org.apache.kafka.clients.admin.Config;
@@ -22,22 +23,22 @@ import java.util.stream.Stream;
  */
 interface RollClient {
     /** @return true if the pod for this node is not ready according to kubernetes */
-    boolean isNotReady(Integer nodeId);
+    boolean isNotReady(NodeRef nodeRef);
 
     /** @return The broker state, according to the Kafka Agent */
-    BrokerState getBrokerState(Integer nodeId);
+    BrokerState getBrokerState(NodeRef nodeRef);
 
     /**
      * Makes observations of server of the given context, and return the corresponding state.
-     * @param serverId The server id
+     * @param nodeRef The node
      * @return The state
      */
-    public default State observe(int serverId) {
-        if (isNotReady(serverId)) {
+    public default State observe(NodeRef nodeRef) {
+        if (isNotReady(nodeRef)) {
             return State.NOT_READY;
         } else {
             try {
-                var bs = getBrokerState(serverId);
+                var bs = getBrokerState(nodeRef);
                 if (bs.value() < BrokerState.RUNNING.value()) {
                     return State.RECOVERING;
                 } else if (bs.value() == BrokerState.RUNNING.value()) {
@@ -53,9 +54,9 @@ interface RollClient {
 
     /**
      * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
-     * @param podName The name of the pod.
+     * @param nodeRef The node.
      */
-    public void deletePod(String podName);
+    public void deletePod(NodeRef nodeRef);
 
     /**
      * @return All the topics in the cluster, including internal topics.
@@ -94,26 +95,26 @@ interface RollClient {
     /**
      * Reconfigure the given server with the given configs
      *
-     * @param serverId                            The server id
-     * @param kafkaBrokerConfigurationDiff
-     * @param kafkaBrokerLoggingConfigurationDiff
+     * @param nodeRef The node
+     * @param kafkaBrokerConfigurationDiff The broker config diff
+     * @param kafkaBrokerLoggingConfigurationDiff The broker logging diff
      */
-    void reconfigureServer(int serverId, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff);
+    void reconfigureServer(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff);
 
     /**
      * Try to elect the given server as the leader for all the replicas on the server where it's not already
      * the preferred leader.
-     * @param serverId The server id
+     * @param nodeRef The node
      * @return The number of replicas on the server which it is not leading, but is preferred leader
      */
-    int tryElectAllPreferredLeaders(int serverId);
+    int tryElectAllPreferredLeaders(NodeRef nodeRef);
 
     /**
      * Return the broker configs and broker logger configs for each of the given brokers
      * @param toList The brokers to get the configs for
      * @return A map from broker id to configs
      */
-    Map<Integer, Configs> describeBrokerConfigs(List<Integer> toList);
+    Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList);
 
     static record Configs(Config brokerConfigs, Config brokerLoggerConfigs) { }
 }
