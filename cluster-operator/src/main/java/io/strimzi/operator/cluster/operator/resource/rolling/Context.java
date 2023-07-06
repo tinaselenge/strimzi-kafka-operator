@@ -4,6 +4,10 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.cluster.model.RestartReasons;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
+
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -15,11 +19,13 @@ final class Context {
     private final int serverId;
     private State state;
     private long lastTransition;
-    private String reason;
+    private RestartReasons reason;
     private int numRestarts;
     private int numReconfigs;
+    private KafkaBrokerLoggingConfigurationDiff loggingDiff;
+    private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(int serverId, State state, long lastTransition, String reason, int numRestarts) {
+    private Context(int serverId, State state, long lastTransition, RestartReasons reason, int numRestarts) {
         this.serverId = serverId;
         this.state = state;
         this.lastTransition = lastTransition;
@@ -58,11 +64,11 @@ final class Context {
         return lastTransition;
     }
 
-    public String reason() {
+    public RestartReasons reason() {
         return reason;
     }
 
-    public void reason(String reason) {
+    public void reason(RestartReasons reason) {
         this.reason = reason;
     }
 
@@ -85,4 +91,19 @@ final class Context {
                 "numRestarts=" + numRestarts + ']';
     }
 
+    public void brokerConfigDiff(KafkaBrokerConfigurationDiff diff) {
+        this.brokerConfigDiff = diff;
+    }
+
+    public void loggingDiff(KafkaBrokerLoggingConfigurationDiff loggingDiff) {
+        this.loggingDiff = loggingDiff;
+    }
+
+    public KafkaBrokerLoggingConfigurationDiff loggingDiff() {
+        return loggingDiff;
+    }
+
+    public KafkaBrokerConfigurationDiff brokerConfigDiff() {
+        return brokerConfigDiff;
+    }
 }

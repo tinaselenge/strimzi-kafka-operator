@@ -146,4 +146,8 @@ public class RestartReasons implements Iterable<RestartReason> {
     public String toString() {
         return reasons.keySet().toString();
     }
+
+    public boolean singletonOf(RestartReason reason) {
+        return reasons.size() == 1 && reasons.containsKey(reason);
+    }
 }

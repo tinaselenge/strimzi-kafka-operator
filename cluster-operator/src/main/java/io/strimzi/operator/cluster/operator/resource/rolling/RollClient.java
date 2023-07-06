@@ -4,6 +4,8 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
@@ -70,7 +72,7 @@ interface RollClient {
      * @throws InterruptedException
      * @throws ExecutionException
      */
-    Stream<TopicDescription> describeTopics(List<Uuid> topicIds) throws InterruptedException, ExecutionException;
+    List<TopicDescription> describeTopics(List<Uuid> topicIds) throws InterruptedException, ExecutionException;
 
     /**
      * Get the {@code min.insync.replicas} of each of the topics in the given {@code topicNames} list.
@@ -91,9 +93,12 @@ interface RollClient {
 
     /**
      * Reconfigure the given server with the given configs
-     * @param serverId The server id
+     *
+     * @param serverId                            The server id
+     * @param kafkaBrokerConfigurationDiff
+     * @param kafkaBrokerLoggingConfigurationDiff
      */
-    void reconfigureServer(int serverId);
+    void reconfigureServer(int serverId, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff);
 
     /**
      * Try to elect the given server as the leader for all the replicas on the server where it's not already

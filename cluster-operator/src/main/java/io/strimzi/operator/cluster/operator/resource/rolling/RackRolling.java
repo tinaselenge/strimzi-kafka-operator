@@ -6,6 +6,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.RestartReason;
+import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.common.Reconciliation;
@@ -215,7 +216,7 @@ class RackRolling {
         var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
 
         // Convert the TopicDescriptions to the Server and Replicas model
-        Stream<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
+        List<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
 
         topicDescriptions.forEach(topicDescription -> {
             topicDescription.partitions().forEach(partition -> {
@@ -322,7 +323,7 @@ class RackRolling {
         if (context.numReconfigs() > maxReconfigs) {
             throw new RuntimeException("Too many reconfigs");
         }
-        rollClient.reconfigureServer(context.serverId());
+        rollClient.reconfigureServer(context.serverId(), context.brokerConfigDiff(), context.loggingDiff());
         context.transitionTo(State.RECONFIGURED);
         // TODO create kube Event
     }
@@ -386,26 +387,51 @@ class RackRolling {
             });
     }
 
-    private static Map<Boolean, List<Context>> partitionByReconfigurability(Reconciliation reconciliation,
-                                                                            KafkaVersion kafkaVersion,
-                                                                            Function<Integer, String> kafkaConfigProvider,
-                                                                            String desiredLogging,
-                                                                            RollClient rollClient,
-                                                                            List<Context> contexts) {
+    private static Map<Plan, List<Context>> refinePlanForReconfigurability(Reconciliation reconciliation,
+                                                                           KafkaVersion kafkaVersion,
+                                                                           Function<Integer, String> kafkaConfigProvider,
+                                                                           String desiredLogging,
+                                                                           RollClient rollClient,
+                                                                           Map<Plan, List<Context>> byPlan) {
+        var contexts = byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of());
         var brokerConfigs = rollClient.describeBrokerConfigs(contexts.stream()
                 .map(Context::serverId).toList());
 
-        return contexts.stream().collect(Collectors.partitioningBy(context -> {
+        var xxx = contexts.stream().collect(Collectors.groupingBy(context -> {
             RollClient.Configs configPair = brokerConfigs.get(context.serverId());
             var diff = new KafkaBrokerConfigurationDiff(reconciliation,
                     configPair.brokerConfigs(),
                     kafkaConfigProvider.apply(context.serverId()),
                     kafkaVersion,
                     context.serverId());
+            // TODO what is the source of truth about reconfiguration
+            //      on the one hand we have the RestartReason, which might be a singleton of reconfig
+            //      on the other hand there is the diff of current vs desired configs
             var loggingDiff = new KafkaBrokerLoggingConfigurationDiff(reconciliation, configPair.brokerLoggerConfigs(), desiredLogging);
-            return !diff.isEmpty() && diff.canBeUpdatedDynamically()
-                    && !loggingDiff.isEmpty();
+            context.brokerConfigDiff(diff);
+            context.loggingDiff(loggingDiff);
+            if (!diff.isEmpty() && diff.canBeUpdatedDynamically()) {
+                return Plan.RECONFIGURE;
+            } else if (diff.isEmpty()) {
+                return Plan.RECONFIGURE;
+            } else {
+                return Plan.RESTART;
+            }
         }));
+
+        return Map.of(
+                Plan.RESTART, Stream.concat(byPlan.getOrDefault(Plan.RESTART, List.of()).stream(), xxx.getOrDefault(Plan.RESTART, List.of()).stream()).toList(),
+                Plan.RECONFIGURE, xxx.getOrDefault(Plan.RECONFIGURE, List.of()),
+                Plan.RESTART_FIRST, xxx.getOrDefault(Plan.RESTART_FIRST, List.of())
+        );
+    }
+
+    enum Plan {
+        NOP,
+        RESTART_FIRST,
+        MAYBE_RECONFIGURE,
+        RECONFIGURE,
+        RESTART
     }
 
     /**
@@ -447,7 +473,7 @@ class RackRolling {
     public static void rollingRestart(Time time,
                                       RollClient rollClient,
                                       List<Integer> nodes,
-                                      Function<Integer, Set<RestartReason>> predicate,
+                                      Function<Integer, RestartReasons> predicate,
                                       Reconciliation reconciliation,
                                       KafkaVersion kafkaVersion,
                                       Function<Integer, String> kafkaConfigProvider,
@@ -468,49 +494,43 @@ class RackRolling {
                 // restart unready brokers
                 context.transitionTo(rollClient.observe(context.serverId()));
             }
-            var byUnreadiness = contexts.stream().collect(Collectors.partitioningBy(context -> context.state() == State.NOT_READY));
 
-            for (var context : byUnreadiness.get(true)) {
-                context.reason("Not ready");
+            int maxReconfigs = 1;
+            var byPlan = initialPlan(predicate, contexts, maxReconfigs);
+            if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
+                    && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
+                    && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
+                break OUTER;
+            }
+
+            for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
+                context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
                 restartServer(rollClient, context, maxRestarts);
                 long remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, postRestartTimeoutMs);
                 awaitPreferred(time, rollClient, context, remainingTimeoutMs);
                 continue OUTER;
             }
 
-            var actable = byUnreadiness.get(false).stream().filter(context -> {
-                var reasons = predicate.apply(context.serverId());
-                if (reasons.isEmpty()) {
-                    return false;
-                } else {
-                    context.reason(reasons.toString());
-                    return true;
-                }
-            }).toList();
-
-            if (actable.isEmpty()) {
-                break OUTER;
-            }
-
-            int maxReconfigs = 1;
-            var potentiallyReconfigurable = actable.stream()
-                    .filter(context -> context.numReconfigs() < maxReconfigs).toList();
-            var reconfigurable = partitionByReconfigurability(reconciliation,
+            byPlan = refinePlanForReconfigurability(reconciliation,
                     kafkaVersion,
                     kafkaConfigProvider,
                     desiredLogging,
                     rollClient,
-                    potentiallyReconfigurable);
-            for (var context : reconfigurable.get(true)) {
+                    byPlan);
+            for (var context : byPlan.get(Plan.RECONFIGURE)) {
                 // TODO decide on parallel/batching dynamic reconfiguration
                 reconfigureServer(rollClient, context, maxReconfigs);
-                Thread.sleep(postReconfigureTimeoutMs / 2);
+                time.sleep(postReconfigureTimeoutMs / 2, 0);
                 awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
+                // termination condition
+                if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
+                    break OUTER;
+                }
                 continue OUTER;
             }
 
             // the rest of the new algorithm
-            var batch = nextBatch(rollClient, reconfigurable.get(false).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
+            var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
             var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
             restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
@@ -522,6 +542,29 @@ class RackRolling {
         }
     }
 
+    private static Map<Plan, List<Context>> initialPlan(Function<Integer, RestartReasons> predicate, List<Context> contexts, int maxReconfigs) {
+        return contexts.stream().collect(Collectors.groupingBy(context -> {
+            if (context.state() == State.NOT_READY) {
+                return Plan.RESTART_FIRST;
+            } else {
+                var reasons = predicate.apply(context.serverId());
+                // TODO the predicate is static: The reasons returned won't change even though we do the restart
+                //      so we need a function f(reasons): plan  (where plan is sum of RESTART,RECONFIGURE,NOP
+                //      and another g(plan, context): boolean   that uses info in the context to determine whether the plan worked
+                if (reasons.getReasons().isEmpty()) {
+                    return Plan.NOP;
+                } else {
+                    context.reason(reasons);
+                    if (reasons.singletonOf(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART)
+                            && context.numReconfigs() < maxReconfigs) {
+                        return Plan.MAYBE_RECONFIGURE;
+                    } else {
+                        return Plan.RESTART;
+                    }
+                }
+            }
+        }));
+    }
 
 
 }

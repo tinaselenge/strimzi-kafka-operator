@@ -6,6 +6,8 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
+import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
@@ -26,7 +28,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 class RollClientImpl implements RollClient {
 
@@ -87,7 +88,7 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Stream<TopicDescription> describeTopics(List<Uuid> topicIds) throws InterruptedException, ExecutionException {
+    public List<TopicDescription> describeTopics(List<Uuid> topicIds) throws InterruptedException, ExecutionException {
         var topicIdBatches = batch(topicIds, ADMIN_BATCH_SIZE);
         var futures = new ArrayList<CompletableFuture<Map<Uuid, TopicDescription>>>();
         for (var topicIdBatch : topicIdBatches) {
@@ -104,7 +105,7 @@ class RollClientImpl implements RollClient {
                 throw new RuntimeException(e);
             }
         });
-        return topicDescriptions;
+        return topicDescriptions.toList();
 
     }
 
@@ -141,7 +142,7 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public void reconfigureServer(int serverId) {
+    public void reconfigureServer(int serverId, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
         throw new UnsupportedOperationException("TODO");
     }
 
