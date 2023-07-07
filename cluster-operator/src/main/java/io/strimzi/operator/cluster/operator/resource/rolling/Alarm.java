@@ -99,9 +99,7 @@ public class Alarm {
         if (pollIntervalMs <= 0) {
             throw new IllegalArgumentException();
         }
-        int attempt = 0;
         while (true) {
-            attempt++;
             if (done.getAsBoolean()) {
                 return this.remainingMs();
             }
