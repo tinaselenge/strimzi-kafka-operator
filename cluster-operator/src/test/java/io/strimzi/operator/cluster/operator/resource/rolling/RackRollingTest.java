@@ -16,6 +16,7 @@ import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
+import org.junit.Before;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -40,7 +41,7 @@ import static org.mockito.Mockito.times;
 
 public class RackRollingTest {
 
-    public static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
+    static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
 
     private final Time time = new Time.TestTime();
 
@@ -57,7 +58,7 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRestartBrokersWhenAllHealthyAndNoReasons() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldNotRestartBrokersWithNoTopicsIfAllHealthyAndNoReason() throws ExecutionException, InterruptedException, TimeoutException {
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
 
@@ -96,8 +97,14 @@ public class RackRollingTest {
                 .observe(nodeRef);
     }
 
-    private Set<TopicListing> topicListing = new HashSet<>();
-    private Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
+    private final Set<TopicListing> topicListing = new HashSet<>();
+    private final Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
+
+    @Before
+    public void before() {
+        topicListing.clear();
+        topicDescriptions.clear();
+    }
 
     private void addTopic(String topicName, Node leader) {
         addTopic(topicName, leader, List.of(leader), List.of(leader));
@@ -109,7 +116,7 @@ public class RackRollingTest {
                 List.of(new TopicPartitionInfo(0,
                         leader, replicas, isr))));
     }
-
+    
     private void mockTopics(RollClient client) throws ExecutionException, InterruptedException {
         doReturn(topicListing)
                 .when(client)
@@ -122,10 +129,8 @@ public class RackRollingTest {
                 .describeTopics(any());
     }
 
-    // TODO: Currently this test fails since no partitions are present on the broker(one of the edge case),
-    //  We should make this test working
     @Test
-    public void shouldRestartBrokerIfReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldRestartBrokerWithNoTopicIfReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
@@ -157,11 +162,10 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldRestartBrokerWithTopicWithReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldRestartBrokerIfReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
-        Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
         RollClient client = mock(RollClient.class);
@@ -196,11 +200,10 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldRestartNotReadyBrokerWithTopicWithNoReason() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldRestartNotReadyBrokerEvenIfNoReason() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
-        Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
         RollClient client = mock(RollClient.class);
@@ -243,11 +246,10 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldReconfigureBrokerWithChangedReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldReconfigureBrokerIfChangedReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
-        Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
         RollClient client = mock(RollClient.class);
@@ -296,11 +298,10 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldRestartBrokerWithChangedNonReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldRestartBrokerIfChangedNonReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
-        Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
         RollClient client = mock(RollClient.class);
@@ -348,11 +349,10 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldReconfigureBrokerWithChangedReconfigurableLoggingParameter() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldReconfigureBrokerIfChangedReconfigurableLoggingParameter() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
-        Uuid topicAId = Uuid.randomUuid();
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
         RollClient client = mock(RollClient.class);
@@ -399,7 +399,7 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldRestartMultipleBrokersWithTopicWithNoReason() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldNotRestartBrokersIfHealthyAndNoReason() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRefs = List.of(
@@ -453,7 +453,7 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldRestartMultipleBrokersWithTopicWithReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
+    void shouldRestartBrokersIfReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         var nodeRefs = List.of(
@@ -509,8 +509,8 @@ public class RackRollingTest {
     // TODO assertions that the active controller is last
     // TODO assertions that controllers are always in different batches
     // TODO test that exceeding maxRestart results in exception
-    // TODO test that exceeding postReconfigureTimeousMs results in exception
-    // TODO test that exceeding postRestartTimeousMs results in exception in all the possible cases:
+    // TODO test that exceeding postReconfigureTimeoutMs results in exception
+    // TODO test that exceeding postRestartTimeoutMs results in exception in all the possible cases:
     //    the broker state not becoming ready (and that we don't retry restarting in this case)
     //    tryElectAllPreferredLeaders not returning 0
 
