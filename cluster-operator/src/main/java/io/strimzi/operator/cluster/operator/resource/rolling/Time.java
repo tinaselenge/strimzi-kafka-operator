@@ -35,7 +35,30 @@ public interface Time {
      * A {@code Time} implementation used for testing.
      */
     public static class TestTime implements Time {
+        private final long autoAdvanceNs;
         long time = 0;
+
+        /**
+         * Constructs a new {@code Time} where time will only advance via calls to {@link #tickNanos(long)}.
+         */
+        public TestTime() {
+            this(0);
+        }
+
+        /**
+         * Constructs a new {@code Time} where time will advance either by calls to {@link #tickNanos(long)} or
+         * as a side-effect of calls to {@link #nanoTime()}.
+         * This can be useful in tests where the code under test needs to see time advance,
+         * does not call {@link #sleep(long, int)}, and difficult or impossible for the test code to call
+         * {@link #tickNanos(long)}.
+         * @param autoAdvanceNs How much time will advance when {@link #nanoTime()} is called.
+         */
+        public TestTime(long autoAdvanceNs) {
+            if (autoAdvanceNs < 0) {
+                throw new IllegalArgumentException();
+            }
+            this.autoAdvanceNs = autoAdvanceNs;
+        }
 
         /**
          * Advance the time by the given number of nanoseconds.
@@ -50,7 +73,9 @@ public interface Time {
 
         @Override
         public long nanoTime() {
-            return time;
+            var result = time;
+            time += autoAdvanceNs;
+            return result;
         }
 
         @Override
@@ -75,6 +100,7 @@ public interface Time {
      * The return value is guaranteed to be monotonic.
      *
      * <p>When the instance is {@link Time#SYSTEM_TIME} this corresponds to a call to {@link System#nanoTime()}.</p>
+     *
      * @return The number of nanoseconds since some unknown epoch.
      */
     long nanoTime();
@@ -92,7 +118,10 @@ public interface Time {
      * }</pre>
      * we would expect {@code diff} to be small in magnitude.
      *
+     * <p>The thread does not lose ownership of any monitors.</p>
+     *
      * <p>When the instance is {@link Time#SYSTEM_TIME} this corresponds to a call to {@link Thread#sleep(long, int)}.</p>
+     *
      * @param millis The number of milliseconds
      * @param nanos The number of nanoseconds
      * @throws InterruptedException If the sleep was interrupted before the given time has elapsed.
