@@ -514,6 +514,13 @@ public class RackRollingTest {
     //    the broker state not becoming ready (and that we don't retry restarting in this case)
     //    tryElectAllPreferredLeaders not returning 0
 
+    // TODO that we repeat calls to tryElectAllPreferredLeaders until the return value is 0
+
+    // TODO Tests for combined-mode brokers
+    // TODO Tests for pure controllers
+    // TODO Tests for pure brokers
+    // TODO Tests for nodes with both pure-controllers and and pure brokers
+
     // TODO handling of exceptions from the admin client
 
 }

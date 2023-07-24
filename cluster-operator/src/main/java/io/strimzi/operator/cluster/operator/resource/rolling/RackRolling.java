@@ -428,9 +428,15 @@ class RackRolling {
     }
 
     enum Plan {
+        // Used for brokers that are initially healthy and require neither restart not reconfigure
         NOP,
+        // Used for brokers that are initially not healthy
         RESTART_FIRST,
+        // Used in {@link #initialPlan(Function, List, int)} for brokers that require reconfigure
+        // before we know whether the actual config changes are reconfigurable
         MAYBE_RECONFIGURE,
+        // Used in {@link #refinePlanForReconfigurability(Reconciliation, KafkaVersion, Function, String, RollClient, Map)}
+        // once we know a MAYBE_RECONFIGURE node can actually be reconfigured
         RECONFIGURE,
         RESTART
     }
@@ -485,14 +491,13 @@ class RackRolling {
                                       int maxRestarts)
             throws InterruptedException, ExecutionException, TimeoutException {
 
-        var contexts = nodes.stream().map(Context::start).toList();
         // Create contexts
+        var contexts = nodes.stream().map(Context::start).toList();
 
-        // Execute algo
         OUTER: while (true) {
 
+            // Observe current state and update the contexts
             for (var context : contexts) {
-                // restart unready brokers
                 context.transitionTo(rollClient.observe(context.nodeRef()));
             }
 
@@ -501,9 +506,11 @@ class RackRolling {
             if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
                     && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
                     && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
+                // termination condition met
                 break OUTER;
             }
 
+            // Restart any initially unready nodes
             for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
                 context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
                 restartServer(rollClient, context, maxRestarts);
@@ -511,13 +518,18 @@ class RackRolling {
                 awaitPreferred(time, rollClient, context, remainingTimeoutMs);
                 continue OUTER;
             }
+            // If we get this far we know all nodes are ready
 
+            // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
+            // based on whether they have only reconfiguration config changes
             byPlan = refinePlanForReconfigurability(reconciliation,
                     kafkaVersion,
                     kafkaConfigProvider,
                     desiredLogging,
                     rollClient,
                     byPlan);
+
+            // Reconfigure any reconfigurable nodes
             for (var context : byPlan.get(Plan.RECONFIGURE)) {
                 // TODO decide on parallel/batching dynamic reconfiguration
                 reconfigureServer(rollClient, context, maxReconfigs);
@@ -529,11 +541,13 @@ class RackRolling {
                 }
                 continue OUTER;
             }
+            // If we get this far that all remaining nodes require a restart
 
-            // the rest of the new algorithm
+            // determine batches of nodes to be restarted together
             var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
             var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
+            // restart a batch
             restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
 
             // termination condition
