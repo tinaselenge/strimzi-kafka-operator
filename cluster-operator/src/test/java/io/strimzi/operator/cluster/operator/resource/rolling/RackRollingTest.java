@@ -156,9 +156,6 @@ public class RackRollingTest {
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
-
-    // TODO: Make the test when "no partitions on one broker" case
-
     @Test
     public void shouldRestartBrokerWithTopicWithReasonManualRolling() throws ExecutionException, InterruptedException, TimeoutException {
 
@@ -299,6 +296,109 @@ public class RackRollingTest {
     }
 
     @Test
+    public void shouldRestartBrokerWithChangedNonReconfigurableParameter() throws ExecutionException, InterruptedException, TimeoutException {
+
+        // given
+        var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
+        Uuid topicAId = Uuid.randomUuid();
+        Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
+
+        RollClient client = mock(RollClient.class);
+        doReturn(false)
+                .when(client)
+                .isNotReady(nodeRef);
+        doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
+                .when(client)
+                .getBrokerState(nodeRef);
+        doCallRealMethod()
+                .when(client)
+                .observe(nodeRef);
+        addTopic("topic-A", node);
+        mockTopics(client);
+        doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
+                new ConfigEntry("auto.leader.rebalance.enable", "true")
+        )), new Config(Set.of()))))
+                .when(client)
+                .describeBrokerConfigs(List.of(nodeRef));
+        doReturn(0)
+                .when(client)
+                .tryElectAllPreferredLeaders(nodeRef);
+        doReturn(State.SERVING)
+                .when(client)
+                .observe(nodeRef);
+
+        // when
+        RackRolling.rollingRestart(time,
+                client,
+                List.of(nodeRef),
+                RackRollingTest::configChange,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                serverId -> "auto.leader.rebalance.enable=false",
+                null,
+                30_000,
+                120_000,
+                1,
+                1);
+
+        // then
+        Mockito.verify(client, never()).reconfigureServer(eq(nodeRef),any(), any());
+        Mockito.verify(client,times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+    }
+
+    @Test
+    public void shouldReconfigureBrokerWithChangedReconfigurableLoggingParameter() throws ExecutionException, InterruptedException, TimeoutException {
+
+        // given
+        var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
+        Uuid topicAId = Uuid.randomUuid();
+        Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
+
+        RollClient client = mock(RollClient.class);
+        doReturn(false)
+                .when(client)
+                .isNotReady(nodeRef);
+        doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
+                .when(client)
+                .getBrokerState(nodeRef);
+        doCallRealMethod()
+                .when(client)
+                .observe(nodeRef);
+        addTopic("topic-A", node);
+        mockTopics(client);
+        doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
+        )), new Config(Set.of(new ConfigEntry("log.retention.ms", "1000"))))))
+                .when(client)
+                .describeBrokerConfigs(List.of(nodeRef));
+        doReturn(0)
+                .when(client)
+                .tryElectAllPreferredLeaders(nodeRef);
+        doReturn(State.SERVING)
+                .when(client)
+                .observe(nodeRef);
+
+        // when
+        RackRolling.rollingRestart(time,
+                client,
+                List.of(nodeRef),
+                RackRollingTest::configChange,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                serverId -> "log.retention.ms=1000",
+                null,
+                30_000,
+                120_000,
+                1,
+                1);
+
+        // then
+        Mockito.verify(client, times(1)).reconfigureServer(eq(nodeRef),any(), any());
+        Mockito.verify(client, never()).deletePod(eq(nodeRef));
+        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+    }
+
+    @Test
     public void shouldRestartMultipleBrokersWithTopicWithNoReason() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
@@ -345,7 +445,11 @@ public class RackRollingTest {
                 5);
 
         // then
-        // TODO add assertions
+        for (var nodeRef: nodeRefs) {
+            Mockito.verify(client, never()).reconfigureServer(eq(nodeRef), any(), any());
+            Mockito.verify(client, never()).deletePod(any());
+            Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
+        }
     }
 
     @Test
