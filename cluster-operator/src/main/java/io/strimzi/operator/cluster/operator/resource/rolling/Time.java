@@ -21,6 +21,11 @@ public interface Time {
         }
 
         @Override
+        public long systemTimeMillis() {
+            return System.currentTimeMillis();
+        }
+
+        @Override
         public void sleep(long millis, int nanos) throws InterruptedException {
             Thread.sleep(millis, nanos);
         }
@@ -79,6 +84,11 @@ public interface Time {
         }
 
         @Override
+        public long systemTimeMillis() {
+            return time / 1_000_000;
+        }
+
+        @Override
         public void sleep(long millis, int nanos) throws InterruptedException {
             if (millis < 0 || nanos < 0 || nanos > 999_999) {
                 throw new IllegalArgumentException();
@@ -104,6 +114,17 @@ public interface Time {
      * @return The number of nanoseconds since some unknown epoch.
      */
     long nanoTime();
+
+    /**
+     * The system time, defined as the number of milliseconds since the epoch, midnight, January 1, 1970 UTC.
+     * Different {@code Time} instances all use the same epoch.
+     *
+     * There are no guarantees about precision or accuracy and the return value is not guaranteed to be monotonic.
+     *
+     * When the instance is {@link Time#SYSTEM_TIME} this corresponds to a call to {@link System#currentTimeMillis()}.
+     * @return The number of milliseconds since the epoch.
+     */
+    long systemTimeMillis();
 
     /**
      * Causes the current thread to sleep (suspend execution) for the given number of milliseconds

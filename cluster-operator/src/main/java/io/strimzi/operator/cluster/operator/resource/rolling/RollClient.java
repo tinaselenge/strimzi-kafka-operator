@@ -16,7 +16,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Stream;
 
 /**
  * An amalgamation of a Kubernetes client, a Kafka Admin client, and a Kafka Agent client.
