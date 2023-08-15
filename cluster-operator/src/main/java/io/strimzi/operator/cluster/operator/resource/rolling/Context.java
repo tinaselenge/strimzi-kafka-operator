@@ -26,7 +26,7 @@ final class Context {
     private KafkaBrokerLoggingConfigurationDiff loggingDiff;
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(NodeRef nodeRef, State state, long lastTransition, RestartReasons reason, int numRestarts) {
+    private Context(NodeRef nodeRef, State state, Time time, long lastTransition, RestartReasons reason, int numRestarts) {
         this.nodeRef = nodeRef;
         this.state = state;
         this.lastTransition = lastTransition;
@@ -34,11 +34,11 @@ final class Context {
         this.numRestarts = numRestarts;
     }
 
-    static Context start(NodeRef nodeRef) {
-        return new Context(nodeRef, State.UNKNOWN, System.currentTimeMillis(), null, 0);
+    static Context start(NodeRef nodeRef, Time time) {
+        return new Context(nodeRef, State.UNKNOWN, time, time.systemTimeMillis(), null, 0);
     }
 
-    State transitionTo(State state) {
+    State transitionTo(State state, Time time) {
         if (this.state() == state) {
             return state;
         }
@@ -49,7 +49,7 @@ final class Context {
         if (state == State.RECONFIGURED) {
             this.numReconfigs++;
         }
-        this.lastTransition = System.currentTimeMillis();
+        this.lastTransition = time.systemTimeMillis();
         return state;
     }
 
@@ -91,7 +91,7 @@ final class Context {
         return "Context[" +
                 "nodeRef=" + nodeRef + ", " +
                 "state=" + state + ", " +
-                "lastTransition=" + DateTimeFormatter.ISO_DATE_TIME.format(Instant.ofEpochMilli(lastTransition).atZone(ZoneId.systemDefault())) + ", " +
+                "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
                 "numRestarts=" + numRestarts + ']';
     }
