@@ -15,7 +15,10 @@ import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
+import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.TopicCollection;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
@@ -25,6 +28,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -69,17 +73,23 @@ class RollClientImpl implements RollClient {
 
     @Override
     public boolean isNotReady(NodeRef nodeRef) {
+//        PodOperator podOps = null;
+//        return !podOps.isReady(namespace, name);
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
     public BrokerState getBrokerState(NodeRef nodeRef) {
-        String podName = null; // TODO convert the nodeId to a podname
+        String podName = nodeRef.podName();
         return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
     }
 
     @Override
     public void deletePod(NodeRef nodeRef) {
+//        client.pods().inNamespace(namespace).withName(nodeRef.podName()).delete();
+//        OR
+//        PodOperator podOpds;
+//        podOpds.restart();
         throw new UnsupportedOperationException("TODO");
     }
 
@@ -114,9 +124,8 @@ class RollClientImpl implements RollClient {
     public int activeController() throws InterruptedException, ExecutionException {
         // TODO when controllers not colocated with brokers, how do we find the active controller?
         DescribeClusterResult dcr = admin.describeCluster();
-        var activeController = dcr.controller();
-        int controllerId = activeController.get().id();
-        return controllerId;
+        var activeController = dcr.controller().get();
+        return activeController.id();
     }
 
     @Override
@@ -131,9 +140,7 @@ class RollClientImpl implements RollClient {
         var topicDescriptions = futures.stream().flatMap(cf -> {
             try {
                 return cf.get().entrySet().stream();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            } catch (ExecutionException e) {
+            } catch (InterruptedException | ExecutionException e) {
                 throw new RuntimeException(e);
             }
         });
@@ -143,18 +150,50 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public void reconfigureServer(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
+    public void reconfigureNode(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
         throw new UnsupportedOperationException("TODO");
     }
 
     @Override
-    public int tryElectAllPreferredLeaders(NodeRef nodeRef) {
-        throw new UnsupportedOperationException("TODO");
+    public int tryElectAllPreferredLeaders(NodeRef nodeRef) throws ExecutionException, InterruptedException {
+        // find all partitions where the node is the preferred leader
+        // we could do listTopics then describe all the topics, but that would scale poorly with number of topics
+        // using describe log dirs should be more efficient
+        var topicsOnNode = admin.describeLogDirs(List.of(nodeRef.nodeId())).allDescriptions().get()
+                .get(nodeRef).values().stream()
+                .flatMap(x -> x.replicaInfos().keySet().stream())
+                .map(TopicPartition::topic)
+                .collect(Collectors.toSet());
+
+        var topicDescriptionsOnNode = admin.describeTopics(topicsOnNode).allTopicNames().get().values();
+        var toElect = new HashSet<TopicPartition>();
+        for (TopicDescription td : topicDescriptionsOnNode) {
+            for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
+                if (!topicPartitionInfo.replicas().isEmpty()
+                        && topicPartitionInfo.replicas().get(0).id() == nodeRef.nodeId() // this node is preferred leader
+                        && topicPartitionInfo.leader().id() != nodeRef.nodeId()) { // this onde is not current leader
+                    toElect.add(new TopicPartition(td.name(), topicPartitionInfo.partition()));
+                }
+            }
+        }
+
+        var electionResults = admin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
+
+        long count = electionResults.values().stream()
+                .filter(Optional::isPresent)
+                .count();
+        return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
     }
 
     @Override
-    public Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) {
-        return null;
+    public Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) throws ExecutionException, InterruptedException {
+        var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
+        var result = dc.all().get();
+
+        return toList.stream().collect(Collectors.toMap(NodeRef::nodeId,
+                nodeRef -> new Configs(result.get(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef))),
+                        result.get(new ConfigResource(ConfigResource.Type.BROKER_LOGGER, String.valueOf(nodeRef)))
+                        )));
     }
 
 }
