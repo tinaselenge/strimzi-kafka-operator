@@ -4,6 +4,9 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+/**
+ * Enumerates the possible "rolling states" of a Kafka node
+ */
 enum State {
     UNKNOWN, // the initial state
     NOT_READY, // decided to restart right now or broker state > 3

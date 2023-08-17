@@ -10,23 +10,29 @@ import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDif
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
 /**
  * Per-server context information during a rolling restart/reconfigure
  */
 final class Context {
+    /** The node this context refers to */
     private final NodeRef nodeRef;
+    /** The state of the node the last time it was observed */
     private State state;
+    /** The time of the last state transition */
     private long lastTransition;
+    /** The reasons this node needs to be restarted or reconfigured */
     private RestartReasons reason;
+    /** The number of restarts attempted so far. */
     private int numRestarts;
+    /** The number of reconfigurations attempted so far. */
     private int numReconfigs;
+    /** The difference between the current logging config and the desired logging config */
     private KafkaBrokerLoggingConfigurationDiff loggingDiff;
+    /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(NodeRef nodeRef, State state, Time time, long lastTransition, RestartReasons reason, int numRestarts) {
+    private Context(NodeRef nodeRef, State state, long lastTransition, RestartReasons reason, int numRestarts) {
         this.nodeRef = nodeRef;
         this.state = state;
         this.lastTransition = lastTransition;
@@ -35,7 +41,7 @@ final class Context {
     }
 
     static Context start(NodeRef nodeRef, Time time) {
-        return new Context(nodeRef, State.UNKNOWN, time, time.systemTimeMillis(), null, 0);
+        return new Context(nodeRef, State.UNKNOWN, time.systemTimeMillis(), null, 0);
     }
 
     State transitionTo(State state, Time time) {
