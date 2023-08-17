@@ -31,12 +31,12 @@ interface RollClient {
      * @param nodeRef The node
      * @return The state
      */
-    public default State observe(NodeRef nodeRef) {
-        if (isNotReady(nodeRef)) {
+    public static State observe(RollClient client, NodeRef nodeRef) {
+        if (client.isNotReady(nodeRef)) {
             return State.NOT_READY;
         } else {
             try {
-                var bs = getBrokerState(nodeRef);
+                var bs = client.getBrokerState(nodeRef);
                 if (bs.value() < BrokerState.RUNNING.value()) {
                     return State.RECOVERING;
                 } else if (bs.value() == BrokerState.RUNNING.value()) {

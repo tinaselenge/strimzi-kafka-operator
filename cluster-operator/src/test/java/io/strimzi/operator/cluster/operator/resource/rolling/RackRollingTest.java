@@ -35,7 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -116,9 +115,6 @@ public class RackRollingTest {
         doReturn(BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
     }
 
     private static void mockUnHealthyBroker(RollClient client, NodeRef nodeRef) {
@@ -128,9 +124,6 @@ public class RackRollingTest {
         doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
     }
 
     private final Set<TopicListing> topicListing = new HashSet<>();
@@ -281,10 +274,7 @@ public class RackRollingTest {
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING)
                 .when(client)
-                .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
+                .getBrokerState(nodeRef);;
         addTopic("topic-A", node);
         mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
@@ -295,9 +285,6 @@ public class RackRollingTest {
         doReturn(1)
                 .when(client)
                 .tryElectAllPreferredLeaders(nodeRef);
-        doReturn(State.SERVING)
-                .when(client)
-                .observe(nodeRef);
 
         // when
         var te = assertThrows(TimeoutException.class,
@@ -354,9 +341,6 @@ public class RackRollingTest {
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
 
         var te = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
@@ -381,9 +365,6 @@ public class RackRollingTest {
         doReturn(BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
         addTopic("topic-A", node);
         mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
@@ -416,9 +397,6 @@ public class RackRollingTest {
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
         addTopic("topic-A", node);
         mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
@@ -429,9 +407,6 @@ public class RackRollingTest {
         doReturn(0)
                 .when(client)
                 .tryElectAllPreferredLeaders(nodeRef);
-        doReturn(State.SERVING)
-                .when(client)
-                .observe(nodeRef);
 
         // when
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1);
@@ -457,9 +432,6 @@ public class RackRollingTest {
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
         addTopic("topic-A", node);
         mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
@@ -470,9 +442,6 @@ public class RackRollingTest {
         doReturn(0)
                 .when(client)
                 .tryElectAllPreferredLeaders(nodeRef);
-        doReturn(State.SERVING)
-                .when(client)
-                .observe(nodeRef);
 
         // when
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
@@ -497,9 +466,6 @@ public class RackRollingTest {
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(client)
                 .getBrokerState(nodeRef);
-        doCallRealMethod()
-                .when(client)
-                .observe(nodeRef);
         addTopic("topic-A", node);
         mockTopics(client);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
@@ -509,9 +475,6 @@ public class RackRollingTest {
         doReturn(0)
                 .when(client)
                 .tryElectAllPreferredLeaders(nodeRef);
-        doReturn(State.SERVING)
-                .when(client)
-                .observe(nodeRef);
 
         // when
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "log.retention.ms=1000", 1, 1);
