@@ -338,7 +338,7 @@ class RackRolling {
                 timeoutMs,
                 () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
         ).poll(1_000, () -> {
-            var state = context.transitionTo(RollClient.observe(rollClient, context.nodeRef()), time);
+            var state = context.transitionTo(observe(rollClient, context.nodeRef()), time);
             return state == targetState;
         });
     }
@@ -429,6 +429,30 @@ class RackRolling {
         );
     }
 
+    /**
+     * Makes observations of server of the given context, and return the corresponding state.
+     * @param nodeRef The node
+     * @return The state
+     */
+    public static State observe(RollClient client, NodeRef nodeRef) {
+        if (client.isNotReady(nodeRef)) {
+            return State.NOT_READY;
+        } else {
+            try {
+                var bs = client.getBrokerState(nodeRef);
+                if (bs.value() < BrokerState.RUNNING.value()) {
+                    return State.RECOVERING;
+                } else if (bs.value() == BrokerState.RUNNING.value()) {
+                    return State.SERVING;
+                } else {
+                    return State.NOT_READY;
+                }
+            } catch (Exception e) {
+                return State.NOT_READY;
+            }
+        }
+    }
+
     enum Plan {
         // Used for brokers that are initially healthy and require neither restart not reconfigure
         NOP,
@@ -501,7 +525,7 @@ class RackRolling {
 
                 // Observe current state and update the contexts
                 for (var context : contexts) {
-                    context.transitionTo(RollClient.observe(rollClient, context.nodeRef()), time);
+                    context.transitionTo(observe(rollClient, context.nodeRef()), time);
                 }
 
                 int maxReconfigs = 1;
