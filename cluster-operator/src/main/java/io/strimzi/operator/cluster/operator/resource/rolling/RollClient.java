@@ -20,17 +20,9 @@ import java.util.Map;
  * An amalgamation of a Kubernetes client, a Kafka Admin client, and a Kafka Agent client.
  */
 interface RollClient {
-    /** @return true if the pod for this node is not ready according to kubernetes */
-    boolean isNotReady(NodeRef nodeRef);
 
     /** @return The broker state, according to the Kafka Agent */
     BrokerState getBrokerState(NodeRef nodeRef);
-
-    /**
-     * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
-     * @param nodeRef The node.
-     */
-    public void deletePod(NodeRef nodeRef);
 
     /**
      * @return All the topics in the cluster, including internal topics.
@@ -64,7 +56,6 @@ interface RollClient {
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
     int activeController();
-
 
     /**
      * Reconfigure the given server with the given configs
