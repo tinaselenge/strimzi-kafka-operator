@@ -4,6 +4,8 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.common.UncheckedInterruptedException;
+
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -92,18 +94,22 @@ public class Alarm {
      * @param pollIntervalMs The polling interval
      * @param done           A predicate function to detecting when the polling loop is complete.
      * @return The remaining time left for this alarm, in ms.
-     * @throws InterruptedException The thread was interrupted
+     * @throws UncheckedInterruptedException The thread was interrupted
      * @throws TimeoutException     The {@link #remainingMs()} has reached zero.
      */
-    public long poll(long pollIntervalMs, BooleanSupplier done) throws InterruptedException, TimeoutException {
+    public long poll(long pollIntervalMs, BooleanSupplier done) throws TimeoutException {
         if (pollIntervalMs <= 0) {
             throw new IllegalArgumentException();
         }
-        while (true) {
-            if (done.getAsBoolean()) {
-                return this.remainingMs();
+        try {
+            while (true) {
+                if (done.getAsBoolean()) {
+                    return this.remainingMs();
+                }
+                this.sleep(pollIntervalMs);
             }
-            this.sleep(pollIntervalMs);
+        } catch (InterruptedException e) {
+            throw new UncheckedInterruptedException(e);
         }
     }
 }
