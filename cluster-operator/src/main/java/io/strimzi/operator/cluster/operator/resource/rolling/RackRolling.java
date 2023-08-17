@@ -324,7 +324,7 @@ class RackRolling {
         if (context.numReconfigs() > maxReconfigs) {
             throw new RuntimeException("Too many reconfigs");
         }
-        rollClient.reconfigureServer(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
+        rollClient.reconfigureNode(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
         context.transitionTo(State.RECONFIGURED, time);
         // TODO create kube Event
     }
