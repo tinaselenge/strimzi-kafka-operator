@@ -27,30 +27,6 @@ interface RollClient {
     BrokerState getBrokerState(NodeRef nodeRef);
 
     /**
-     * Makes observations of server of the given context, and return the corresponding state.
-     * @param nodeRef The node
-     * @return The state
-     */
-    public static State observe(RollClient client, NodeRef nodeRef) {
-        if (client.isNotReady(nodeRef)) {
-            return State.NOT_READY;
-        } else {
-            try {
-                var bs = client.getBrokerState(nodeRef);
-                if (bs.value() < BrokerState.RUNNING.value()) {
-                    return State.RECOVERING;
-                } else if (bs.value() == BrokerState.RUNNING.value()) {
-                    return State.SERVING;
-                } else {
-                    return State.NOT_READY;
-                }
-            } catch (Exception e) {
-                return State.NOT_READY;
-            }
-        }
-    }
-
-    /**
      * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
      * @param nodeRef The node.
      */
