@@ -98,7 +98,7 @@ interface RollClient {
      * @param kafkaBrokerConfigurationDiff The broker config diff
      * @param kafkaBrokerLoggingConfigurationDiff The broker logging diff
      */
-    void reconfigureServer(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff);
+    void reconfigureNode(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff);
 
     /**
      * Try to elect the given server as the leader for all the replicas on the server where it's not already
@@ -106,14 +106,14 @@ interface RollClient {
      * @param nodeRef The node
      * @return The number of replicas on the server which it is not leading, but is preferred leader
      */
-    int tryElectAllPreferredLeaders(NodeRef nodeRef);
+    int tryElectAllPreferredLeaders(NodeRef nodeRef) throws ExecutionException, InterruptedException;
 
     /**
      * Return the broker configs and broker logger configs for each of the given brokers
      * @param toList The brokers to get the configs for
      * @return A map from broker id to configs
      */
-    Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList);
+    Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) throws ExecutionException, InterruptedException;
 
     static record Configs(Config brokerConfigs, Config brokerLoggerConfigs) { }
 }
