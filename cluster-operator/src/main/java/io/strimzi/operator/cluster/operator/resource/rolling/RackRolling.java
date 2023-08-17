@@ -61,9 +61,9 @@ class RackRolling {
         return wouldByUnderReplicated;
     }
 
-    private static boolean avail(Server server,
+    private static boolean avail(KafkaNode kafkaNode,
                                  Map<String, Integer> minIsrByTopic) {
-        for (var replica : server.replicas()) {
+        for (var replica : kafkaNode.replicas()) {
             var topicName = replica.topicName();
             Integer minIsr = minIsrByTopic.get(topicName);
             if (wouldBeUnderReplicated(minIsr, replica)) {
@@ -77,13 +77,13 @@ class RackRolling {
      * Split the given cells into batches,
      * taking account of {@code acks=all} availability and the given maxBatchSize
      */
-    static List<Set<Server>> batchCells(List<Set<Server>> cells,
-                                               Map<String, Integer> minIsrByTopic,
-                                               int maxBatchSize) {
-        List<Set<Server>> result = new ArrayList<>();
+    static List<Set<KafkaNode>> batchCells(List<Set<KafkaNode>> cells,
+                                           Map<String, Integer> minIsrByTopic,
+                                           int maxBatchSize) {
+        List<Set<KafkaNode>> result = new ArrayList<>();
         for (var cell : cells) {
-            List<Set<Server>> availBatches = new ArrayList<>();
-            Set<Server> unavail = new HashSet<>();
+            List<Set<KafkaNode>> availBatches = new ArrayList<>();
+            Set<KafkaNode> unavail = new HashSet<>();
             for (var server : cell) {
                 if (avail(server, minIsrByTopic)) {
                     var currentBatch = availBatches.isEmpty() ? null : availBatches.get(availBatches.size() - 1);
@@ -110,7 +110,7 @@ class RackRolling {
         return false;
     }
 
-    static boolean containsAny(Set<Server> cell, Set<Replica> replicas) {
+    static boolean containsAny(Set<KafkaNode> cell, Set<Replica> replicas) {
         for (var b : cell) {
             if (intersects(b.replicas(), replicas)) {
                 return true;
@@ -128,12 +128,12 @@ class RackRolling {
         return result;
     }
 
-    private static Set<Set<Server>> partitionByHasAnyReplicasInCommon(Set<Server> rollable) {
-        Set<Set<Server>> disjoint = new HashSet<>();
+    private static Set<Set<KafkaNode>> partitionByHasAnyReplicasInCommon(Set<KafkaNode> rollable) {
+        Set<Set<KafkaNode>> disjoint = new HashSet<>();
         for (var server : rollable) {
             var replicas = server.replicas();
-            Set<Set<Server>> merge = new HashSet<>();
-            for (Set<Server> cell : disjoint) {
+            Set<Set<KafkaNode>> merge = new HashSet<>();
+            for (Set<KafkaNode> cell : disjoint) {
                 if (!containsAny(cell, replicas)) {
                     merge.add(cell);
                     merge.add(Set.of(server));
@@ -147,7 +147,7 @@ class RackRolling {
             if (merge.isEmpty()) {
                 disjoint.add(Set.of(server));
             } else {
-                for (Set<Server> r : merge) {
+                for (Set<KafkaNode> r : merge) {
                     disjoint.remove(r);
                 }
                 disjoint.add(union(merge));
@@ -161,16 +161,16 @@ class RackRolling {
      * into cells that can be rolled in parallel because they
      * contain no replicas in common.
      */
-    static List<Set<Server>> cells(Collection<Server> brokers) {
+    static List<Set<KafkaNode>> cells(Collection<KafkaNode> brokers) {
 
         // find brokers that are individually rollable
         var rollable = brokers.stream().collect(Collectors.toCollection(() ->
-                new TreeSet<>(Comparator.comparing(Server::id))));
+                new TreeSet<>(Comparator.comparing(KafkaNode::id))));
         if (rollable.size() < 2) {
             return List.of(rollable);
         } else {
             // partition the set under the equivalence relation "shares a partition with"
-            Set<Set<Server>> disjoint = partitionByHasAnyReplicasInCommon(rollable);
+            Set<Set<KafkaNode>> disjoint = partitionByHasAnyReplicasInCommon(rollable);
             // disjoint cannot be empty, because rollable isn't empty, and disjoint is a partitioning or rollable
             // We find the biggest set of brokers which can parallel-rolled
             var sorted = disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
@@ -184,7 +184,7 @@ class RackRolling {
      * This is the largest batch of available servers excluding the
      * @return the "best" batch to be restarted
      */
-    static Set<Server> pickBestBatchForRestart(List<Set<Server>> batches, int controllerId) {
+    static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches, int controllerId) {
         var sorted = batches.stream().sorted(Comparator.comparing(Set::size)).toList();
         if (sorted.size() == 0) {
             return Set.of();
@@ -196,11 +196,11 @@ class RackRolling {
         return sorted.get(0);
     }
 
-    private static Set<Server> nextBatch(RollClient rollClient,
-                                         Set<Integer> brokersNeedingRestart,
-                                         int maxRestartBatchSize) throws ExecutionException, InterruptedException {
+    private static Set<KafkaNode> nextBatch(RollClient rollClient,
+                                            Set<Integer> brokersNeedingRestart,
+                                            int maxRestartBatchSize) throws ExecutionException, InterruptedException {
 
-        Map<Integer, Server> servers = new HashMap<>();
+        Map<Integer, KafkaNode> servers = new HashMap<>();
         
         // TODO figure out this KRaft stuff
 //        var quorum = admin.describeMetadataQuorum().quorumInfo().get();
@@ -222,7 +222,7 @@ class RackRolling {
         topicDescriptions.forEach(topicDescription -> {
             topicDescription.partitions().forEach(partition -> {
                 partition.replicas().forEach(replicatingBroker -> {
-                    var server = servers.computeIfAbsent(replicatingBroker.id(), ig -> new Server(replicatingBroker.id(), replicatingBroker.rack(), new HashSet<>()));
+                    var server = servers.computeIfAbsent(replicatingBroker.id(), ig -> new KafkaNode(replicatingBroker.id(), replicatingBroker.rack(), new HashSet<>()));
                     server.replicas().add(new Replica(
                             replicatingBroker,
                             topicDescription.name(),
@@ -235,7 +235,7 @@ class RackRolling {
         // Add any servers which we know about but which were absent from any partition metadata
         // i.e. brokers without any assigned partitions
         brokersNeedingRestart.forEach(server -> {
-            servers.putIfAbsent(server, new Server(server, null, Set.of()));
+            servers.putIfAbsent(server, new KafkaNode(server, null, Set.of()));
         });
 
         // TODO somewhere in here we need to take account of partition reassignments
@@ -249,7 +249,7 @@ class RackRolling {
         var cells = cells(servers.values());
 
         // filter each cell by brokers that actually need to be restarted
-        cells = cells.stream().map(cell -> cell.stream().filter(server -> brokersNeedingRestart.contains(server.id())).collect(Collectors.toSet())).toList();
+        cells = cells.stream().map(cell -> cell.stream().filter(kafkaNode -> brokersNeedingRestart.contains(kafkaNode.id())).collect(Collectors.toSet())).toList();
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
         var batches = batchCells(cells, minIsrByTopic, maxRestartBatchSize);
@@ -273,36 +273,36 @@ class RackRolling {
         System.out.printf("numPartitionsPerTopic = %d%n", numPartitionsPerTopic);
         System.out.printf("rf = %d%n", rf);
 
-        List<Server> servers = new ArrayList<>();
+        List<KafkaNode> kafkaNodes = new ArrayList<>();
         for (int serverId = 0; serverId < (coloControllers ? Math.max(numBrokers, numControllers) : numControllers + numBrokers); serverId++) {
-            Server server = new Server(serverId, Integer.toString(serverId % numRacks), new LinkedHashSet<>());
-            servers.add(server);
+            KafkaNode kafkaNode = new KafkaNode(serverId, Integer.toString(serverId % numRacks), new LinkedHashSet<>());
+            kafkaNodes.add(kafkaNode);
             boolean isController = serverId < numControllers;
             if (isController) {
-                server.replicas().add(new Replica("__cluster_metadata", 0, (short) numControllers));
+                kafkaNode.replicas().add(new Replica("__cluster_metadata", 0, (short) numControllers));
             }
         }
 
         for (int topic = 1; topic <= numTopics; topic++) {
             for (int partition = 0; partition < numPartitionsPerTopic; partition++) {
                 for (int replica = partition; replica < partition + rf; replica++) {
-                    Server broker = servers.get((coloControllers ? 0 : numControllers) + replica % numBrokers);
+                    KafkaNode broker = kafkaNodes.get((coloControllers ? 0 : numControllers) + replica % numBrokers);
                     broker.replicas().add(new Replica("t" + topic, partition, (short) rf));
                 }
             }
         }
 
-        for (var broker : servers) {
+        for (var broker : kafkaNodes) {
             System.out.println(broker);
         }
 
         // TODO validate
 
-        var results = cells(servers);
+        var results = cells(kafkaNodes);
 
         int group = 0;
         for (var result : results) {
-            System.out.println("Group " + group + ": " + result.stream().map(Server::id).collect(Collectors.toCollection(TreeSet::new)));
+            System.out.println("Group " + group + ": " + result.stream().map(KafkaNode::id).collect(Collectors.toCollection(TreeSet::new)));
             group++;
         }
     }
@@ -545,7 +545,7 @@ class RackRolling {
 
             // determine batches of nodes to be restarted together
             var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
-            var batchOfIds = batch.stream().map(Server::id).collect(Collectors.toSet());
+            var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
             // restart a batch
             restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
