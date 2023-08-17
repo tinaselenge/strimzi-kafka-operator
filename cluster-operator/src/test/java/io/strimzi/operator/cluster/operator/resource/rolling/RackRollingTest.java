@@ -104,7 +104,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(client, never()).deletePod(any());
         Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
     }
@@ -181,7 +181,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -208,7 +208,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -333,7 +333,7 @@ public class RackRollingTest {
 
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
 
-        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
         Mockito.verify(client, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -397,7 +397,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(any(), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -437,7 +437,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1);
 
         // then
-        Mockito.verify(client, times(1)).reconfigureServer(eq(nodeRef), any(), any());
+        Mockito.verify(client, times(1)).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(client, never()).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
 
@@ -478,7 +478,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureServer(eq(nodeRef), any(), any());
+        Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -517,7 +517,7 @@ public class RackRollingTest {
         doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "log.retention.ms=1000", 1, 1);
 
         // then
-        Mockito.verify(client, times(1)).reconfigureServer(eq(nodeRef), any(), any());
+        Mockito.verify(client, times(1)).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(client, never()).deletePod(eq(nodeRef));
         Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
@@ -556,7 +556,7 @@ public class RackRollingTest {
 
         // then
         for (var nodeRef: nodeRefs) {
-            Mockito.verify(client, never()).reconfigureServer(eq(nodeRef), any(), any());
+            Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
             Mockito.verify(client, never()).deletePod(any());
             Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
         }
@@ -596,7 +596,7 @@ public class RackRollingTest {
 
         // then
         for (var nodeRef: nodeRefs) {
-            Mockito.verify(client, never()).reconfigureServer(eq(nodeRef), any(), any());
+            Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
             Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
             Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
         }
