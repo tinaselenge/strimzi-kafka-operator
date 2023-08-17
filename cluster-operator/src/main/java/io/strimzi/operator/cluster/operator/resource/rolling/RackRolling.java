@@ -338,7 +338,7 @@ class RackRolling {
                 timeoutMs,
                 () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
         ).poll(1_000, () -> {
-            var state = context.transitionTo(rollClient.observe(context.nodeRef()), time);
+            var state = context.transitionTo(RollClient.observe(rollClient, context.nodeRef()), time);
             return state == targetState;
         });
     }
@@ -501,7 +501,7 @@ class RackRolling {
 
                 // Observe current state and update the contexts
                 for (var context : contexts) {
-                    context.transitionTo(rollClient.observe(context.nodeRef()), time);
+                    context.transitionTo(RollClient.observe(rollClient, context.nodeRef()), time);
                 }
 
                 int maxReconfigs = 1;
