@@ -26,6 +26,9 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Enumerates the states published by a Kafka node via the broker state metric.
+ */
 enum BrokerState {
     /**
      * The state the broker is in when it first starts up.

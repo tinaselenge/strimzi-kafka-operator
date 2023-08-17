@@ -9,7 +9,7 @@ import org.apache.kafka.common.Node;
 import java.util.Collection;
 
 /**
- * A replica on a {@link Server}.
+ * A replica on a particular {@link KafkaNode}.
  *
  * @param topicName   The name of the topic
  * @param partitionId The partition id
@@ -18,7 +18,7 @@ import java.util.Collection;
  *                    If the broker hosting this replica is NOT in the ISR for the partition of this replica
  *                    this is the negative of the size of the ISR.
  *                    In other words, the magnitude is the size of the ISR and the sign will be negative
- *                    if the broker hosting this replic is not in the ISR.
+ *                    if the broker hosting this replica is not in the ISR.
  */
 record Replica(String topicName, int partitionId, short isrSize) {
 
