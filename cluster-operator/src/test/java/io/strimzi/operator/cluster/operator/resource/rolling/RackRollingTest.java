@@ -69,7 +69,8 @@ public class RackRollingTest {
                 new NodeRef("pool-kafka-2", 2, "pool", false, false));
     }
 
-    public void doRollingRestart(RollClient client,
+    public void doRollingRestart(PlatformClient platformClient,
+                                 RollClient rollClient,
                                  List<NodeRef> nodeRefList,
                                  Function<Integer, RestartReasons> reason,
                                  Function<Integer, String> kafkaConfigProvider,
@@ -77,7 +78,8 @@ public class RackRollingTest {
                                  Integer maxRestarts) throws ExecutionException, InterruptedException, TimeoutException {
 
         RackRolling.rollingRestart(time,
-                client,
+                platformClient,
+                rollClient,
                 nodeRefList,
                 reason,
                 Reconciliation.DUMMY_RECONCILIATION,
@@ -96,33 +98,34 @@ public class RackRollingTest {
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
 
-        RollClient client = mock(RollClient.class);
-        mockHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockHealthyBroker(platformClient, rollClient, nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(client, never()).deletePod(any());
-        Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, never()).deletePod(any());
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
     }
 
-    private static void mockHealthyBroker(RollClient client, NodeRef nodeRef) {
+    private static void mockHealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
     }
 
-    private static void mockUnHealthyBroker(RollClient client, NodeRef nodeRef) {
+    private static void mockUnHealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
         doReturn(true, false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
     }
 
@@ -164,19 +167,20 @@ public class RackRollingTest {
         // given
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
 
-        RollClient client = mock(RollClient.class);
-        mockHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockHealthyBroker(platformClient, rollClient, nodeRef);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -186,24 +190,25 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
-        mockHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockHealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -213,20 +218,21 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
-        mockUnHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockUnHealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
         var ex = assertThrows(MaxRestartsExceededException.class,
-                () -> doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
 
         //then
         assertEquals("Broker 0 has been restarted 1 times", ex.getMessage());
@@ -239,19 +245,20 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
-        mockUnHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockUnHealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(2)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         var te = assertThrows(TimeoutException.class,
-              () -> doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
+              () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
 
         assertEquals("Failed to reach LEADING_ALL_PREFERRED within 117000: " +
                         "Context[nodeRef=pool-kafka-0/0, state=SERVING, " +
@@ -268,27 +275,28 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);;
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
                 new ConfigEntry("compression.type", "zstd")
         )), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(1)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1));
 
         // then
         assertEquals("Failed to reach LEADING_ALL_PREFERRED within 15000: " +
@@ -307,22 +315,23 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
-        mockHealthyBroker(client, nodeRef);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        mockHealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(1, 1, 1, 1, 0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
 
-        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -332,18 +341,19 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
 
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(client, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
 
         assertEquals("Failed to reach SERVING within 120000 ms: " +
                         "Context[nodeRef=pool-kafka-0/0, state=RECOVERING, " +
@@ -358,29 +368,30 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         doReturn(true, false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -390,31 +401,32 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
                 new ConfigEntry("compression.type", "zstd")
         )), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::configChange, serverId -> "compression.type=snappy", 1, 1);
 
         // then
-        Mockito.verify(client, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(client, never()).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
+        Mockito.verify(platformClient, never()).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
 
     }
 
@@ -425,31 +437,32 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
                 new ConfigEntry("auto.leader.rebalance.enable", "true")
         )), new Config(Set.of()))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::configChange, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
 
         // then
-        Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -459,30 +472,31 @@ public class RackRollingTest {
         var nodeRef = new NodeRef("pool-kafka-0", 0, "pool", false, false);
         Node node = new Node(0, Node.noNode().host(), Node.noNode().port());
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         doReturn(false)
-                .when(client)
+                .when(platformClient)
                 .isNotReady(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
-                .when(client)
+                .when(rollClient)
                 .getBrokerState(nodeRef);
         addTopic("topic-A", node);
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of(
         )), new Config(Set.of(new ConfigEntry("log.retention.ms", "1000"))))))
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(List.of(nodeRef));
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRef);
 
         // when
-        doRollingRestart(client, List.of(nodeRef), RackRollingTest::configChange, serverId -> "log.retention.ms=1000", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::configChange, serverId -> "log.retention.ms=1000", 1, 1);
 
         // then
-        Mockito.verify(client, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(client, never()).deletePod(eq(nodeRef));
-        Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
+        Mockito.verify(platformClient, never()).deletePod(eq(nodeRef));
+        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -499,29 +513,30 @@ public class RackRollingTest {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         for (var nodeRef: nodeRefs) {
-            mockHealthyBroker(client, nodeRef);
+            mockHealthyBroker(platformClient, rollClient, nodeRef);
         }
         addTopic("topic-0", nodeList.get(0));
         addTopic("topic-1", nodeList.get(1));
         addTopic("topic-2", nodeList.get(2));
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(configPair)
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(any());
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRefs.get(0));
 
         // when
-        doRollingRestart(client, nodeRefs, RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 5);
+        doRollingRestart(platformClient, rollClient, nodeRefs, RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 5);
 
         // then
         for (var nodeRef: nodeRefs) {
-            Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(client, never()).deletePod(any());
-            Mockito.verify(client, never()).tryElectAllPreferredLeaders(any());
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+            Mockito.verify(platformClient, never()).deletePod(any());
+            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
         }
     }
 
@@ -539,29 +554,30 @@ public class RackRollingTest {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
         }
 
-        RollClient client = mock(RollClient.class);
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
         for (var nodeRef: nodeRefs) {
-            mockHealthyBroker(client, nodeRef);
+            mockHealthyBroker(platformClient, rollClient, nodeRef);
         }
         addTopic("topic-0", nodeList.get(0));
         addTopic("topic-1", nodeList.get(1));
         addTopic("topic-2", nodeList.get(2));
-        mockTopics(client);
+        mockTopics(rollClient);
         doReturn(configPair)
-                .when(client)
+                .when(rollClient)
                 .describeBrokerConfigs(any());
         doReturn(0)
-                .when(client)
+                .when(rollClient)
                 .tryElectAllPreferredLeaders(nodeRefs.get(0));
 
         // when
-        doRollingRestart(client, nodeRefs, RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
+        doRollingRestart(platformClient, rollClient, nodeRefs, RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
 
         // then
         for (var nodeRef: nodeRefs) {
-            Mockito.verify(client, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(client, times(1)).deletePod(eq(nodeRef));
-            Mockito.verify(client, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+            Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
         }
     }
 

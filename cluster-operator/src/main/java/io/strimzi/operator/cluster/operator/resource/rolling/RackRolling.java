@@ -313,11 +313,11 @@ class RackRolling {
         return nodeRef.podName();
     }
 
-    private static void restartServer(Time time, RollClient rollClient, Context context, int maxRestarts) {
+    private static void restartServer(Time time, PlatformClient platformClient, Context context, int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
             throw new MaxRestartsExceededException("Broker " + context.serverId() + " has been restarted " + maxRestarts + " times");
         }
-        rollClient.deletePod(context.nodeRef());
+        platformClient.deletePod(context.nodeRef());
         context.transitionTo(State.RESTARTED, time);
         // TODO kube create an Event with the context.reason
     }
@@ -332,13 +332,13 @@ class RackRolling {
     }
 
 
-    private static long awaitState(Time time, RollClient rollClient, Context context, State targetState, long timeoutMs) throws TimeoutException {
+    private static long awaitState(Time time, PlatformClient platformClient, RollClient rollClient, Context context, State targetState, long timeoutMs) throws TimeoutException {
         return Alarm.timer(
                 time,
                 timeoutMs,
                 () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
         ).poll(1_000, () -> {
-            var state = context.transitionTo(observe(rollClient, context.nodeRef()), time);
+            var state = context.transitionTo(observe(platformClient, rollClient, context.nodeRef()), time);
             return state == targetState;
         });
     }
@@ -356,13 +356,13 @@ class RackRolling {
         });
     }
 
-    private static void restartInParallel(Time time, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
+    private static void restartInParallel(Time time, PlatformClient platformClient, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
-            restartServer(time, rollClient, context, maxRestarts);
+            restartServer(time, platformClient, context, maxRestarts);
         }
         long remainingTimeoutMs = timeoutMs;
         for (Context context : batch) {
-            remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, remainingTimeoutMs);
+            remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, remainingTimeoutMs);
         }
 
         var serverContextWrtIds = new HashMap<Integer, Context>();
@@ -434,12 +434,12 @@ class RackRolling {
      * @param nodeRef The node
      * @return The state
      */
-    public static State observe(RollClient client, NodeRef nodeRef) {
-        if (client.isNotReady(nodeRef)) {
+    public static State observe(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
+        if (platformClient.isNotReady(nodeRef)) {
             return State.NOT_READY;
         } else {
             try {
-                var bs = client.getBrokerState(nodeRef);
+                var bs = rollClient.getBrokerState(nodeRef);
                 if (bs.value() < BrokerState.RUNNING.value()) {
                     return State.RECOVERING;
                 } else if (bs.value() == BrokerState.RUNNING.value()) {
@@ -504,6 +504,7 @@ class RackRolling {
      * @throws TimeoutException
      */
     public static void rollingRestart(Time time,
+                                      PlatformClient platformClient,
                                       RollClient rollClient,
                                       List<NodeRef> nodes,
                                       Function<Integer, RestartReasons> predicate,
@@ -525,7 +526,7 @@ class RackRolling {
 
                 // Observe current state and update the contexts
                 for (var context : contexts) {
-                    context.transitionTo(observe(rollClient, context.nodeRef()), time);
+                    context.transitionTo(observe(platformClient, rollClient, context.nodeRef()), time);
                 }
 
                 int maxReconfigs = 1;
@@ -540,8 +541,8 @@ class RackRolling {
                 // Restart any initially unready nodes
                 for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
                     context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
-                    restartServer(time, rollClient, context, maxRestarts);
-                    long remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, postRestartTimeoutMs);
+                    restartServer(time, platformClient, context, maxRestarts);
+                    long remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
                     awaitPreferred(time, rollClient, context, remainingTimeoutMs);
                     continue OUTER;
                 }
@@ -575,7 +576,7 @@ class RackRolling {
                 var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
                 var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
                 // restart a batch
-                restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+                restartInParallel(time, platformClient, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
 
                 // termination condition
                 if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
