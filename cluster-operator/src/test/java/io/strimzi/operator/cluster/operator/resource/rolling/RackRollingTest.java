@@ -16,7 +16,7 @@ import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
-import org.junit.Before;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -136,7 +136,7 @@ public class RackRollingTest {
     private final Set<TopicListing> topicListing = new HashSet<>();
     private final Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
 
-    @Before
+    @BeforeEach
     public void before() {
         topicListing.clear();
         topicDescriptions.clear();
