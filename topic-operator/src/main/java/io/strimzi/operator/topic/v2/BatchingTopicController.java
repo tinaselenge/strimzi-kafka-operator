@@ -15,6 +15,7 @@ import io.strimzi.api.kafka.model.topic.KafkaTopicBuilder;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
+import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.model.StatusUtils;
 import io.strimzi.operator.topic.v2.metrics.TopicOperatorMetricsHolder;
 import org.apache.kafka.clients.admin.Admin;
