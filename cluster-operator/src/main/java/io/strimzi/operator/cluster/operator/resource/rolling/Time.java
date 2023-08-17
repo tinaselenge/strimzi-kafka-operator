@@ -4,6 +4,8 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.common.UncheckedInterruptedException;
+
 /**
  * An abstraction of time. 
  * A Time instance represents some way of measuring durations (the {@link #nanoTime()} method) and some way of suspending 
@@ -26,8 +28,12 @@ public interface Time {
         }
 
         @Override
-        public void sleep(long millis, int nanos) throws InterruptedException {
-            Thread.sleep(millis, nanos);
+        public void sleep(long millis, int nanos) {
+            try {
+                Thread.sleep(millis, nanos);
+            } catch (InterruptedException e) {
+                throw new UncheckedInterruptedException(e);
+            }
         }
 
         @Override
@@ -89,7 +95,7 @@ public interface Time {
         }
 
         @Override
-        public void sleep(long millis, int nanos) throws InterruptedException {
+        public void sleep(long millis, int nanos) {
             if (millis < 0 || nanos < 0 || nanos > 999_999) {
                 throw new IllegalArgumentException();
             }
@@ -145,9 +151,9 @@ public interface Time {
      *
      * @param millis The number of milliseconds
      * @param nanos The number of nanoseconds
-     * @throws InterruptedException If the sleep was interrupted before the given time has elapsed.
+     * @throws io.strimzi.operator.common.UncheckedInterruptedException If the sleep was interrupted before the given time has elapsed.
      */
-    void sleep(long millis, int nanos) throws InterruptedException;
+    void sleep(long millis, int nanos);
 
 }
 

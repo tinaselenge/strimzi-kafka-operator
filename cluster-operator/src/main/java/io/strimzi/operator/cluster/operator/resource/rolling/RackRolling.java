@@ -11,6 +11,8 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.UncheckedExecutionException;
+import io.strimzi.operator.common.UncheckedInterruptedException;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
@@ -198,7 +200,7 @@ class RackRolling {
 
     private static Set<KafkaNode> nextBatch(RollClient rollClient,
                                             Set<Integer> brokersNeedingRestart,
-                                            int maxRestartBatchSize) throws ExecutionException, InterruptedException {
+                                            int maxRestartBatchSize) {
 
         Map<Integer, KafkaNode> servers = new HashMap<>();
         
@@ -330,7 +332,7 @@ class RackRolling {
     }
 
 
-    private static long awaitState(Time time, RollClient rollClient, Context context, State targetState, long timeoutMs) throws InterruptedException, TimeoutException {
+    private static long awaitState(Time time, RollClient rollClient, Context context, State targetState, long timeoutMs) throws TimeoutException {
         return Alarm.timer(
                 time,
                 timeoutMs,
@@ -341,7 +343,7 @@ class RackRolling {
         });
     }
 
-    private static long awaitPreferred(Time time, RollClient rollClient, Context context, long timeoutMs) throws InterruptedException, TimeoutException {
+    private static long awaitPreferred(Time time, RollClient rollClient, Context context, long timeoutMs) throws TimeoutException {
         return Alarm.timer(time,
                 timeoutMs,
                 () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
@@ -354,7 +356,7 @@ class RackRolling {
         });
     }
 
-    private static void restartInParallel(Time time, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws InterruptedException, TimeoutException {
+    private static void restartInParallel(Time time, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
             restartServer(time, rollClient, context, maxRestarts);
         }
@@ -489,71 +491,77 @@ class RackRolling {
                                       long postRestartTimeoutMs,
                                       int maxRestartBatchSize,
                                       int maxRestarts)
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws ExecutionException, TimeoutException, InterruptedException {
+        try {
+            // Create contexts
+            var contexts = nodes.stream().map(node -> Context.start(node, time)).toList();
 
-        // Create contexts
-        var contexts = nodes.stream().map(node -> Context.start(node, time)).toList();
+            OUTER:
+            while (true) {
 
-        OUTER: while (true) {
+                // Observe current state and update the contexts
+                for (var context : contexts) {
+                    context.transitionTo(rollClient.observe(context.nodeRef()), time);
+                }
 
-            // Observe current state and update the contexts
-            for (var context : contexts) {
-                context.transitionTo(rollClient.observe(context.nodeRef()), time);
-            }
-
-            int maxReconfigs = 1;
-            var byPlan = initialPlan(predicate, contexts, maxReconfigs);
-            if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
-                    && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
-                    && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
-                // termination condition met
-                break OUTER;
-            }
-
-            // Restart any initially unready nodes
-            for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
-                context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
-                restartServer(time, rollClient, context, maxRestarts);
-                long remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, postRestartTimeoutMs);
-                awaitPreferred(time, rollClient, context, remainingTimeoutMs);
-                continue OUTER;
-            }
-            // If we get this far we know all nodes are ready
-
-            // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
-            // based on whether they have only reconfiguration config changes
-            byPlan = refinePlanForReconfigurability(reconciliation,
-                    kafkaVersion,
-                    kafkaConfigProvider,
-                    desiredLogging,
-                    rollClient,
-                    byPlan);
-
-            // Reconfigure any reconfigurable nodes
-            for (var context : byPlan.get(Plan.RECONFIGURE)) {
-                // TODO decide on parallel/batching dynamic reconfiguration
-                reconfigureServer(time, rollClient, context, maxReconfigs);
-                time.sleep(postReconfigureTimeoutMs / 2, 0);
-                awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
-                // termination condition
-                if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
+                int maxReconfigs = 1;
+                var byPlan = initialPlan(predicate, contexts, maxReconfigs);
+                if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
+                        && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
+                        && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
+                    // termination condition met
                     break OUTER;
                 }
-                continue OUTER;
-            }
-            // If we get this far that all remaining nodes require a restart
 
-            // determine batches of nodes to be restarted together
-            var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
-            var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
-            var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
-            // restart a batch
-            restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+                // Restart any initially unready nodes
+                for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
+                    context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
+                    restartServer(time, rollClient, context, maxRestarts);
+                    long remainingTimeoutMs = awaitState(time, rollClient, context, State.SERVING, postRestartTimeoutMs);
+                    awaitPreferred(time, rollClient, context, remainingTimeoutMs);
+                    continue OUTER;
+                }
+                // If we get this far we know all nodes are ready
 
-            // termination condition
-            if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
-                break OUTER;
+                // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
+                // based on whether they have only reconfiguration config changes
+                byPlan = refinePlanForReconfigurability(reconciliation,
+                        kafkaVersion,
+                        kafkaConfigProvider,
+                        desiredLogging,
+                        rollClient,
+                        byPlan);
+
+                // Reconfigure any reconfigurable nodes
+                for (var context : byPlan.get(Plan.RECONFIGURE)) {
+                    // TODO decide on parallel/batching dynamic reconfiguration
+                    reconfigureServer(time, rollClient, context, maxReconfigs);
+                    time.sleep(postReconfigureTimeoutMs / 2, 0);
+                    awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
+                    // termination condition
+                    if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
+                        break OUTER;
+                    }
+                    continue OUTER;
+                }
+                // If we get this far that all remaining nodes require a restart
+
+                // determine batches of nodes to be restarted together
+                var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
+                var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
+                var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
+                // restart a batch
+                restartInParallel(time, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+
+                // termination condition
+                if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
+                    break OUTER;
+                }
             }
+        } catch (UncheckedInterruptedException e) {
+            throw e.getCause();
+        } catch (UncheckedExecutionException e) {
+            throw e.getCause();
         }
     }
 
