@@ -36,7 +36,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
-class RollClientImpl implements RollClient {
+class RollClientImpl implements RollClient, PlatformClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
 
