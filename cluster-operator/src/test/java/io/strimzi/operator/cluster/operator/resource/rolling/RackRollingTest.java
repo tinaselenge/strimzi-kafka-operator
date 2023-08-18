@@ -112,18 +112,18 @@ public class RackRollingTest {
     }
 
     private static void mockHealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
     }
 
     private static void mockUnHealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
-        doReturn(true, false)
+        doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
@@ -277,9 +277,9 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);;
@@ -345,9 +345,9 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         addTopic("topic-A", node);
         mockTopics(rollClient);
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
@@ -370,9 +370,9 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        doReturn(true, false)
+        doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
@@ -403,9 +403,9 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
@@ -439,9 +439,9 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
@@ -474,9 +474,9 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        doReturn(false)
+        doReturn(PlatformClient.NodeState.READY)
                 .when(platformClient)
-                .isNotReady(nodeRef);
+                .nodeState(nodeRef);
         doReturn(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
