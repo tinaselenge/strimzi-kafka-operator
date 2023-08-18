@@ -313,16 +313,16 @@ class RackRolling {
         return nodeRef.podName();
     }
 
-    private static void restartServer(Time time, PlatformClient platformClient, Context context, int maxRestarts) {
+    private static void restartNode(Time time, PlatformClient platformClient, Context context, int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
             throw new MaxRestartsExceededException("Broker " + context.serverId() + " has been restarted " + maxRestarts + " times");
         }
-        platformClient.deletePod(context.nodeRef());
+        platformClient.restartNode(context.nodeRef());
         context.transitionTo(State.RESTARTED, time);
         // TODO kube create an Event with the context.reason
     }
 
-    private static void reconfigureServer(Time time, RollClient rollClient, Context context, int maxReconfigs) {
+    private static void reconfigureNode(Time time, RollClient rollClient, Context context, int maxReconfigs) {
         if (context.numReconfigs() > maxReconfigs) {
             throw new RuntimeException("Too many reconfigs");
         }
@@ -358,7 +358,7 @@ class RackRolling {
 
     private static void restartInParallel(Time time, PlatformClient platformClient, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
-            restartServer(time, platformClient, context, maxRestarts);
+            restartNode(time, platformClient, context, maxRestarts);
         }
         long remainingTimeoutMs = timeoutMs;
         for (Context context : batch) {
@@ -492,6 +492,7 @@ class RackRolling {
      *         maximum {@code timeoutMs}.</li>
      * </ol>
      *
+     * @param platformClient The platform client.
      * @param rollClient The roll client.
      * @param nodes The nodes.
      * @param predicate The predicate.
@@ -541,7 +542,7 @@ class RackRolling {
                 // Restart any initially unready nodes
                 for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
                     context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
-                    restartServer(time, platformClient, context, maxRestarts);
+                    restartNode(time, platformClient, context, maxRestarts);
                     long remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
                     awaitPreferred(time, rollClient, context, remainingTimeoutMs);
                     continue OUTER;
@@ -560,7 +561,7 @@ class RackRolling {
                 // Reconfigure any reconfigurable nodes
                 for (var context : byPlan.get(Plan.RECONFIGURE)) {
                     // TODO decide on parallel/batching dynamic reconfiguration
-                    reconfigureServer(time, rollClient, context, maxReconfigs);
+                    reconfigureNode(time, rollClient, context, maxReconfigs);
                     time.sleep(postReconfigureTimeoutMs / 2, 0);
                     awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
                     // termination condition

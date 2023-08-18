@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * An amalgamation of a Kubernetes client, a Kafka Admin client, and a Kafka Agent client.
+ * An abstraction over both a Kafka Admin client, and a Kafka Agent client.
  */
 interface RollClient {
 

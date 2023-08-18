@@ -107,7 +107,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, never()).deletePod(any());
+        Mockito.verify(platformClient, never()).restartNode(any());
         Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
     }
 
@@ -179,7 +179,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -207,7 +207,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -330,7 +330,7 @@ public class RackRollingTest {
         doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -390,7 +390,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -425,7 +425,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, never()).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
 
     }
@@ -461,7 +461,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -495,7 +495,7 @@ public class RackRollingTest {
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, never()).deletePod(eq(nodeRef));
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
         Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -535,7 +535,7 @@ public class RackRollingTest {
         // then
         for (var nodeRef: nodeRefs) {
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(platformClient, never()).deletePod(any());
+            Mockito.verify(platformClient, never()).restartNode(any());
             Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
         }
     }
@@ -576,7 +576,7 @@ public class RackRollingTest {
         // then
         for (var nodeRef: nodeRefs) {
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(platformClient, times(1)).deletePod(eq(nodeRef));
+            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
             Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
         }
     }
