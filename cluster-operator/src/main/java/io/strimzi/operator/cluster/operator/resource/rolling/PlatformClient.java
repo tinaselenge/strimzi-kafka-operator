@@ -6,6 +6,9 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.model.NodeRef;
 
+/**
+ * Abstraction over the platform (i.e. kubernetes).
+ */
 public interface PlatformClient {
     /** @return true if the pod for this node is not ready according to kubernetes */
     boolean isNotReady(NodeRef nodeRef);
@@ -14,5 +17,5 @@ public interface PlatformClient {
      * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
      * @param nodeRef The node.
      */
-    public void deletePod(NodeRef nodeRef);
+    public void restartNode(NodeRef nodeRef);
 }

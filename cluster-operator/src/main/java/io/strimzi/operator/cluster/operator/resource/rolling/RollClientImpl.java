@@ -4,13 +4,14 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
+import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
+import io.strimzi.operator.common.operator.resource.PodOperator;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
@@ -39,6 +40,8 @@ import java.util.stream.Collectors;
 class RollClientImpl implements RollClient, PlatformClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
+    private final String namespace;
+    private final Reconciliation reconciliation;
 
     /** Return a future that completes when all of the given futures complete */
     @SuppressWarnings("rawtypes")
@@ -63,21 +66,24 @@ class RollClientImpl implements RollClient, PlatformClient {
 
     private final Admin admin;
 
-    private final KubernetesClient client;
+    private final PodOperator podOps;
 
     private final KafkaAgentClient kafkaAgentClient;
 
-    RollClientImpl(KubernetesClient client, Admin admin, KafkaAgentClient kafkaAgentClient) {
-        this.client = client;
+    RollClientImpl(Reconciliation reconciliation,
+                   PodOperator podOps,
+                   String namespace,
+                   Admin admin, KafkaAgentClient kafkaAgentClient) {
+        this.reconciliation = reconciliation;
+        this.podOps = podOps;
+        this.namespace = namespace;
         this.admin = admin;
         this.kafkaAgentClient = kafkaAgentClient;
     }
 
     @Override
     public boolean isNotReady(NodeRef nodeRef) {
-//        PodOperator podOps = null;
-//        return !podOps.isReady(namespace, name);
-        throw new UnsupportedOperationException("TODO");
+        return !podOps.isReady(namespace, nodeRef.podName());
     }
 
     @Override
@@ -87,12 +93,9 @@ class RollClientImpl implements RollClient, PlatformClient {
     }
 
     @Override
-    public void deletePod(NodeRef nodeRef) {
-//        client.pods().inNamespace(namespace).withName(nodeRef.podName()).delete();
-//        OR
-//        PodOperator podOpds;
-//        podOpds.restart();
-        throw new UnsupportedOperationException("TODO");
+    public void restartNode(NodeRef nodeRef) {
+        var pod = podOps.get(namespace, nodeRef.podName());
+        podOps.restart(reconciliation, pod, 60_000);
     }
 
     @Override
