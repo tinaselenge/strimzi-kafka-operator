@@ -4,10 +4,13 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.readiness.Readiness;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.operator.resource.PodOperator;
+
+import java.util.Set;
 
 public class PlatformClientImpl implements PlatformClient {
 
@@ -31,11 +34,33 @@ public class PlatformClientImpl implements PlatformClient {
             if (Readiness.isPodReady(pod)) {
                 return NodeState.READY;
             } else {
-                // TODO map to unready unschedulable and backoffing pods
+                if (pendingAndUnschedulable(pod)) {
+                    return NodeState.NOT_RUNNING; // NOT_RUNNING is more of a "likely stuck in not ready"
+                } else if (hasWaitingContainerWithReason(pod, Set.of("CrashLoopBackoff", "ImagePullBackoff"))) {
+                    return NodeState.NOT_RUNNING;
+                }
                 return NodeState.NOT_READY;
             }
         }
 
+    }
+
+    private static boolean hasWaitingContainerWithReason(Pod pod, Set<String> reasons) {
+        return pod.getStatus().getContainerStatuses().stream().anyMatch(cs -> {
+            if (cs.getState() != null && cs.getState().getWaiting() != null) {
+                var waitingReason = cs.getState().getWaiting().getReason();
+                return reasons.contains(waitingReason);
+            } else {
+                return false;
+            }
+        });
+    }
+
+    private static boolean pendingAndUnschedulable(Pod pod) {
+        return "Pending".equals(pod.getStatus().getPhase()) && pod.getStatus().getConditions().stream().anyMatch(
+                c -> "PodScheduled".equals(c.getType())
+                        && "False".equals(c.getStatus())
+                        && "Unschedulable".equals(c.getReason()));
     }
 
     @Override
