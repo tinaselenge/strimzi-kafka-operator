@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.client.readiness.Readiness;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.operator.resource.PodOperator;
@@ -22,8 +23,19 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     @Override
-    public boolean isNotReady(NodeRef nodeRef) {
-        return !podOps.isReady(namespace, nodeRef.podName());
+    public NodeState nodeState(NodeRef nodeRef) {
+        var pod = podOps.get(namespace, nodeRef.podName());
+        if (pod == null || pod.getStatus() == null) {
+            return NodeState.NOT_RUNNING;
+        } else {
+            if (Readiness.isPodReady(pod)) {
+                return NodeState.READY;
+            } else {
+                // TODO map to unready unschedulable and backoffing pods
+                return NodeState.NOT_READY;
+            }
+        }
+
     }
 
     @Override

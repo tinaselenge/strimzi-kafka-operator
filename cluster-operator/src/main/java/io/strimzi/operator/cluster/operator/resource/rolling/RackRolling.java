@@ -435,21 +435,25 @@ class RackRolling {
      * @return The state
      */
     public static State observe(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
-        if (platformClient.isNotReady(nodeRef)) {
-            return State.NOT_READY;
-        } else {
-            try {
-                var bs = rollClient.getBrokerState(nodeRef);
-                if (bs.value() < BrokerState.RUNNING.value()) {
-                    return State.RECOVERING;
-                } else if (bs.value() == BrokerState.RUNNING.value()) {
-                    return State.SERVING;
-                } else {
+        switch (platformClient.nodeState(nodeRef)) {
+            case NOT_RUNNING:
+                return State.NOT_READY;
+            case NOT_READY:
+                return State.NOT_READY;
+            case READY:
+            default:
+                try {
+                    var bs = rollClient.getBrokerState(nodeRef);
+                    if (bs.value() < BrokerState.RUNNING.value()) {
+                        return State.RECOVERING;
+                    } else if (bs.value() == BrokerState.RUNNING.value()) {
+                        return State.SERVING;
+                    } else {
+                        return State.NOT_READY;
+                    }
+                } catch (Exception e) {
                     return State.NOT_READY;
                 }
-            } catch (Exception e) {
-                return State.NOT_READY;
-            }
         }
     }
 
