@@ -79,7 +79,7 @@ class RackRolling {
      * Split the given cells into batches,
      * taking account of {@code acks=all} availability and the given maxBatchSize
      */
-    static List<Set<KafkaNode>> batchCells(List<Set<KafkaNode>> cells,
+    private static List<Set<KafkaNode>> batchCells(List<Set<KafkaNode>> cells,
                                            Map<String, Integer> minIsrByTopic,
                                            int maxBatchSize) {
         List<Set<KafkaNode>> result = new ArrayList<>();
@@ -103,7 +103,7 @@ class RackRolling {
         return result;
     }
 
-    static <T> boolean intersects(Set<T> set, Set<T> set2) {
+    private static <T> boolean intersects(Set<T> set, Set<T> set2) {
         for (T t : set) {
             if (set2.contains(t)) {
                 return true;
@@ -112,7 +112,7 @@ class RackRolling {
         return false;
     }
 
-    static boolean containsAny(Set<KafkaNode> cell, Set<Replica> replicas) {
+    private static boolean containsAny(Set<KafkaNode> cell, Set<Replica> replicas) {
         for (var b : cell) {
             if (intersects(b.replicas(), replicas)) {
                 return true;
@@ -163,7 +163,7 @@ class RackRolling {
      * into cells that can be rolled in parallel because they
      * contain no replicas in common.
      */
-    static List<Set<KafkaNode>> cells(Collection<KafkaNode> brokers) {
+    private static List<Set<KafkaNode>> cells(Collection<KafkaNode> brokers) {
 
         // find brokers that are individually rollable
         var rollable = brokers.stream().collect(Collectors.toCollection(() ->
@@ -186,7 +186,7 @@ class RackRolling {
      * This is the largest batch of available servers excluding the
      * @return the "best" batch to be restarted
      */
-    static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches, int controllerId) {
+    private static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches, int controllerId) {
         var sorted = batches.stream().sorted(Comparator.comparing(Set::size)).toList();
         if (sorted.size() == 0) {
             return Set.of();
@@ -307,10 +307,6 @@ class RackRolling {
             System.out.println("Group " + group + ": " + result.stream().map(KafkaNode::id).collect(Collectors.toCollection(TreeSet::new)));
             group++;
         }
-    }
-
-    static String podName(NodeRef nodeRef) {
-        return nodeRef.podName();
     }
 
     private static void restartNode(Time time, PlatformClient platformClient, Context context, int maxRestarts) {
@@ -434,7 +430,7 @@ class RackRolling {
      * @param nodeRef The node
      * @return The state
      */
-    public static State observe(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
+    private static State observe(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
         if (platformClient.isNotReady(nodeRef)) {
             return State.NOT_READY;
         } else {
