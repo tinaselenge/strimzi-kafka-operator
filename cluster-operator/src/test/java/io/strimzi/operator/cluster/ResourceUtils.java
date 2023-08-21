@@ -88,12 +88,17 @@ import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.PemTrustOptions;
+import java.lang.reflect.InvocationTargetException;
+import java.util.Collections;
+import java.util.OptionalLong;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.DescribeConfigsResult;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListTopicsResult;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
@@ -523,6 +528,25 @@ public class ResourceUtils {
                     throw new RuntimeException(e);
                 }
                 when(mock.describeConfigs(any())).thenReturn(dcfr);
+
+                DescribeMetadataQuorumResult dmqr;
+                try {
+                    Constructor<DescribeMetadataQuorumResult> declaredConstructor = DescribeMetadataQuorumResult.class.getDeclaredConstructor(KafkaFuture.class);
+                    QuorumInfo qrminfo = mock(QuorumInfo.class);
+                    KafkaFuture<QuorumInfo> future = KafkaFutureImpl.completedFuture(qrminfo);
+                    when(qrminfo.leaderId()).thenReturn(0);
+                    QuorumInfo.ReplicaState replicaState = mock(QuorumInfo.ReplicaState.class);
+                    when(replicaState.replicaId()).thenReturn(0);
+                    when(replicaState.lastCaughtUpTimestamp()).thenReturn(OptionalLong.of(0L));
+                    List<QuorumInfo.ReplicaState> voters = Collections.singletonList(replicaState);
+                    when(qrminfo.voters()).thenReturn(voters);
+                    declaredConstructor.setAccessible(true);
+                    dmqr = declaredConstructor.newInstance(future);
+                } catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
+                         InvocationTargetException e) {
+                    throw new RuntimeException(e);
+                }
+                when(mock.describeMetadataQuorum()).thenReturn(dmqr);
                 return mock;
             }
         };
