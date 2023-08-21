@@ -218,18 +218,26 @@ public class KafkaRoller {
         singleExecutor.submit(() -> {
             LOGGER.debugCr(reconciliation, "Verifying cluster pods are up-to-date.");
             List<NodeRef> pods = new ArrayList<>(nodes.size());
-
+            List<NodeRef> unReadyControllerPods = new ArrayList<>();
+            List<NodeRef> readyControllerPods = new ArrayList<>();
+            List<NodeRef> brokerPods = new ArrayList<>();
             for (NodeRef node : nodes)  {
                 // Order the nodes unready first otherwise repeated reconciliations might each restart a pod
                 // only for it not to become ready and thus drive the cluster to a worse state.
-
-                // TODO: In KRaft mode, We currently roll only nodes with the broker role. This is because of Kafka
-                //       limitations. Once managing controller nodes is supported with Kafka Admin API, this should be
-                //       fixed. This is tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/8593.
-                if (node.broker()) {
-                    pods.add(podOperations.isReady(namespace, node.podName()) ? pods.size() : 0, node);
+                boolean isReady = podOperations.isReady(namespace, node.podName());
+                if (node.controller()) {
+                    if (isReady) {
+                        readyControllerPods.add(node.broker() ? readyControllerPods.size(): 0, node);
+                    } else {
+                        unReadyControllerPods.add(node.broker() ? unReadyControllerPods.size(): 0, node);
+                    }
+                } else {
+                    brokerPods.add(isReady ? brokerPods.size() : 0, node);
                 }
             }
+            pods.addAll(unReadyControllerPods);
+            pods.addAll(readyControllerPods);
+            pods.addAll(brokerPods);
             LOGGER.debugCr(reconciliation, "Initial order for updating pods (rolling restart or dynamic update) is {}", pods);
 
             List<Future<Void>> futures = new ArrayList<>(nodes.size());
@@ -375,13 +383,15 @@ public class KafkaRoller {
             try {
                 await(isReady(pod), operationTimeoutMs, TimeUnit.MILLISECONDS, e -> new RuntimeException(e));
             } catch (Exception e) {
-                //Initialise the client for KafkaAgent if pod is not ready
-                if (kafkaAgentClient == null) {
-                    this.kafkaAgentClient = initKafkaAgentClient();
-                }
-                BrokerState brokerState = kafkaAgentClient.getBrokerState(pod.getMetadata().getName());
-                if (brokerState.isBrokerInRecovery()) {
-                    throw new UnforceableProblem("Pod " + nodeRef.podName() + " is not ready because the broker is performing log recovery. There are  " + brokerState.remainingLogsToRecover() + " logs and " + brokerState.remainingSegmentsToRecover() + " segments left to recover.", e.getCause());
+                if (nodeRef.broker()) {
+                    //Initialise the client for KafkaAgent if pod is not ready
+                    if (kafkaAgentClient == null) {
+                        this.kafkaAgentClient = initKafkaAgentClient();
+                    }
+                    BrokerState brokerState = kafkaAgentClient.getBrokerState(pod.getMetadata().getName());
+                    if (brokerState.isBrokerInRecovery()) {
+                        throw new UnforceableProblem("Pod " + nodeRef.podName() + " is not ready because the broker is performing log recovery. There are  " + brokerState.remainingLogsToRecover() + " logs and " + brokerState.remainingSegmentsToRecover() + " segments left to recover.", e.getCause());
+                    }
                 }
 
                 if (e.getCause() instanceof TimeoutException) {
@@ -529,7 +539,7 @@ public class KafkaRoller {
         boolean needsReconfig = false;
         // Always get the broker config. This request gets sent to that specific broker, so it's a proof that we can
         // connect to the broker and that it's capable of responding.
-        if (!initAdminClient()) {
+        if (nodeRef.broker() && !initAdminClient()) {
             LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it does not seem to responding to connection attempts", nodeRef);
             reasonToRestartPod.add(RestartReason.POD_UNRESPONSIVE);
             restartContext.needsRestart = false;

@@ -52,6 +52,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -165,7 +166,23 @@ public class KafkaRollerTest {
     }
 
     @Test
-    public void tesRollWithtAControllerChange(VertxTestContext testContext) {
+    public void testRollUnreadyPodFirst(VertxTestContext testContext) {
+        AtomicBoolean podUnready = new AtomicBoolean(true);
+        PodOperator podOps = mockPodOps(podId -> {
+            if (podId == 1 && podUnready.getAndSet(false)) {
+                return failedFuture(new java.util.concurrent.TimeoutException("fail"));
+            } else {
+                return succeededFuture();
+            }
+        });
+        TestingKafkaRoller kafkaRoller = rollerWithControllers(podOps, 2);
+        doSuccessfulRollingRestart(testContext, kafkaRoller,
+                asList(0, 1, 2, 3, 4),
+                asList(1, 0, 3, 4, 2));
+    }
+
+    @Test
+    public void testRollWithAControllerChange(VertxTestContext testContext) {
         PodOperator podOps = mockPodOps(podId -> succeededFuture());
         TestingKafkaRoller kafkaRoller = rollerWithControllers(podOps, 0, 1);
         doSuccessfulRollingRestart(testContext, kafkaRoller,
@@ -254,6 +271,22 @@ public class KafkaRollerTest {
             podNames.add(new NodeRef(KafkaResources.kafkaPodName(clusterName(), podId), podId, null, false, true));
         }
 
+        return podNames;
+    }
+
+    public Set<NodeRef> addKraftPodNames(int brokerReplicas, int combinedReplicas, int controllerReplicas) {
+        Set<NodeRef> podNames = new LinkedHashSet<>(brokerReplicas);
+        for (int brokerId = 0; brokerId < brokerReplicas; brokerId++) {
+            podNames.add(new NodeRef(KafkaResources.kafkaPodName(clusterName(), brokerId), brokerId, "broker", false, true));
+        }
+        int maxCombinedId = brokerReplicas + combinedReplicas;
+        for (int controllerId = brokerReplicas; controllerId < maxCombinedId; controllerId++) {
+            podNames.add(new NodeRef(KafkaResources.kafkaPodName(clusterName(), controllerId), controllerId, "combined", true, true));
+        }
+        int maxControllerId = maxCombinedId + controllerReplicas;
+        for (int controllerId = maxCombinedId; controllerId < maxControllerId; controllerId++) {
+            podNames.add(new NodeRef(KafkaResources.kafkaPodName(clusterName(), controllerId), controllerId, "controller", true, false));
+        }
         return podNames;
     }
 
@@ -529,6 +562,26 @@ public class KafkaRollerTest {
     }
 
     @Test
+    public void testIgnoresBrokerStateForKraftController(VertxTestContext testContext) throws InterruptedException {
+        PodOperator podOps = mockPodOps(podId ->
+             failedFuture(new TimeoutException("Timeout"))
+        );
+
+        BrokerState brokerstate = new BrokerState(2, null);
+
+        TestingKafkaRoller kafkaRoller = new TestingKafkaRoller(null, null, addKraftPodNames(0, 0, 1),
+                podOps,
+                noException(), null, noException(), noException(), noException(),
+                brokerId -> succeededFuture(true),
+                false, null, false, brokerstate, -1);
+
+        doFailingRollingRestart(testContext, kafkaRoller,
+                List.of(0),
+                KafkaRoller.FatalProblem.class, "Error while waiting for restarted pod c-kafka-0 to become ready",
+                List.of(0));
+    }
+
+    @Test
     public void testBrokerInRunningState(VertxTestContext testContext) throws InterruptedException {
         PodOperator podOps = mockPodOps(podId ->
                 (podId == 0) ? failedFuture(new TimeoutException("Timeout")) : succeededFuture()
@@ -567,6 +620,42 @@ public class KafkaRollerTest {
                 KafkaRoller.FatalProblem.class, "Error while waiting for restarted pod c-kafka-0 to become ready",
                 asList(0));
     }
+
+    @Test
+    public void testRollWithKRaftNodes(VertxTestContext testContext) {
+        TestingKafkaRoller kafkaRoller = new TestingKafkaRoller(null, null, addKraftPodNames(3, 3, 3),
+                mockPodOps(podId -> succeededFuture()), noException(), null, noException(), noException(), noException(),
+                brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, 6);
+        doSuccessfulRollingRestart(testContext, kafkaRoller,
+                asList(0, 1, 2, 3, 4, 5, 6, 7, 8),
+                asList(8, 7, 3, 4, 5, 0, 1, 2, 6));
+    }
+
+    @Test
+    public void testRollUnreadyPodFirstKRaftNodes(VertxTestContext testContext) {
+        AtomicBoolean pod1Unready = new AtomicBoolean(true);
+        AtomicBoolean pod4Unready = new AtomicBoolean(true);
+        AtomicBoolean pod7Unready = new AtomicBoolean(true);
+        PodOperator podOps = mockPodOps(podId -> {
+            if (podId == 1 && pod1Unready.getAndSet(false)) {
+                return failedFuture(new java.util.concurrent.TimeoutException("fail"));
+            }
+            if (podId == 4 && pod4Unready.getAndSet(false)) {
+                return failedFuture(new java.util.concurrent.TimeoutException("fail"));
+            }
+            if (podId == 7 && pod7Unready.getAndSet(false)) {
+                return failedFuture(new java.util.concurrent.TimeoutException("fail"));
+            }
+            return succeededFuture();
+        });
+        TestingKafkaRoller kafkaRoller = new TestingKafkaRoller(null, null, addKraftPodNames(3, 3, 3),
+                podOps, noException(), null, noException(), noException(), noException(),
+                brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, 6);
+        doSuccessfulRollingRestart(testContext, kafkaRoller,
+                asList(0, 1, 2, 3, 4, 5, 6, 7, 8),
+                asList(7, 4, 8, 3, 5, 1, 0, 2, 6));
+    }
+
 
     private TestingKafkaRoller rollerWithControllers(PodOperator podOps, int... controllers) {
         return new TestingKafkaRoller(null, null, addPodNames(KafkaRollerTest.REPLICAS), podOps,
