@@ -107,6 +107,18 @@ public class KafkaControllerConfigurationDiffTest {
         assertFalse(kcd.configsHaveChanged);
     }
 
+    @Test
+    public void testNullCurrentConfig() {
+        KafkaControllerConfigurationDiff kcd = new KafkaControllerConfigurationDiff(null, getDesiredConfiguration(emptyMap()));
+        assertFalse(kcd.configsHaveChanged);
+    }
+
+    @Test
+    public void testNullDesiredConfig() {
+        KafkaControllerConfigurationDiff kcd = new KafkaControllerConfigurationDiff(getCurrentConfiguration(emptyMap(), ""), null);
+        assertFalse(kcd.configsHaveChanged);
+    }
+
     private String getDesiredConfiguration(Map<String, String> additional) {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream("desired-kafka-controller.conf")) {
             String desiredConfigString = TestUtils.readResource(is);

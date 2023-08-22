@@ -227,9 +227,9 @@ public class KafkaRoller {
                 boolean isReady = podOperations.isReady(namespace, node.podName());
                 if (node.controller()) {
                     if (isReady) {
-                        readyControllerPods.add(node.broker() ? readyControllerPods.size(): 0, node);
+                        readyControllerPods.add(node.broker() ? readyControllerPods.size() : 0, node);
                     } else {
-                        unReadyControllerPods.add(node.broker() ? unReadyControllerPods.size(): 0, node);
+                        unReadyControllerPods.add(node.broker() ? unReadyControllerPods.size() : 0, node);
                     }
                 } else {
                     brokerPods.add(isReady ? brokerPods.size() : 0, node);
@@ -414,7 +414,10 @@ public class KafkaRoller {
                     LOGGER.debugCr(reconciliation, "Pod {} is controller and there are other pods to verify. Non-controller pods will be verified first.", nodeRef);
                     throw new ForceableProblem("Pod " + nodeRef.podName() + " is controller and there are other pods to verify. Non-controller pods will be verified first");
                 } else {
-                    if (canRoll(nodeRef, 60_000, TimeUnit.MILLISECONDS, false, restartContext)) {
+                    if (nodeRef.broker() && !canRoll(nodeRef, 60_000, TimeUnit.MILLISECONDS, false, restartContext)) {
+                        LOGGER.debugCr(reconciliation, "Pod {} cannot be updated right now", nodeRef);
+                        throw new UnforceableProblem("Pod " + nodeRef.podName() + " cannot be updated right now.");
+                    } else {
                         // Check for rollability before trying a dynamic update so that if the dynamic update fails we can go to a full restart
                         if (!maybeDynamicUpdateBrokerConfig(nodeRef, restartContext)) {
                             LOGGER.debugCr(reconciliation, "Pod {} can be rolled now", nodeRef);
@@ -422,9 +425,6 @@ public class KafkaRoller {
                         } else {
                             awaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS);
                         }
-                    } else {
-                        LOGGER.debugCr(reconciliation, "Pod {} cannot be updated right now", nodeRef);
-                        throw new UnforceableProblem("Pod " + nodeRef.podName() + " cannot be updated right now.");
                     }
                 }
             } else {
@@ -537,53 +537,66 @@ public class KafkaRoller {
         KafkaBrokerConfigurationDiff diff = null;
         KafkaBrokerLoggingConfigurationDiff loggingDiff = null;
         boolean needsReconfig = false;
-        // Always get the broker config. This request gets sent to that specific broker, so it's a proof that we can
-        // connect to the broker and that it's capable of responding.
-        if (nodeRef.broker() && !initAdminClient()) {
-            LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it does not seem to responding to connection attempts", nodeRef);
-            reasonToRestartPod.add(RestartReason.POD_UNRESPONSIVE);
-            restartContext.needsRestart = false;
-            restartContext.needsReconfig = false;
-            restartContext.forceRestart = true;
-            restartContext.diff = null;
-            restartContext.logDiff = null;
-            return;
-        }
-        Config brokerConfig;
-        try {
-            brokerConfig = brokerConfig(nodeRef);
-        } catch (ForceableProblem e) {
-            if (restartContext.backOff.done()) {
+        if (nodeRef.controller()) {
+            if (kafkaAgentClient == null) {
+                kafkaAgentClient = initKafkaAgentClient();
+            }
+            Config controllerConfig = kafkaAgentClient.getNodeConfiguration(nodeRef.podName());
+            KafkaControllerConfigurationDiff controllerConfigurationDiff = new KafkaControllerConfigurationDiff(controllerConfig, kafkaConfigProvider.apply(nodeRef.nodeId()));
+            if (controllerConfigurationDiff.configsHaveChanged) {
                 needsRestart = true;
-                brokerConfig = null;
-            } else {
-                throw e;
             }
         }
 
-        if (!needsRestart && allowReconfiguration) {
-            LOGGER.traceCr(reconciliation, "Pod {}: description {}", nodeRef, brokerConfig);
-            diff = new KafkaBrokerConfigurationDiff(reconciliation, brokerConfig, kafkaConfigProvider.apply(nodeRef.nodeId()), kafkaVersion, nodeRef.nodeId());
-            loggingDiff = logging(nodeRef);
-
-            if (diff.getDiffSize() > 0) {
-                if (diff.canBeUpdatedDynamically()) {
-                    LOGGER.debugCr(reconciliation, "Pod {} needs to be reconfigured.", nodeRef);
-                    needsReconfig = true;
-                } else {
-                    LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, dynamic update cannot be done.", nodeRef);
-                    restartContext.restartReasons.add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
+        if (nodeRef.broker()) {
+            // Always get the broker config. This request gets sent to that specific broker, so it's a proof that we can
+            // connect to the broker and that it's capable of responding.
+            if (!initAdminClient()) {
+                LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it does not seem to responding to connection attempts", nodeRef);
+                reasonToRestartPod.add(RestartReason.POD_UNRESPONSIVE);
+                restartContext.needsRestart = false;
+                restartContext.needsReconfig = false;
+                restartContext.forceRestart = true;
+                restartContext.diff = null;
+                restartContext.logDiff = null;
+                return;
+            }
+            Config brokerConfig;
+            try {
+                brokerConfig = brokerConfig(nodeRef);
+            } catch (ForceableProblem e) {
+                if (restartContext.backOff.done()) {
                     needsRestart = true;
+                    brokerConfig = null;
+                } else {
+                    throw e;
                 }
             }
 
-            // needsRestart value might have changed from the check in the parent if. So we need to check it again.
-            if (!needsRestart && loggingDiff.getDiffSize() > 0) {
-                LOGGER.debugCr(reconciliation, "Pod {} logging needs to be reconfigured.", nodeRef);
-                needsReconfig = true;
+            if (!needsRestart && allowReconfiguration) {
+                LOGGER.traceCr(reconciliation, "Pod {}: description {}", nodeRef, brokerConfig);
+                diff = new KafkaBrokerConfigurationDiff(reconciliation, brokerConfig, kafkaConfigProvider.apply(nodeRef.nodeId()), kafkaVersion, nodeRef.nodeId());
+                loggingDiff = logging(nodeRef);
+
+                if (diff.getDiffSize() > 0) {
+                    if (diff.canBeUpdatedDynamically()) {
+                        LOGGER.debugCr(reconciliation, "Pod {} needs to be reconfigured.", nodeRef);
+                        needsReconfig = true;
+                    } else {
+                        LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, dynamic update cannot be done.", nodeRef);
+                        restartContext.restartReasons.add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
+                        needsRestart = true;
+                    }
+                }
+
+                // needsRestart value might have changed from the check in the parent if. So we need to check it again.
+                if (!needsRestart && loggingDiff.getDiffSize() > 0) {
+                    LOGGER.debugCr(reconciliation, "Pod {} logging needs to be reconfigured.", nodeRef);
+                    needsReconfig = true;
+                }
+            } else if (needsRestart) {
+                LOGGER.infoCr(reconciliation, "Rolling Pod {} due to {}", nodeRef, reasonToRestartPod.getAllReasonNotes());
             }
-        } else if (needsRestart) {
-            LOGGER.infoCr(reconciliation, "Rolling Pod {} due to {}", nodeRef, reasonToRestartPod.getAllReasonNotes());
         }
 
         restartContext.needsRestart = needsRestart;

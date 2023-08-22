@@ -41,6 +41,9 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
      * @return Returns true if changed entries from desired configurations are in CONTROLLER_CONFIGS, otherwise false.
      */
     private boolean configsHaveChanged(String desired, Config controllerConfig) {
+        if (controllerConfig == null || desired == null) {
+            return false;
+        }
         Map<String, String> current;
 
         current = controllerConfig.entries().stream().collect(
