@@ -6,8 +6,9 @@
 package io.strimzi.operator.cluster.operator.resource;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.zjsonpatch.JsonDiff;
+import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.model.OrderedProperties;
 import io.strimzi.operator.common.operator.resource.AbstractJsonDiff;
 import org.apache.kafka.clients.admin.Config;
@@ -27,20 +28,23 @@ import java.util.stream.Collectors;
  *  4c. If the entry is not in CONTROLLER_CONFIGS, set <code>configsHaveChanged</code> to false.
  */
 public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
-    @SuppressFBWarnings({"URF_UNREAD_FIELD"}) // This field will be read from KafkaRoller later
+    private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(KafkaControllerConfigurationDiff.class);
+    private final Reconciliation reconciliation;
     final boolean configsHaveChanged;
 
-    KafkaControllerConfigurationDiff(Config controllerConfig, String desired) {
-        this.configsHaveChanged = configsHaveChanged(desired, controllerConfig);
+    KafkaControllerConfigurationDiff(Reconciliation reconciliation, Config controllerConfig, String desired, int brokerId) {
+        this.reconciliation = reconciliation;
+        this.configsHaveChanged = configsHaveChanged(brokerId, desired, controllerConfig);
     }
 
     /**
      * Computes diff between two maps. Checks if entries are in CONTROLLER_CONFIGS.
+     * @param brokerId id of compared broker
      * @param desired desired configuration, may be null if the related ConfigMap does not exist yet or no changes are required.
      * @param controllerConfig current configuration.
      * @return Returns true if changed entries from desired configurations are in CONTROLLER_CONFIGS, otherwise false.
      */
-    private boolean configsHaveChanged(String desired, Config controllerConfig) {
+    private boolean configsHaveChanged(int brokerId, String desired, Config controllerConfig) {
         if (controllerConfig == null || desired == null) {
             return false;
         }
@@ -62,6 +66,10 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
         for (JsonNode node : jsonDiff) {
             String operation = node.get("op").asText();
             if ("replace".equals(operation) || "move".equals(operation) || "add".equals(operation)) {
+                String configPath = node.get("path").asText();
+                LOGGER.debugCr(reconciliation, "Kafka KRaft Controller {} Config Differs : {}", brokerId, configPath);
+                LOGGER.debugCr(reconciliation, "Current Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(source, configPath));
+                LOGGER.debugCr(reconciliation, "Desired Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(target, configPath));
                 return ControllerConfigs.isControllerConfig(node.get("path").asText().substring(1));
             }
         }

@@ -538,12 +538,17 @@ public class KafkaRoller {
         KafkaBrokerLoggingConfigurationDiff loggingDiff = null;
         boolean needsReconfig = false;
         if (nodeRef.controller()) {
+            LOGGER.debugCr(reconciliation, "Pod {} is a KRaft controller, checking if it requires a restart.", nodeRef);
             if (kafkaAgentClient == null) {
                 kafkaAgentClient = initKafkaAgentClient();
             }
             Config controllerConfig = kafkaAgentClient.getNodeConfiguration(nodeRef.podName());
-            KafkaControllerConfigurationDiff controllerConfigurationDiff = new KafkaControllerConfigurationDiff(controllerConfig, kafkaConfigProvider.apply(nodeRef.nodeId()));
+            KafkaControllerConfigurationDiff controllerConfigurationDiff = new KafkaControllerConfigurationDiff(reconciliation,
+                    controllerConfig,
+                    kafkaConfigProvider.apply(nodeRef.nodeId()),
+                    nodeRef.nodeId());
             if (controllerConfigurationDiff.configsHaveChanged) {
+                LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it is a KRaft controller and configuration has changed.", nodeRef);
                 needsRestart = true;
             }
         }
