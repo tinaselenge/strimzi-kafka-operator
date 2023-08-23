@@ -54,27 +54,33 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
                 Collectors.toMap(
                         ConfigEntry::name,
                         configEntry -> String.valueOf(configEntry.value())));
+        LOGGER.traceCr(reconciliation, "Kafka KRaft Controller {} Current Config {}", brokerId, current);
 
         OrderedProperties orderedProperties = new OrderedProperties();
         orderedProperties.addStringPairs(desired);
         Map<String, String> desiredConfig = orderedProperties.asMap();
+        LOGGER.traceCr(reconciliation, "Kafka KRaft Controller {} Desired Config {}", brokerId, desiredConfig);
 
         JsonNode source = PATCH_MAPPER.valueToTree(current);
         JsonNode target = PATCH_MAPPER.valueToTree(desiredConfig);
         JsonNode jsonDiff = JsonDiff.asJson(source, target);
+        LOGGER.traceCr(reconciliation, "Kafka KRaft Controller {} Config Diff {}", brokerId, jsonDiff);
 
+        boolean configsHaveChanged = false;
         for (JsonNode node : jsonDiff) {
             String operation = node.get("op").asText();
             if ("replace".equals(operation) || "move".equals(operation) || "add".equals(operation)) {
                 String configPath = node.get("path").asText();
-                LOGGER.debugCr(reconciliation, "Kafka KRaft Controller {} Config Differs : {}", brokerId, configPath);
-                LOGGER.debugCr(reconciliation, "Current Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(source, configPath));
-                LOGGER.debugCr(reconciliation, "Desired Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(target, configPath));
-                return ControllerConfigs.isControllerConfig(node.get("path").asText().substring(1));
+                if (ControllerConfigs.isControllerConfig(node.get("path").asText().substring(1))) {
+                    LOGGER.debugCr(reconciliation, "Kafka KRaft Controller {} Config Differs : {}", brokerId, configPath);
+                    LOGGER.debugCr(reconciliation, "Current Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(source, configPath));
+                    LOGGER.debugCr(reconciliation, "Desired Kafka KRaft Controller Config path {} has value {}", configPath, lookupPath(target, configPath));
+                    configsHaveChanged = true;
+                }
             }
         }
 
-        return false;
+        return configsHaveChanged;
     }
 
     @Override

@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -56,6 +57,18 @@ public class KafkaControllerConfigurationDiffTest {
                 getDesiredConfiguration(config),
                 BROKER_ID);
         assertFalse(kcd.configsHaveChanged);
+    }
+
+    @Test
+    public void testChangedControllerAndNonControllerValues() {
+        Map<String, String> config = new HashMap<>();
+        config.put("min.insync.replicas", "2");
+        config.put("process.roles", "controller");
+        KafkaControllerConfigurationDiff kcd = new KafkaControllerConfigurationDiff(Reconciliation.DUMMY_RECONCILIATION,
+                getCurrentConfiguration(emptyMap(), ""),
+                getDesiredConfiguration(config),
+                BROKER_ID);
+        assertTrue(kcd.configsHaveChanged);
     }
 
     @Test
