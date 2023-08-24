@@ -218,26 +218,21 @@ public class KafkaRoller {
         singleExecutor.submit(() -> {
             LOGGER.debugCr(reconciliation, "Verifying cluster pods are up-to-date.");
             List<NodeRef> pods = new ArrayList<>(nodes.size());
-            List<NodeRef> unReadyControllerPods = new ArrayList<>();
-            List<NodeRef> readyControllerPods = new ArrayList<>();
-            List<NodeRef> brokerPods = new ArrayList<>();
+            List<NodeRef> unReadyPods = new ArrayList<>();
+            List<NodeRef> readyPods = new ArrayList<>();
             for (NodeRef node : nodes)  {
                 // Order the nodes unready first otherwise repeated reconciliations might each restart a pod
                 // only for it not to become ready and thus drive the cluster to a worse state.
+                // in KRaft mode Roll controllers first, then brokers, but roll unready brokers before ready controllers
                 boolean isReady = podOperations.isReady(namespace, node.podName());
-                if (node.controller()) {
-                    if (isReady) {
-                        readyControllerPods.add(node.broker() ? readyControllerPods.size() : 0, node);
-                    } else {
-                        unReadyControllerPods.add(node.broker() ? unReadyControllerPods.size() : 0, node);
-                    }
+                if (isReady) {
+                    readyPods.add(node.controller() ? 0 : readyPods.size(), node);
                 } else {
-                    brokerPods.add(isReady ? brokerPods.size() : 0, node);
+                    unReadyPods.add(node.controller() ? 0 : unReadyPods.size(), node);
                 }
             }
-            pods.addAll(unReadyControllerPods);
-            pods.addAll(readyControllerPods);
-            pods.addAll(brokerPods);
+            pods.addAll(unReadyPods);
+            pods.addAll(readyPods);
             LOGGER.debugCr(reconciliation, "Initial order for updating pods (rolling restart or dynamic update) is {}", pods);
 
             List<Future<Void>> futures = new ArrayList<>(nodes.size());
@@ -410,7 +405,7 @@ public class KafkaRoller {
                 LOGGER.debugCr(reconciliation, "Pod {} can be rolled now", nodeRef);
                 restartAndAwaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS, restartContext);
             } else if (restartContext.needsRestart || restartContext.needsReconfig) {
-                if (deferController(nodeRef, restartContext)) {
+                if (nodeRef.broker() && deferController(nodeRef, restartContext)) {
                     LOGGER.debugCr(reconciliation, "Pod {} is controller and there are other pods to verify. Non-controller pods will be verified first.", nodeRef);
                     throw new ForceableProblem("Pod " + nodeRef.podName() + " is controller and there are other pods to verify. Non-controller pods will be verified first");
                 } else {

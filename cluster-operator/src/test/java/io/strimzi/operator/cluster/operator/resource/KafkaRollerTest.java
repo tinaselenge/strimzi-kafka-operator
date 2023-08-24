@@ -529,7 +529,7 @@ public class KafkaRollerTest {
                 mockPodOps(podId -> succeededFuture()), noException(), null, noException(), noException(), noException(),
                 brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, desiredConfig, -1);
         doSuccessfulConfigUpdate(testContext, kafkaRoller,
-                asList(5, 4, 3, 0, 1, 2));
+                asList(5, 4, 3, 2, 1, 0));
     }
 
     @Test
@@ -539,7 +539,7 @@ public class KafkaRollerTest {
                 mockPodOps(podId -> succeededFuture()), noException(), null, noException(), noException(), noException(),
                 brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, desiredConfig, -1);
         doSuccessfulConfigUpdate(testContext, kafkaRoller,
-                asList(3, 4, 5, 0, 1, 2));
+                asList(5, 4, 3, 0, 1, 2));
     }
 
     @Test
@@ -550,7 +550,7 @@ public class KafkaRollerTest {
                 brokerId -> succeededFuture(false), false, new DefaultAdminClientProvider(), false, null, desiredConfig, -1);
         doFailingRollingRestart(testContext, kafkaRoller,
                 emptyList(),
-                KafkaRoller.UnforceableProblem.class, "Pod c-kafka-3 cannot be updated right now.",
+                KafkaRoller.UnforceableProblem.class, "Pod c-kafka-5 cannot be updated right now.",
                 // We expect all KRaft controller only pods to roll
                 asList(8, 7, 6));
     }
@@ -660,7 +660,7 @@ public class KafkaRollerTest {
                 brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, "", 6);
         doSuccessfulRollingRestart(testContext, kafkaRoller,
                 asList(0, 1, 2, 3, 4, 5, 6, 7, 8),
-                asList(8, 7, 3, 4, 5, 0, 1, 2, 6));
+                asList(8, 7, 6, 5, 4, 3, 0, 1, 2)); //Doesn't defer 6 since it is a KRaft controller, not a ZooKeeper broker controller
     }
 
     @Test
@@ -669,12 +669,15 @@ public class KafkaRollerTest {
         AtomicBoolean pod4Unready = new AtomicBoolean(true);
         AtomicBoolean pod7Unready = new AtomicBoolean(true);
         PodOperator podOps = mockPodOps(podId -> {
+            //unready broker is 1
             if (podId == 1 && pod1Unready.getAndSet(false)) {
                 return failedFuture(new java.util.concurrent.TimeoutException("fail"));
             }
+            //unready combined node is 4
             if (podId == 4 && pod4Unready.getAndSet(false)) {
                 return failedFuture(new java.util.concurrent.TimeoutException("fail"));
             }
+            //unready controller is 7
             if (podId == 7 && pod7Unready.getAndSet(false)) {
                 return failedFuture(new java.util.concurrent.TimeoutException("fail"));
             }
@@ -682,10 +685,10 @@ public class KafkaRollerTest {
         });
         TestingKafkaRoller kafkaRoller = new TestingKafkaRoller(null, null, addKraftPodNames(3, 3, 3),
                 podOps, noException(), null, noException(), noException(), noException(),
-                brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, "", 6);
+                brokerId -> succeededFuture(true), false, new DefaultAdminClientProvider(), false, null, "", -1);
         doSuccessfulRollingRestart(testContext, kafkaRoller,
-                asList(0, 1, 2, 3, 4, 5, 6, 7, 8),
-                asList(7, 4, 8, 3, 5, 1, 0, 2, 6));
+                asList(0, 1, 2, 3, 4, 5, 6, 7, 8), // brokers, combined, controllers
+                asList(7, 4, 1, 8, 6, 5, 3, 0, 2)); //Rolls in order: unready pods, ready pods
     }
 
 
