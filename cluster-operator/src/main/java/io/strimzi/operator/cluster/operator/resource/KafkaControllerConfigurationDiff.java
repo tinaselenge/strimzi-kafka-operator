@@ -90,8 +90,8 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
 
     static class ControllerConfigs {
         static final List<String> CONTROLLER_CONFIGS = List.of(
+                "alter.config.policy.class.name",
                 "authorizer.class.name",
-                "auto.create.topics.enable",
                 "background.threads",
                 "broker.heartbeat.interval.ms",
                 "broker.session.timeout.ms",
@@ -113,9 +113,13 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
                 "controller.quota.window.size.seconds",
                 "controller.socket.timeout.ms",
                 "create.topic.policy.class.name",
+                "delegation.token.master.key",
+                "delegation.token.secret.key",
+                "delegation.token.max.lifetime.ms",
+                "delegation.token.expiry.time.ms",
+                "delegation.token.expiry.check.interval.ms",
                 "delete.topic.enable",
                 "early.start.listeners",
-                "initial.broker.registration.timeout.ms",
                 "kafka.metrics.polling.interval.secs",
                 "kafka.metrics.reporters",
                 "leader.imbalance.check.interval.seconds",
@@ -146,6 +150,8 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
                 "num.network.threads",
                 "principal.builder.class",
                 "process.roles",
+                "queued.max.requests",
+                "queued.max.request.bytes",
                 "sasl.enabled.mechanisms",
                 "sasl.kerberos.kinit.cmd",
                 "sasl.kerberos.min.time.before.relogin",
@@ -204,8 +210,7 @@ public class KafkaControllerConfigurationDiff extends AbstractJsonDiff {
                 "ssl.truststore.certificates",
                 "ssl.truststore.location",
                 "ssl.truststore.password",
-                "ssl.truststore.type",
-                "unclean.leader.election.enable"
+                "ssl.truststore.type"
         );
 
         static boolean isControllerConfig(String config) {

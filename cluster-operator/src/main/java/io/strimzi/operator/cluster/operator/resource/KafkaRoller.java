@@ -128,6 +128,8 @@ public class KafkaRoller {
     private Admin allClient;
     private KafkaAgentClient kafkaAgentClient;
 
+    private static final String CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG = "controller.quorum.fetch.timeout.ms";
+
     /**
      * Constructor
      *
@@ -265,6 +267,8 @@ public class KafkaRoller {
         boolean forceRestart;
         KafkaBrokerConfigurationDiff diff;
         KafkaBrokerLoggingConfigurationDiff logDiff;
+
+        String controllerQuorumFetchTimeoutMs = "1000";
 
         RestartContext(Supplier<BackOff> backOffSupplier) {
             promise = Promise.promise();
@@ -408,18 +412,16 @@ public class KafkaRoller {
                 if (nodeRef.broker() && deferController(nodeRef, restartContext)) {
                     LOGGER.debugCr(reconciliation, "Pod {} is controller and there are other pods to verify. Non-controller pods will be verified first.", nodeRef);
                     throw new ForceableProblem("Pod " + nodeRef.podName() + " is controller and there are other pods to verify. Non-controller pods will be verified first");
+                } else if (!canRoll(nodeRef, 60_000, TimeUnit.MILLISECONDS, false, restartContext)) {
+                    LOGGER.debugCr(reconciliation, "Pod {} cannot be updated right now", nodeRef);
+                    throw new UnforceableProblem("Pod " + nodeRef.podName() + " cannot be updated right now.");
                 } else {
-                    if (nodeRef.broker() && !canRoll(nodeRef, 60_000, TimeUnit.MILLISECONDS, false, restartContext)) {
-                        LOGGER.debugCr(reconciliation, "Pod {} cannot be updated right now", nodeRef);
-                        throw new UnforceableProblem("Pod " + nodeRef.podName() + " cannot be updated right now.");
+                    // Check for rollability before trying a dynamic update so that if the dynamic update fails we can go to a full restart
+                    if (!maybeDynamicUpdateBrokerConfig(nodeRef, restartContext)) {
+                        LOGGER.debugCr(reconciliation, "Pod {} can be rolled now", nodeRef);
+                        restartAndAwaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS, restartContext);
                     } else {
-                        // Check for rollability before trying a dynamic update so that if the dynamic update fails we can go to a full restart
-                        if (!maybeDynamicUpdateBrokerConfig(nodeRef, restartContext)) {
-                            LOGGER.debugCr(reconciliation, "Pod {} can be rolled now", nodeRef);
-                            restartAndAwaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS, restartContext);
-                        } else {
-                            awaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS);
-                        }
+                        awaitReadiness(pod, operationTimeoutMs, TimeUnit.MILLISECONDS);
                     }
                 }
             } else {
@@ -538,6 +540,7 @@ public class KafkaRoller {
                 kafkaAgentClient = initKafkaAgentClient();
             }
             Config controllerConfig = kafkaAgentClient.getNodeConfiguration(nodeRef.podName());
+            Optional.ofNullable(controllerConfig.get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG).value()).ifPresent(config -> restartContext.controllerQuorumFetchTimeoutMs = config);
             KafkaControllerConfigurationDiff controllerConfigurationDiff = new KafkaControllerConfigurationDiff(reconciliation,
                     controllerConfig,
                     kafkaConfigProvider.apply(nodeRef.nodeId()),
@@ -548,10 +551,11 @@ public class KafkaRoller {
             }
         }
 
+        boolean adminClientInitialised = initAdminClient();
+
         if (nodeRef.broker()) {
-            // Always get the broker config. This request gets sent to that specific broker, so it's a proof that we can
-            // connect to the broker and that it's capable of responding.
-            if (!initAdminClient()) {
+
+            if (!adminClientInitialised) {
                 LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it does not seem to responding to connection attempts", nodeRef);
                 reasonToRestartPod.add(RestartReason.POD_UNRESPONSIVE);
                 restartContext.needsRestart = false;
@@ -561,6 +565,9 @@ public class KafkaRoller {
                 restartContext.logDiff = null;
                 return;
             }
+
+            // Always get the broker config. This request gets sent to that specific broker, so it's a proof that we can
+            // connect to the broker and that it's capable of responding.
             Config brokerConfig;
             try {
                 brokerConfig = brokerConfig(nodeRef);
@@ -716,11 +723,24 @@ public class KafkaRoller {
     }
 
     private boolean canRoll(NodeRef nodeRef, long timeout, TimeUnit unit, boolean ignoreSslError, RestartContext restartContext)
-            throws ForceableProblem, InterruptedException {
+            throws ForceableProblem, InterruptedException, UnforceableProblem {
         try {
-            return await(availability(allClient).canRoll(nodeRef.nodeId()), timeout, unit,
-                t -> new ForceableProblem("An error while trying to determine the possibility of updating Kafka pods", t));
-        } catch (ForceableProblem e) {
+            if (nodeRef.broker() && nodeRef.controller()) {
+                boolean canRollController = await(quorumCheck(allClient).canRoll(nodeRef.nodeId()), timeout, unit,
+                        t -> new UnforceableProblem("An error while trying to determine the possibility of updating Kafka controller pods", t));
+                boolean canRollBroker = await(availability(allClient).canRoll(nodeRef.nodeId()), timeout, unit,
+                        t -> new ForceableProblem("An error while trying to determine the possibility of updating Kafka broker pods", t));
+                return canRollController && canRollBroker;
+            }
+
+            if (nodeRef.controller()) {
+                return await(quorumCheck(allClient).canRoll(nodeRef.nodeId()), timeout, unit,
+                        t -> new UnforceableProblem("An error while trying to determine the possibility of updating Kafka controller pods", t));
+            } else {
+                return await(availability(allClient).canRoll(nodeRef.nodeId()), timeout, unit,
+                        t -> new ForceableProblem("An error while trying to determine the possibility of updating Kafka broker pods", t));
+            }
+        } catch (ForceableProblem | UnforceableProblem e ) {
             // If we're not able to connect then roll
             if (ignoreSslError && e.getCause() instanceof SslAuthenticationException) {
                 restartContext.restartReasons.add(RestartReason.POD_UNRESPONSIVE);
@@ -825,6 +845,11 @@ public class KafkaRoller {
             throw new ForceableProblem("An error while try to create an admin client with bootstrap brokers " + bootstrapHostnames, e);
         }
     }
+
+    protected KafkaQuorumCheck quorumCheck(Admin ac) {
+        return new KafkaQuorumCheck(reconciliation, ac);
+    }
+
 
     protected KafkaAvailability availability(Admin ac) {
         return new KafkaAvailability(reconciliation, ac);
