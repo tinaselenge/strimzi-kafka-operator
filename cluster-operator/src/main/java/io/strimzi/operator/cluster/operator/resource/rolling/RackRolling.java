@@ -198,19 +198,70 @@ class RackRolling {
         return sorted.get(0);
     }
 
+    /**
+     * Figures out a batch of nodes that can be restarted together.
+     * This method enforces the following roll order:
+     * <ol>
+     *     <li>Pure non-leader controller</li>
+     *     <li>Pure leader controller</li>
+     *     <li>Non-controller broker (only this case is parallelizable)</li>
+     *     <li>Controller broker</li>
+     * </ol>
+     *
+     * @param rollClient The roll client
+     * @param nodesNeedingRestart The ids of the nodes which need to be restarted
+     * @param maxRestartBatchSize The maximum allowed size for a batch
+     * @return The nodes corresponding to a subset of {@code nodeIdsNeedingRestart} that can safely be rolled together
+     */
     private static Set<KafkaNode> nextBatch(RollClient rollClient,
-                                            Set<Integer> brokersNeedingRestart,
+                                            Map<Integer, NodeRef> nodeMap,
+                                            Map<Integer, NodeRef> nodesNeedingRestart,
                                             int maxRestartBatchSize) {
+        enum XX { nonActivePureController, activePureController, nonActiveBrokerish, activeBrokerish }
 
-        Map<Integer, KafkaNode> servers = new HashMap<>();
-        
-        // TODO figure out this KRaft stuff
-//        var quorum = admin.describeMetadataQuorum().quorumInfo().get();
-//        var controllers = quorum.voters().stream()
-//                .map(QuorumInfo.ReplicaState::replicaId)
-//                .map(controllerId -> {
-//                    return new Server(controllerId, null, Set.of(new Replica("::__cluster_metadata", 0, true)));
-//                }).toList();
+        int controllerId = rollClient.activeController();
+        var partitioned = nodesNeedingRestart.entrySet().stream().collect(Collectors.groupingBy(entry -> {
+            NodeRef nodeRef = entry.getValue();
+            boolean isActiveController = entry.getKey() == controllerId;
+            boolean isPureController = nodeRef.controller() && !nodeRef.broker();
+            if (isPureController) {
+                if (!isActiveController) {
+                    return XX.nonActivePureController;
+                } else {
+                    return XX.activePureController;
+                }
+            } else { //combined, or pure broker
+                if (!isActiveController) {
+                    return XX.nonActiveBrokerish;
+                } else {
+                    return XX.activeBrokerish;
+                }
+            }
+        }));
+        if (partitioned.get(XX.nonActivePureController) != null) {
+            NodeRef value = partitioned.get(XX.nonActivePureController).get(0).getValue();
+            return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
+        } else if (partitioned.get(XX.activePureController) != null) {
+            NodeRef value = partitioned.get(XX.activePureController).get(0).getValue();
+            return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
+        } else if (partitioned.get(XX.nonActiveBrokerish) != null) {
+            nodesNeedingRestart = partitioned.get(XX.nonActiveBrokerish).stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            return nextBatchNonActiveBrokerish(rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, controllerId);
+        } else if (partitioned.get(XX.activeBrokerish) != null) {
+            NodeRef value = partitioned.get(XX.activeBrokerish).get(0).getValue();
+            return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
+        } else {
+            throw new RuntimeException();
+        }
+    }
+
+    private static Set<KafkaNode> nextBatchNonActiveBrokerish(RollClient rollClient,
+                                                              Map<Integer, NodeRef> nodeMap,
+                                                              Map<Integer, NodeRef> nodesNeedingRestart,
+                                                              int maxRestartBatchSize,
+                                                              int controllerId) {
+        Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
 
         // Get all the topics in the cluster
         Collection<TopicListing> topicListings = rollClient.listTopics();
@@ -224,8 +275,12 @@ class RackRolling {
         topicDescriptions.forEach(topicDescription -> {
             topicDescription.partitions().forEach(partition -> {
                 partition.replicas().forEach(replicatingBroker -> {
-                    var server = servers.computeIfAbsent(replicatingBroker.id(), ig -> new KafkaNode(replicatingBroker.id(), replicatingBroker.rack(), new HashSet<>()));
-                    server.replicas().add(new Replica(
+                    var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
+                            ig -> {
+                                NodeRef nodeRef = nodeMap.get(replicatingBroker.id());
+                                return new KafkaNode(replicatingBroker.id(), nodeRef.controller(), nodeRef.broker(), new HashSet<>());
+                            });
+                    kafkaNode.replicas().add(new Replica(
                             replicatingBroker,
                             topicDescription.name(),
                             partition.partition(),
@@ -236,8 +291,8 @@ class RackRolling {
 
         // Add any servers which we know about but which were absent from any partition metadata
         // i.e. brokers without any assigned partitions
-        brokersNeedingRestart.forEach(server -> {
-            servers.putIfAbsent(server, new KafkaNode(server, null, Set.of()));
+        nodesNeedingRestart.forEach((nodeId, nodeRef) -> {
+            nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRef.controller(), nodeRef.broker(), Set.of()));
         });
 
         // TODO somewhere in here we need to take account of partition reassignments
@@ -248,15 +303,17 @@ class RackRolling {
         //      that the controller may shrink the ISR during the reassignment.
 
         // Split the set of all brokers replicating any partition
-        var cells = cells(servers.values());
+        var cells = cells(nodeIdToKafkaNode.values());
 
         // filter each cell by brokers that actually need to be restarted
-        cells = cells.stream().map(cell -> cell.stream().filter(kafkaNode -> brokersNeedingRestart.contains(kafkaNode.id())).collect(Collectors.toSet())).toList();
+        cells = cells.stream().map(cell -> cell.stream().filter(kafkaNode -> nodesNeedingRestart.containsKey(kafkaNode.id())).collect(Collectors.toSet())).toList();
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
         var batches = batchCells(cells, minIsrByTopic, maxRestartBatchSize);
 
-        int controllerId = rollClient.activeController();
+
+        // TODO what does describe quorum return in ZK mode?
+        // TODO what should the return value of activeController be during a migration?
         var bestBatch = pickBestBatchForRestart(batches, controllerId);
         return bestBatch;
     }
@@ -277,7 +334,7 @@ class RackRolling {
 
         List<KafkaNode> kafkaNodes = new ArrayList<>();
         for (int serverId = 0; serverId < (coloControllers ? Math.max(numBrokers, numControllers) : numControllers + numBrokers); serverId++) {
-            KafkaNode kafkaNode = new KafkaNode(serverId, Integer.toString(serverId % numRacks), new LinkedHashSet<>());
+            KafkaNode kafkaNode = new KafkaNode(serverId, false, true, new LinkedHashSet<>());
             kafkaNodes.add(kafkaNode);
             boolean isController = serverId < numControllers;
             if (isController) {
@@ -498,8 +555,8 @@ class RackRolling {
      *
      * @param platformClient The platform client.
      * @param rollClient The roll client.
-     * @param nodes The nodes.
-     * @param predicate The predicate.
+     * @param nodes The nodes (not all of which may need restarting).
+     * @param predicate The predicate used to determine whether to restart a particular node.
      * @param postReconfigureTimeoutMs The maximum time to wait after a reconfiguration.
      * @param postRestartTimeoutMs The maximum time to wait after a restart.
      * @param maxRestartBatchSize The maximum number of servers that might be restarted at once.
@@ -522,9 +579,15 @@ class RackRolling {
                                       int maxRestartBatchSize,
                                       int maxRestarts)
             throws ExecutionException, TimeoutException, InterruptedException {
+
+        final var nodeMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, nodeRef -> nodeRef));
+
         try {
             // Create contexts
             var contexts = nodes.stream().map(node -> Context.start(node, time)).toList();
+
+            
+
 
             OUTER:
             while (true) {
@@ -564,9 +627,13 @@ class RackRolling {
 
                 // Reconfigure any reconfigurable nodes
                 for (var context : byPlan.get(Plan.RECONFIGURE)) {
-                    // TODO decide on parallel/batching dynamic reconfiguration
+                    // TODO decide whether to support parallel/batching dynamic reconfiguration
+                    // TODO decide whether to support canary reconfiguration for cluster-scoped configs
                     reconfigureNode(time, rollClient, context, maxReconfigs);
                     time.sleep(postReconfigureTimeoutMs / 2, 0);
+                    // TODO decide whether we need an explicit healthcheck here
+                    //      or at least to know that the kube health check probe will have failed at the time
+                    //      we break to OUTER
                     awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
                     // termination condition
                     if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
@@ -576,8 +643,13 @@ class RackRolling {
                 }
                 // If we get this far that all remaining nodes require a restart
 
+
+
                 // determine batches of nodes to be restarted together
-                var batch = nextBatch(rollClient, byPlan.get(Plan.RESTART).stream().map(Context::serverId).collect(Collectors.toSet()), maxRestartBatchSize);
+                var batch = nextBatch(rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
+                        Context::serverId,
+                        context -> nodeMap.get(context.serverId())
+                )), maxRestartBatchSize);
                 var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
                 var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
                 // restart a batch
@@ -601,23 +673,45 @@ class RackRolling {
                 return Plan.RESTART_FIRST;
             } else {
                 var reasons = predicate.apply(context.serverId());
-                // TODO the predicate is static: The reasons returned won't change even though we do the restart
+                // TODO the predicate is static: The reasons returned won't change even once we've done the restart
                 //      so we need a function f(reasons): plan  (where plan is sum of RESTART,RECONFIGURE,NOP
                 //      and another g(plan, context): boolean   that uses info in the context to determine whether the plan worked
                 if (reasons.getReasons().isEmpty()) {
                     return Plan.NOP;
                 } else {
-                    context.reason(reasons);
                     if (reasons.singletonOf(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART)
                             && context.numReconfigs() < maxReconfigs) {
-                        return Plan.MAYBE_RECONFIGURE;
+                        if (context.numReconfigs() > 0
+                                && (context.state() == State.LEADING_ALL_PREFERRED
+                                    || context.state() == State.SERVING)) {
+                            return Plan.NOP;
+                        } else {
+                            context.reason(reasons);
+                            return Plan.MAYBE_RECONFIGURE;
+                        }
                     } else {
-                        return Plan.RESTART;
+                        if (context.numRestarts() > 0
+                            && (context.state() == State.LEADING_ALL_PREFERRED
+                                || context.state() == State.SERVING)) {
+                            return Plan.NOP;
+                        } else {
+                            context.reason(reasons);
+                            return Plan.RESTART;
+                        }
                     }
                 }
             }
         }));
     }
+
+    /* There's a bit of a disconnect between the `predicate` which is passed in, and which will usually be static
+     * and the health checks which we do in the observation and planning stages, which are active.
+
+     * Ideally we would invoke the predicate once, union it with the unhealthy brokers and then iterate
+     * each iteration unioning with unhealthy brokers
+     *
+     * We could do that my modelling the result of the predicate as a state
+     */
 
 
 }

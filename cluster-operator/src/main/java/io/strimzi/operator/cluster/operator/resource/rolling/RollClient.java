@@ -57,6 +57,38 @@ interface RollClient {
      */
     int activeController();
 
+    // describeNodes(): List<NodeDescription>
+    // record NodeDescription(int nodeId, boolean activeController, boolean controller, boolean broker)
+    // TODO or should we use the NodeRef info for controller-ness and broker-ness?
+    // The alternative (assuming KIP-919) is to figure out the node type from the configs, which we can get,
+    // even for controllers, via the Admin client.
+    // TODO think about migration
+    // https://cwiki.apache.org/confluence/display/KAFKA/KIP-866+ZooKeeper+to+KRaft+Migration
+    // When Preparing the Cluster:
+    // * Upgrade the cluster to the bridge version
+    // * Necessary configs are defined
+    // * All brokers online
+    //
+    // During Controller Migration:
+    // * Controller quorum nodes provisioned with the necessary configs set
+    // * Quorum established and leader elected
+    // * KRaft leader becomes ZK controller. Leader copies all existing metadata to the log.
+    //   During this time metadata updates (from brokers) will be allowed.
+    // * So we should avoid doing anything that would require updates,
+    //   such as restarting brokers, rebalances, creating deleting topics etc.
+    //
+    // During Broker Migration:
+    // * This is basically just a rolling restart
+    // * The active ZK controller will also be the active KRaft controller
+    // * We can assume pure controllers
+    // * During the broker rolling restart there will be ZK and KRaft brokers in the cluster
+    //
+    // When Finalizing the Migration:
+    // * This is also a rolling restart (+config change), this time of the controllers only.
+    //
+    // Open questions
+    // How do we know what migration state we're in, do we use the metric?
+
     /**
      * Reconfigure the given server with the given configs
      *
