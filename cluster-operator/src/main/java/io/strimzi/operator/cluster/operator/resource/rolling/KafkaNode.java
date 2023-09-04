@@ -9,8 +9,7 @@ import java.util.Set;
 /**
  * Information about a Kafka node (which may be a broker, controller, or both) and its replicas.
  * @param id The id of the server
- * @param rack The rack of the server
  * @param replicas The replicas on this server
  */
-record KafkaNode(int id, String rack, Set<Replica> replicas) {
+record KafkaNode(int id, boolean controller, boolean broker, Set<Replica> replicas) {
 }

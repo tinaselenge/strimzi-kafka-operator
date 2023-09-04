@@ -16,6 +16,7 @@ import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
+import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -504,10 +505,7 @@ public class RackRollingTest {
 
         // given
         var nodeRefs = listOfMultipleBrokerNodes();
-        List<Node> nodeList = new ArrayList<>();
-        for (var nodeRef: nodeRefs) {
-            nodeList.add(new Node(nodeRef.nodeId(), Node.noNode().host(), Node.noNode().port()));
-        }
+        List<Node> nodeList = nodeRefsToNodes(nodeRefs);
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
         for (var nodeRef: nodeRefs) {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
@@ -545,10 +543,7 @@ public class RackRollingTest {
 
         // given
         var nodeRefs = listOfMultipleBrokerNodes();
-        List<Node> nodeList = new ArrayList<>();
-        for (var nodeRef: nodeRefs) {
-            nodeList.add(new Node(nodeRef.nodeId(), Node.noNode().host(), Node.noNode().port()));
-        }
+        List<Node> nodeList = nodeRefsToNodes(nodeRefs);
         Map<Integer, RollClient.Configs> configPair = new HashMap<>();
         for (var nodeRef: nodeRefs) {
             configPair.put(nodeRef.nodeId(), new RollClient.Configs(new Config(Set.of()), new Config(Set.of())));
@@ -571,7 +566,8 @@ public class RackRollingTest {
                 .tryElectAllPreferredLeaders(nodeRefs.get(0));
 
         // when
-        doRollingRestart(platformClient, rollClient, nodeRefs, RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
+        doRollingRestart(platformClient, rollClient, nodeRefs,
+                RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
 
         // then
         for (var nodeRef: nodeRefs) {
@@ -579,6 +575,15 @@ public class RackRollingTest {
             Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
             Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
         }
+    }
+
+    @NotNull
+    private static List<Node> nodeRefsToNodes(List<NodeRef> nodeRefs) {
+        List<Node> nodeList = new ArrayList<>();
+        for (var nodeRef: nodeRefs) {
+            nodeList.add(new Node(nodeRef.nodeId(), Node.noNode().host(), Node.noNode().port()));
+        }
+        return nodeList;
     }
 
     // TODO assertions that the active controller is last
