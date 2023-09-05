@@ -121,11 +121,24 @@ public class RackRollingTest {
                 .getBrokerState(nodeRef);
     }
 
-    private static void mockUnHealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
+    private static void mockUnhealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
         doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
                 .when(platformClient)
                 .nodeState(nodeRef);
         doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING)
+                .when(rollClient)
+                .getBrokerState(nodeRef);
+    }
+
+    private static void mockPermanentlyUnhealthyBroker(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
+        doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
+                PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
+                PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
+                .when(platformClient)
+                .nodeState(nodeRef);
+        doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING,
+                BrokerState.NOT_RUNNING, BrokerState.RUNNING,
+                BrokerState.NOT_RUNNING, BrokerState.RUNNING)
                 .when(rollClient)
                 .getBrokerState(nodeRef);
     }
@@ -221,7 +234,7 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        mockUnHealthyBroker(platformClient, rollClient, nodeRef);
+        mockPermanentlyUnhealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
         mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
@@ -248,7 +261,7 @@ public class RackRollingTest {
 
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        mockUnHealthyBroker(platformClient, rollClient, nodeRef);
+        mockUnhealthyBroker(platformClient, rollClient, nodeRef);
         addTopic("topic-A", node);
         mockTopics(rollClient);
         doReturn(Map.of(0, new RollClient.Configs(new Config(Set.of()), new Config(Set.of()))))
