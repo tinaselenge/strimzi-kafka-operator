@@ -10,6 +10,7 @@ import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDif
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 
 import java.time.Instant;
+import java.util.function.Function;
 
 /**
  * Per-server context information during a rolling restart/reconfigure
@@ -40,8 +41,8 @@ final class Context {
         this.numRestarts = numRestarts;
     }
 
-    static Context start(NodeRef nodeRef, Time time) {
-        return new Context(nodeRef, State.UNKNOWN, time.systemTimeMillis(), null, 0);
+    static Context start(NodeRef nodeRef, Function<Integer, RestartReasons> predicate, Time time) {
+        return new Context(nodeRef, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0);
     }
 
     State transitionTo(State state, Time time) {
@@ -77,10 +78,6 @@ final class Context {
 
     public RestartReasons reason() {
         return reason;
-    }
-
-    public void reason(RestartReasons reason) {
-        this.reason = reason;
     }
 
     public int numRestarts() {

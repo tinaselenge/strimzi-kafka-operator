@@ -217,7 +217,13 @@ class RackRolling {
                                             Map<Integer, NodeRef> nodeMap,
                                             Map<Integer, NodeRef> nodesNeedingRestart,
                                             int maxRestartBatchSize) {
-        enum XX { nonActivePureController, activePureController, nonActiveBrokerish, activeBrokerish }
+        enum NodeFlavour {
+            NON_ACTIVE_PURE_CONTROLLER, // A pure KRaft controller node (not a broker) that is not the active controller
+            ACTIVE_PURE_CONTROLLER, // A pure KRaft controllers node (not a broker) that is the active controller
+            NON_ACTIVE_BROKERISH, // A KRaft or ZooKeeper node that is at least a broker (might be a
+            // KRafter combined node that is not the active controller)
+            ACTIVE_BROKERISH // A KRaft or ZooKeeper node that is a broker and also the active controller
+        }
 
         int controllerId = rollClient.activeController();
         var partitioned = nodesNeedingRestart.entrySet().stream().collect(Collectors.groupingBy(entry -> {
@@ -226,30 +232,30 @@ class RackRolling {
             boolean isPureController = nodeRef.controller() && !nodeRef.broker();
             if (isPureController) {
                 if (!isActiveController) {
-                    return XX.nonActivePureController;
+                    return NodeFlavour.NON_ACTIVE_PURE_CONTROLLER;
                 } else {
-                    return XX.activePureController;
+                    return NodeFlavour.ACTIVE_PURE_CONTROLLER;
                 }
             } else { //combined, or pure broker
                 if (!isActiveController) {
-                    return XX.nonActiveBrokerish;
+                    return NodeFlavour.NON_ACTIVE_BROKERISH;
                 } else {
-                    return XX.activeBrokerish;
+                    return NodeFlavour.ACTIVE_BROKERISH;
                 }
             }
         }));
-        if (partitioned.get(XX.nonActivePureController) != null) {
-            NodeRef value = partitioned.get(XX.nonActivePureController).get(0).getValue();
+        if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
+            NodeRef value = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).get(0).getValue();
             return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
-        } else if (partitioned.get(XX.activePureController) != null) {
-            NodeRef value = partitioned.get(XX.activePureController).get(0).getValue();
+        } else if (partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER) != null) {
+            NodeRef value = partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER).get(0).getValue();
             return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
-        } else if (partitioned.get(XX.nonActiveBrokerish) != null) {
-            nodesNeedingRestart = partitioned.get(XX.nonActiveBrokerish).stream()
+        } else if (partitioned.get(NodeFlavour.NON_ACTIVE_BROKERISH) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_BROKERISH).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextBatchNonActiveBrokerish(rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, controllerId);
-        } else if (partitioned.get(XX.activeBrokerish) != null) {
-            NodeRef value = partitioned.get(XX.activeBrokerish).get(0).getValue();
+        } else if (partitioned.get(NodeFlavour.ACTIVE_BROKERISH) != null) {
+            NodeRef value = partitioned.get(NodeFlavour.ACTIVE_BROKERISH).get(0).getValue();
             return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
         } else {
             throw new RuntimeException();
@@ -310,7 +316,6 @@ class RackRolling {
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
         var batches = batchCells(cells, minIsrByTopic, maxRestartBatchSize);
-
 
         // TODO what does describe quorum return in ZK mode?
         // TODO what should the return value of activeController be during a migration?
@@ -584,10 +589,7 @@ class RackRolling {
 
         try {
             // Create contexts
-            var contexts = nodes.stream().map(node -> Context.start(node, time)).toList();
-
-            
-
+            var contexts = nodes.stream().map(node -> Context.start(node, predicate, time)).toList();
 
             OUTER:
             while (true) {
@@ -598,7 +600,7 @@ class RackRolling {
                 }
 
                 int maxReconfigs = 1;
-                var byPlan = initialPlan(predicate, contexts, maxReconfigs);
+                var byPlan = initialPlan(contexts, maxReconfigs);
                 if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
                         && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
                         && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
@@ -608,7 +610,6 @@ class RackRolling {
 
                 // Restart any initially unready nodes
                 for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
-                    context.reason(RestartReasons.of(RestartReason.POD_UNRESPONSIVE));
                     restartNode(time, platformClient, context, maxRestarts);
                     long remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
                     awaitPreferred(time, rollClient, context, remainingTimeoutMs);
@@ -667,15 +668,13 @@ class RackRolling {
         }
     }
 
-    private static Map<Plan, List<Context>> initialPlan(Function<Integer, RestartReasons> predicate, List<Context> contexts, int maxReconfigs) {
+    private static Map<Plan, List<Context>> initialPlan(List<Context> contexts, int maxReconfigs) {
         return contexts.stream().collect(Collectors.groupingBy(context -> {
             if (context.state() == State.NOT_READY) {
+                context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed rolling health check");
                 return Plan.RESTART_FIRST;
             } else {
-                var reasons = predicate.apply(context.serverId());
-                // TODO the predicate is static: The reasons returned won't change even once we've done the restart
-                //      so we need a function f(reasons): plan  (where plan is sum of RESTART,RECONFIGURE,NOP
-                //      and another g(plan, context): boolean   that uses info in the context to determine whether the plan worked
+                var reasons = context.reason();
                 if (reasons.getReasons().isEmpty()) {
                     return Plan.NOP;
                 } else {
@@ -686,7 +685,7 @@ class RackRolling {
                                     || context.state() == State.SERVING)) {
                             return Plan.NOP;
                         } else {
-                            context.reason(reasons);
+//                            context.reason(reasons);
                             return Plan.MAYBE_RECONFIGURE;
                         }
                     } else {
@@ -695,7 +694,7 @@ class RackRolling {
                                 || context.state() == State.SERVING)) {
                             return Plan.NOP;
                         } else {
-                            context.reason(reasons);
+//                            context.reason(reasons);
                             return Plan.RESTART;
                         }
                     }
