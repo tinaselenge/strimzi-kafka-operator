@@ -36,6 +36,8 @@ import java.util.stream.Stream;
 class RackRolling {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
+    private final List<Context> contexts;
+    private final Map<Integer, NodeRef> nodeMap;
 
     private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
         final boolean wouldByUnderReplicated;
@@ -82,23 +84,26 @@ class RackRolling {
      * Split the given cells into batches,
      * taking account of {@code acks=all} availability and the given maxBatchSize
      */
-    static List<Set<KafkaNode>> batchCells(List<Set<KafkaNode>> cells,
+    static List<Set<KafkaNode>> batchCells(Reconciliation reconciliation,
+                                           List<Set<KafkaNode>> cells,
                                            Map<String, Integer> minIsrByTopic,
                                            int maxBatchSize) {
         List<Set<KafkaNode>> result = new ArrayList<>();
         for (var cell : cells) {
             List<Set<KafkaNode>> availBatches = new ArrayList<>();
             Set<KafkaNode> unavail = new HashSet<>();
-            for (var server : cell) {
-                if (avail(server, minIsrByTopic)) {
+            for (var kafkaNode : cell) {
+                if (avail(kafkaNode, minIsrByTopic)) {
+                    LOGGER.debugCr(reconciliation, "No replicas of {} will be unavailable => add to batch", kafkaNode);
                     var currentBatch = availBatches.isEmpty() ? null : availBatches.get(availBatches.size() - 1);
                     if (currentBatch == null || currentBatch.size() >= maxBatchSize) {
                         currentBatch = new HashSet<>();
                         availBatches.add(currentBatch);
                     }
-                    currentBatch.add(server);
+                    currentBatch.add(kafkaNode);
                 } else {
-                    unavail.add(server);
+                    LOGGER.debugCr(reconciliation, "Some replicas of {} will be unavailable => do not add to batch", kafkaNode);
+                    unavail.add(kafkaNode);
                 }
             }
             result.addAll(availBatches);
@@ -216,7 +221,8 @@ class RackRolling {
      * @param maxRestartBatchSize The maximum allowed size for a batch
      * @return The nodes corresponding to a subset of {@code nodeIdsNeedingRestart} that can safely be rolled together
      */
-    private static Set<KafkaNode> nextBatch(RollClient rollClient,
+    private static Set<KafkaNode> nextBatch(Reconciliation reconciliation,
+                                            RollClient rollClient,
                                             Map<Integer, NodeRef> nodeMap,
                                             Map<Integer, NodeRef> nodesNeedingRestart,
                                             int maxRestartBatchSize) {
@@ -256,7 +262,7 @@ class RackRolling {
         } else if (partitioned.get(NodeFlavour.NON_ACTIVE_BROKERISH) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_BROKERISH).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextBatchNonActiveBrokerish(rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, controllerId);
+            return nextBatchNonActiveBrokerish(reconciliation, rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, controllerId);
         } else if (partitioned.get(NodeFlavour.ACTIVE_BROKERISH) != null) {
             NodeRef value = partitioned.get(NodeFlavour.ACTIVE_BROKERISH).get(0).getValue();
             return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
@@ -265,7 +271,8 @@ class RackRolling {
         }
     }
 
-    private static Set<KafkaNode> nextBatchNonActiveBrokerish(RollClient rollClient,
+    private static Set<KafkaNode> nextBatchNonActiveBrokerish(Reconciliation reconciliation,
+                                                              RollClient rollClient,
                                                               Map<Integer, NodeRef> nodeMap,
                                                               Map<Integer, NodeRef> nodesNeedingRestart,
                                                               int maxRestartBatchSize,
@@ -313,16 +320,20 @@ class RackRolling {
 
         // Split the set of all brokers replicating any partition
         var cells = cells(nodeIdToKafkaNode.values());
+        LOGGER.debugCr(reconciliation, "Cells {}", cells);
 
         // filter each cell by brokers that actually need to be restarted
         cells = cells.stream().map(cell -> cell.stream().filter(kafkaNode -> nodesNeedingRestart.containsKey(kafkaNode.id())).collect(Collectors.toSet())).toList();
+        LOGGER.debugCr(reconciliation, "Filtered cells {}", cells);
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
-        var batches = batchCells(cells, minIsrByTopic, maxRestartBatchSize);
+        var batches = batchCells(reconciliation, cells, minIsrByTopic, maxRestartBatchSize);
+        LOGGER.debugCr(reconciliation, "Batches {}", batches);
 
         // TODO what does describe quorum return in ZK mode?
         // TODO what should the return value of activeController be during a migration?
         var bestBatch = pickBestBatchForRestart(batches, controllerId);
+        LOGGER.debugCr(reconciliation, "Best batch {}", bestBatch);
         return bestBatch;
     }
 
@@ -384,7 +395,7 @@ class RackRolling {
                                     Context context,
                                     int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
-            throw new MaxRestartsExceededException("Broker " + context.serverId() + " has been restarted " + maxRestarts + " times");
+            throw new MaxRestartsExceededException("Broker " + context.nodeId() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
         platformClient.restartNode(context.nodeRef());
@@ -457,7 +468,7 @@ class RackRolling {
         var serverContextWrtIds = new HashMap<Integer, Context>();
         var nodeRefs = new ArrayList<NodeRef>();
         for (Context context : batch) {
-            Integer id = context.serverId();
+            Integer id = context.nodeId();
             nodeRefs.add(context.nodeRef());
             serverContextWrtIds.put(id, context);
         }
@@ -490,12 +501,12 @@ class RackRolling {
                 .map(Context::nodeRef).toList());
 
         var xxx = contexts.stream().collect(Collectors.groupingBy(context -> {
-            RollClient.Configs configPair = brokerConfigs.get(context.serverId());
+            RollClient.Configs configPair = brokerConfigs.get(context.nodeId());
             var diff = new KafkaBrokerConfigurationDiff(reconciliation,
                     configPair.brokerConfigs(),
-                    kafkaConfigProvider.apply(context.serverId()),
+                    kafkaConfigProvider.apply(context.nodeId()),
                     kafkaVersion,
-                    context.serverId());
+                    context.nodeId());
             // TODO what is the source of truth about reconfiguration
             //      on the one hand we have the RestartReason, which might be a singleton of reconfig
             //      on the other hand there is the diff of current vs desired configs
@@ -605,10 +616,10 @@ class RackRolling {
      * @throws ExecutionException
      * @throws TimeoutException
      */
-    public static void rollingRestart(Time time,
+    public static RackRolling rollingRestart(Time time,
                                       PlatformClient platformClient,
                                       RollClient rollClient,
-                                      List<NodeRef> nodes,
+                                      Collection<NodeRef> nodes,
                                       Function<Integer, RestartReasons> predicate,
                                       Reconciliation reconciliation,
                                       KafkaVersion kafkaVersion,
@@ -621,84 +632,146 @@ class RackRolling {
             throws ExecutionException, TimeoutException, InterruptedException {
 
         final var nodeMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, nodeRef -> nodeRef));
+        var contexts = nodes.stream().map(node -> Context.start(node, predicate, time)).toList();
+        return new RackRolling(time,
+                platformClient,
+                rollClient,
+                nodes,
+                predicate,
+                reconciliation,
+                kafkaVersion,
+                kafkaConfigProvider,
+                desiredLogging,
+                postReconfigureTimeoutMs,
+                postRestartTimeoutMs,
+                maxRestartBatchSize,
+                maxRestarts,
+                nodeMap,
+                contexts);
+    }
+
+    private final Time time;
+    private final PlatformClient platformClient;
+    private final RollClient rollClient;
+    private final Collection<NodeRef> nodes;
+    private final Function<Integer, RestartReasons> predicate;
+    private final Reconciliation reconciliation;
+    private final KafkaVersion kafkaVersion;
+    private final Function<Integer, String> kafkaConfigProvider;
+    private final String desiredLogging;
+    private final long postReconfigureTimeoutMs;
+    private final long postRestartTimeoutMs;
+    private final int maxRestartBatchSize;
+    private final int maxRestarts;
+
+    public RackRolling(Time time,
+                       PlatformClient platformClient,
+                       RollClient rollClient,
+                       Collection<NodeRef> nodes,
+                       Function<Integer, RestartReasons> predicate,
+                       Reconciliation reconciliation,
+                       KafkaVersion kafkaVersion,
+                       Function<Integer, String> kafkaConfigProvider,
+                       String desiredLogging,
+                       long postReconfigureTimeoutMs,
+                       long postRestartTimeoutMs,
+                       int maxRestartBatchSize,
+                       int maxRestarts, Map<Integer,
+                       NodeRef> nodeMap,
+                       List<Context> contexts) {
+        this.time = time;
+        this.platformClient = platformClient;
+        this.rollClient = rollClient;
+        this.nodes = nodes;
+        this.predicate = predicate;
+        this.reconciliation = reconciliation;
+        this.kafkaVersion = kafkaVersion;
+        this.kafkaConfigProvider = kafkaConfigProvider;
+        this.desiredLogging = desiredLogging;
+        this.postReconfigureTimeoutMs = postReconfigureTimeoutMs;
+        this.postRestartTimeoutMs = postRestartTimeoutMs;
+        this.maxRestartBatchSize = maxRestartBatchSize;
+        this.maxRestarts = maxRestarts;
+        this.nodeMap = nodeMap;
+        this.contexts = contexts;
+    }
+
+    public List<Integer> loop() throws TimeoutException, InterruptedException, ExecutionException {
 
         try {
-            // Create contexts
-            var contexts = nodes.stream().map(node -> Context.start(node, predicate, time)).toList();
-
-            OUTER:
-            while (true) {
-                LOGGER.debugCr(reconciliation, "Loop");
-                // Observe current state and update the contexts
-                for (var context : contexts) {
-                    context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
-                }
-
-                int maxReconfigs = 1;
-                var byPlan = initialPlan(contexts, maxReconfigs);
-                LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
-                if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
-                        && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
-                        && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
-                    // termination condition met
-                    LOGGER.debugCr(reconciliation, "Terminate: Empty plan");
-                    break OUTER;
-                }
-
-                // Restart any initially unready nodes
-                for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
-                    restartNode(reconciliation, time, platformClient, context, maxRestarts);
-                    long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
-                    awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
-                    continue OUTER;
-                }
-                // If we get this far we know all nodes are ready
-
-                // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
-                // based on whether they have only reconfiguration config changes
-                byPlan = refinePlanForReconfigurability(reconciliation,
-                        kafkaVersion,
-                        kafkaConfigProvider,
-                        desiredLogging,
-                        rollClient,
-                        byPlan);
-                LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan);
-                // Reconfigure any reconfigurable nodes
-                for (var context : byPlan.get(Plan.RECONFIGURE)) {
-                    // TODO decide whether to support parallel/batching dynamic reconfiguration
-                    // TODO decide whether to support canary reconfiguration for cluster-scoped configs
-                    reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
-                    time.sleep(postReconfigureTimeoutMs / 2, 0);
-                    // TODO decide whether we need an explicit healthcheck here
-                    //      or at least to know that the kube health check probe will have failed at the time
-                    //      we break to OUTER
-                    awaitPreferred(reconciliation, time, rollClient, context, postReconfigureTimeoutMs / 2);
-                    // termination condition
-                    if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
-                        LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
-                        break OUTER;
-                    }
-                    continue OUTER;
-                }
-
-                // If we get this far that all remaining nodes require a restart
-                // determine batches of nodes to be restarted together
-                var batch = nextBatch(rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
-                        Context::serverId,
-                        context -> nodeMap.get(context.serverId())
-                )), maxRestartBatchSize);
-                var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
-                var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
-                LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
-                // restart a batch
-                restartInParallel(reconciliation, time, platformClient, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
-
-                // termination condition
-                if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
-                    LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after restart");
-                    break OUTER;
-                }
+            LOGGER.debugCr(reconciliation, "Loop");
+            // Observe current state and update the contexts
+            for (var context : contexts) {
+                context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
             }
+
+            int maxReconfigs = 1;
+            var byPlan = initialPlan(contexts, maxReconfigs);
+            LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
+            if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
+                    && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
+                    && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
+                // termination condition met
+                LOGGER.debugCr(reconciliation, "Terminate: Empty plan");
+                return List.of();
+            }
+
+            // Restart any initially unready nodes
+            for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
+                restartNode(reconciliation, time, platformClient, context, maxRestarts);
+                long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
+                awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
+                return List.of(context.nodeId());
+            }
+            // If we get this far we know all nodes are ready
+
+            // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
+            // based on whether they have only reconfiguration config changes
+            byPlan = refinePlanForReconfigurability(reconciliation,
+                    kafkaVersion,
+                    kafkaConfigProvider,
+                    desiredLogging,
+                    rollClient,
+                    byPlan);
+            LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan);
+            // Reconfigure any reconfigurable nodes
+            for (var context : byPlan.get(Plan.RECONFIGURE)) {
+                // TODO decide whether to support parallel/batching dynamic reconfiguration
+                // TODO decide whether to support canary reconfiguration for cluster-scoped configs
+                reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
+                time.sleep(postReconfigureTimeoutMs / 2, 0);
+                // TODO decide whether we need an explicit healthcheck here
+                //      or at least to know that the kube health check probe will have failed at the time
+                //      we break to OUTER
+                awaitPreferred(reconciliation, time, rollClient, context, postReconfigureTimeoutMs / 2);
+                // termination condition
+                if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
+                    LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
+                    return List.of();
+                }
+                return List.of(context.nodeId());
+            }
+
+            // If we get this far that all remaining nodes require a restart
+            // determine batches of nodes to be restarted together
+            var batch = nextBatch(reconciliation, rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
+                    Context::nodeId,
+                    context -> nodeMap.get(context.nodeId())
+            )), maxRestartBatchSize);
+            var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
+            var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
+            LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
+            // restart a batch
+            restartInParallel(reconciliation, time, platformClient, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+
+            // termination condition
+            if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
+                LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after restart");
+                return List.of();
+            } else {
+                return batchOfIds.stream().toList();
+            }
+
         } catch (UncheckedInterruptedException e) {
             throw e.getCause();
         } catch (UncheckedExecutionException e) {

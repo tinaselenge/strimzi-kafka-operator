@@ -60,7 +60,7 @@ final class Context {
         return state;
     }
 
-    public int serverId() {
+    public int nodeId() {
         return nodeRef.nodeId();
     }
 
