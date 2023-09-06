@@ -19,6 +19,7 @@ import org.apache.kafka.common.Uuid;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -221,21 +222,26 @@ public class RackRollingTest {
             return this;
         }
 
-        public List<NodeRef> done() {
-            return List.copyOf(nodeRefs.values());
+        public Map<Integer, NodeRef> done() {
+            return Map.copyOf(nodeRefs);
+        }
+
+        public MockBuilder mockLeader(RollClient rollClient, int leaderId) {
+            doReturn(leaderId).when(rollClient).activeController();
+            return this;
         }
     }
 
 
     private void doRollingRestart(PlatformClient platformClient,
                                  RollClient rollClient,
-                                 List<NodeRef> nodeRefList,
+                                 Collection<NodeRef> nodeRefList,
                                  Function<Integer, RestartReasons> reason,
                                  Function<Integer, String> kafkaConfigProvider,
                                  Integer maxRestartsBatchSize,
                                  Integer maxRestarts) throws ExecutionException, InterruptedException, TimeoutException {
 
-        RackRolling.rollingRestart(time,
+        var rr = RackRolling.rollingRestart(time,
                 platformClient,
                 rollClient,
                 nodeRefList,
@@ -248,6 +254,10 @@ public class RackRollingTest {
                 120_000,
                 maxRestartsBatchSize,
                 maxRestarts);
+        List<Integer> nodes;
+        do {
+            nodes = rr.loop();
+        } while (!nodes.isEmpty());
     }
 
     @Test
@@ -557,10 +567,10 @@ Set.of(), 0)
                 .done();
 
         // when
-        doRollingRestart(platformClient, rollClient, nodeRefs, RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 5);
+        doRollingRestart(platformClient, rollClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 5);
 
         // then
-        for (var nodeRef: nodeRefs) {
+        for (var nodeRef: nodeRefs.values()) {
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
             Mockito.verify(platformClient, never()).restartNode(any());
             Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
@@ -585,14 +595,139 @@ Set.of(), 0)
                 .done();
 
         // when
-        doRollingRestart(platformClient, rollClient, nodeRefs,
+        doRollingRestart(platformClient, rollClient, nodeRefs.values(),
                 RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
 
         // then
-        for (var nodeRef: nodeRefs) {
+        for (var nodeRef: nodeRefs.values()) {
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
             Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
             Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+        }
+    }
+
+    @Test
+    public void shouldRestartInExpectedOrder() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, false, 0, 1, 2)
+                .addNodes(false, true, 3, 4, 5)
+                .mockLeader(rollClient, 1)
+                .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 3, 4, 5)
+                .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
+                .addTopic("topic-B", 4, List.of(4, 5, 3), List.of(3, 4, 5))
+                .addTopic("topic-C", 5, List.of(5, 3, 4), List.of(3, 4, 5))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 3, 4, 5)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 5)
+                .done();
+
+        // when
+
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3);
+
+        assertEquals(List.of(), rr.loop());
+
+        // then
+        for (var nodeRef: nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    @Test
+    public void shouldRestartInExpectedOrderAndBatched() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, false, 0, 1, 2)
+                .addNodes(false, true, 3, 4, 5, 6, 7, 8)
+                .mockLeader(rollClient, 1)
+                .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
+                .addTopic("topic-B", 4, List.of(6, 7, 8), List.of(6, 7, 8))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 5, 6, 7, 8)
+                .done();
+
+        // when
+
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 6);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 7);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+
+        assertEquals(List.of(), rr.loop());
+
+        // then
+        for (var nodeRef: nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    private static void assertBrokerRestarted(PlatformClient platformClient,
+                                              RollClient rollClient,
+                                              Map<Integer, NodeRef> nodeRefs,
+                                              RackRolling rr,
+                                              int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
+        for (var nodeId : nodeIds) {
+            Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+        }
+        assertEquals(IntStream.of(nodeIds).boxed().toList(), rr.loop());
+        for (var nodeId : nodeIds) {
+            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
         }
     }
 
