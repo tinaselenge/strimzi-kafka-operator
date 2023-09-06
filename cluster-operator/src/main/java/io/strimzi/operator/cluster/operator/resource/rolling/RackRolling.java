@@ -11,6 +11,7 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -33,6 +34,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 class RackRolling {
+
+    private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
 
     private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
         final boolean wouldByUnderReplicated;
@@ -375,37 +378,61 @@ class RackRolling {
         return nodeRef.podName();
     }
 
-    private static void restartNode(Time time, PlatformClient platformClient, Context context, int maxRestarts) {
+    private static void restartNode(Reconciliation reconciliation,
+                                    Time time,
+                                    PlatformClient platformClient,
+                                    Context context,
+                                    int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
             throw new MaxRestartsExceededException("Broker " + context.serverId() + " has been restarted " + maxRestarts + " times");
         }
+        LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
         platformClient.restartNode(context.nodeRef());
         context.transitionTo(State.RESTARTED, time);
+        LOGGER.debugCr(reconciliation, "Node {}: Restarted", context);
         // TODO kube create an Event with the context.reason
     }
 
-    private static void reconfigureNode(Time time, RollClient rollClient, Context context, int maxReconfigs) {
+    private static void reconfigureNode(Reconciliation reconciliation,
+                                        Time time,
+                                        RollClient rollClient,
+                                        Context context,
+                                        int maxReconfigs) {
         if (context.numReconfigs() > maxReconfigs) {
             throw new RuntimeException("Too many reconfigs");
         }
+        LOGGER.debugCr(reconciliation, "Node {}: Reconfiguring", context);
         rollClient.reconfigureNode(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
         context.transitionTo(State.RECONFIGURED, time);
+        LOGGER.debugCr(reconciliation, "Node {}: Reconfigured", context);
         // TODO create kube Event
     }
 
 
-    private static long awaitState(Time time, PlatformClient platformClient, RollClient rollClient, Context context, State targetState, long timeoutMs) throws TimeoutException {
+    private static long awaitState(Reconciliation reconciliation,
+                                   Time time,
+                                   PlatformClient platformClient,
+                                   RollClient rollClient,
+                                   Context context,
+                                   State targetState,
+                                   long timeoutMs) throws TimeoutException {
+        LOGGER.debugCr(reconciliation, "Node {}: Waiting for node to enter state {}", context, targetState);
         return Alarm.timer(
                 time,
                 timeoutMs,
                 () -> "Failed to reach " + targetState + " within " + timeoutMs + " ms: " + context
         ).poll(1_000, () -> {
-            var state = context.transitionTo(observe(platformClient, rollClient, context.nodeRef()), time);
+            var state = context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
             return state == targetState;
         });
     }
 
-    private static long awaitPreferred(Time time, RollClient rollClient, Context context, long timeoutMs) throws TimeoutException {
+    private static long awaitPreferred(Reconciliation reconciliation,
+                                       Time time,
+                                       RollClient rollClient,
+                                       Context context,
+                                       long timeoutMs) throws TimeoutException {
+        LOGGER.debugCr(reconciliation, "Node {}: Waiting for node to be leader of all its preferred replicas", context);
         return Alarm.timer(time,
                 timeoutMs,
                 () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
@@ -418,13 +445,13 @@ class RackRolling {
         });
     }
 
-    private static void restartInParallel(Time time, PlatformClient platformClient, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
+    private static void restartInParallel(Reconciliation reconciliation, Time time, PlatformClient platformClient, RollClient rollClient, Set<Context> batch, long timeoutMs, int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
-            restartNode(time, platformClient, context, maxRestarts);
+            restartNode(reconciliation, time, platformClient, context, maxRestarts);
         }
         long remainingTimeoutMs = timeoutMs;
         for (Context context : batch) {
-            remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, remainingTimeoutMs);
+            remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, context, State.SERVING, remainingTimeoutMs);
         }
 
         var serverContextWrtIds = new HashMap<Integer, Context>();
@@ -496,27 +523,35 @@ class RackRolling {
      * @param nodeRef The node
      * @return The state
      */
-    public static State observe(PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
-        switch (platformClient.nodeState(nodeRef)) {
+    private static State observe(Reconciliation reconciliation, PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
+        State state = State.NOT_READY;
+        var nodeState = platformClient.nodeState(nodeRef);
+        LOGGER.debugCr(reconciliation, "Node {}: nodeState is {}", nodeRef, nodeState);
+        switch (nodeState) {
             case NOT_RUNNING:
-                return State.NOT_READY;
+                state = State.NOT_READY;
+                break;
             case NOT_READY:
-                return State.NOT_READY;
+                state = State.NOT_READY;
+                break;
             case READY:
             default:
                 try {
                     var bs = rollClient.getBrokerState(nodeRef);
+                    LOGGER.debugCr(reconciliation, "Node {}: brokerState is {}", nodeRef, bs);
                     if (bs.value() < BrokerState.RUNNING.value()) {
-                        return State.RECOVERING;
+                        state = State.RECOVERING;
                     } else if (bs.value() == BrokerState.RUNNING.value()) {
-                        return State.SERVING;
+                        state = State.SERVING;
                     } else {
-                        return State.NOT_READY;
+                        state = State.NOT_READY;
                     }
                 } catch (Exception e) {
-                    return State.NOT_READY;
+                    state = State.NOT_READY;
                 }
         }
+        LOGGER.debugCr(reconciliation, "Node {}: observation outcome is {}", nodeRef, state);
+        return state;
     }
 
     enum Plan {
@@ -593,26 +628,28 @@ class RackRolling {
 
             OUTER:
             while (true) {
-
+                LOGGER.debugCr(reconciliation, "Loop");
                 // Observe current state and update the contexts
                 for (var context : contexts) {
-                    context.transitionTo(observe(platformClient, rollClient, context.nodeRef()), time);
+                    context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
                 }
 
                 int maxReconfigs = 1;
                 var byPlan = initialPlan(contexts, maxReconfigs);
+                LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
                 if (byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()
                         && byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()
                         && byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of()).isEmpty()) {
                     // termination condition met
+                    LOGGER.debugCr(reconciliation, "Terminate: Empty plan");
                     break OUTER;
                 }
 
                 // Restart any initially unready nodes
                 for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
-                    restartNode(time, platformClient, context, maxRestarts);
-                    long remainingTimeoutMs = awaitState(time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
-                    awaitPreferred(time, rollClient, context, remainingTimeoutMs);
+                    restartNode(reconciliation, time, platformClient, context, maxRestarts);
+                    long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
+                    awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
                     continue OUTER;
                 }
                 // If we get this far we know all nodes are ready
@@ -625,27 +662,26 @@ class RackRolling {
                         desiredLogging,
                         rollClient,
                         byPlan);
-
+                LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan);
                 // Reconfigure any reconfigurable nodes
                 for (var context : byPlan.get(Plan.RECONFIGURE)) {
                     // TODO decide whether to support parallel/batching dynamic reconfiguration
                     // TODO decide whether to support canary reconfiguration for cluster-scoped configs
-                    reconfigureNode(time, rollClient, context, maxReconfigs);
+                    reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
                     time.sleep(postReconfigureTimeoutMs / 2, 0);
                     // TODO decide whether we need an explicit healthcheck here
                     //      or at least to know that the kube health check probe will have failed at the time
                     //      we break to OUTER
-                    awaitPreferred(time, rollClient, context, postReconfigureTimeoutMs / 2);
+                    awaitPreferred(reconciliation, time, rollClient, context, postReconfigureTimeoutMs / 2);
                     // termination condition
                     if (contexts.stream().allMatch(context2 -> context2.state() == State.LEADING_ALL_PREFERRED)) {
+                        LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
                         break OUTER;
                     }
                     continue OUTER;
                 }
+
                 // If we get this far that all remaining nodes require a restart
-
-
-
                 // determine batches of nodes to be restarted together
                 var batch = nextBatch(rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
                         Context::serverId,
@@ -653,11 +689,13 @@ class RackRolling {
                 )), maxRestartBatchSize);
                 var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
                 var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.serverId())).collect(Collectors.toSet());
+                LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
                 // restart a batch
-                restartInParallel(time, platformClient, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
+                restartInParallel(reconciliation, time, platformClient, rollClient, batchOfContexts, postRestartTimeoutMs, maxRestarts);
 
                 // termination condition
                 if (contexts.stream().allMatch(context -> context.state() == State.LEADING_ALL_PREFERRED)) {
+                    LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after restart");
                     break OUTER;
                 }
             }

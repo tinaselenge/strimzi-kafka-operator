@@ -16,12 +16,9 @@ import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
-import org.jetbrains.annotations.NotNull;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -65,9 +62,6 @@ public class RackRollingTest {
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
 
     private final Time time = new Time.TestTime(1_000_000_000L);
-
-    private final Set<TopicListing> topicListing = new HashSet<>();
-    private final Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
 
     static RestartReasons noReasons(int serverId) {
         return RestartReasons.empty();
@@ -232,11 +226,6 @@ public class RackRollingTest {
         }
     }
 
-    @BeforeEach
-    public void before() {
-        topicListing.clear();
-        topicDescriptions.clear();
-    }
 
     private void doRollingRestart(PlatformClient platformClient,
                                  RollClient rollClient,
