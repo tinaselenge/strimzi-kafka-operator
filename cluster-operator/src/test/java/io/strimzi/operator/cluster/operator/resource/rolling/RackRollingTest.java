@@ -80,15 +80,11 @@ public class RackRollingTest {
         return RestartReasons.of(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
     }
 
-    private static List<NodeRef> listOfNodeRefs(int startNodeId, int num, boolean controller, boolean broker) {
-        return IntStream.range(startNodeId, num).boxed().map(nodeId ->
-                new NodeRef("pool-kafka-" + nodeId, nodeId, "pool", controller, broker)).toList();
-    }
-
     static class MockBuilder {
         private final Map<Integer, NodeRef> nodeRefs = new HashMap<>();
         private final Map<Integer, Node> nodes = new HashMap<>();
         private final Set<TopicListing> topicListing = new HashSet<>();
+        private final Map<String, Integer> topicMinIsrs = new HashMap<>();
         private final Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
 
         MockBuilder addNode(boolean controller, boolean broker, int nodeId) {
@@ -164,12 +160,15 @@ public class RackRollingTest {
             return this;
         }
 
-
-
         MockBuilder addTopic(String topicName, int leaderId) {
-            return addTopic(topicName, leaderId, List.of(leaderId), List.of(leaderId));
+            return addTopic(topicName, leaderId, List.of(leaderId), List.of(leaderId), null);
         }
+
         MockBuilder addTopic(String topicName, int leaderId, List<Integer> replicaIds, List<Integer> isrIds) {
+            return addTopic(topicName, leaderId, replicaIds, isrIds, null);
+        }
+
+        MockBuilder addTopic(String topicName, int leaderId, List<Integer> replicaIds, List<Integer> isrIds, Integer minIsr) {
             if (!replicaIds.contains(leaderId)) {
                 throw new RuntimeException("Leader is not a replica");
             }
@@ -179,16 +178,19 @@ public class RackRollingTest {
                 }
             }
             if (topicListing.stream().anyMatch(tl -> tl.name().equals(topicName))) {
-                throw new RuntimeException("Topic already exists");
+                throw new RuntimeException("Topic " + topicName + " already exists");
             }
             Uuid topicId = Uuid.randomUuid();
             topicListing.add(new TopicListing(topicName, topicId, false));
+
             Node leaderNode = nodes.get(leaderId);
             List<Node> replicas = replicaIds.stream().map(nodes::get).toList();
             List<Node> isr = isrIds.stream().map(nodes::get).toList();
             topicDescriptions.put(topicId, new TopicDescription(topicName, false,
                     List.of(new TopicPartitionInfo(0,
                             leaderNode, replicas, isr))));
+
+            topicMinIsrs.put(topicName, minIsr);
             return this;
         }
 
@@ -196,12 +198,25 @@ public class RackRollingTest {
             doReturn(topicListing)
                     .when(client)
                     .listTopics();
+
             doAnswer(i -> {
                 List<Uuid> topicIds = i.getArgument(0);
-                return topicIds.stream().map(tid -> topicDescriptions.get(tid)).toList();
+                return topicIds.stream().map(topicDescriptions::get).toList();
             })
                     .when(client)
                     .describeTopics(any());
+            doAnswer(i -> {
+                List<String> topicNames = i.getArgument(0);
+                Map<String, Integer> map = new HashMap<>();
+                for (String topicName : topicNames) {
+                    if (map.put(topicName, topicMinIsrs.get(topicName)) != null) {
+                        throw new IllegalStateException("Duplicate key");
+                    }
+                }
+                return map;
+            })
+                    .when(client)
+                    .describeTopicMinIsrs(any());
             return this;
         }
 
@@ -240,6 +255,23 @@ public class RackRollingTest {
         public MockBuilder mockLeader(RollClient rollClient, int leaderId) {
             doReturn(leaderId).when(rollClient).activeController();
             return this;
+        }
+    }
+
+
+    private static void assertBrokerRestarted(PlatformClient platformClient,
+                                              RollClient rollClient,
+                                              Map<Integer, NodeRef> nodeRefs,
+                                              RackRolling rr,
+                                              int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
+        for (var nodeId : nodeIds) {
+            Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+        }
+        assertEquals(IntStream.of(nodeIds).boxed().toList(), rr.loop());
+        for (var nodeId : nodeIds) {
+            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
         }
     }
 
@@ -597,7 +629,7 @@ Set.of(), 0)
         var nodeRefs = new MockBuilder()
                 .addNodes(false, true, 0, 1, 2)
                 .addTopic("topic-0", 0)
-                .addTopic("topic-2", 1)
+                .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
@@ -726,28 +758,81 @@ Set.of(), 0)
 
         assertEquals(List.of(), rr.loop());
 
-        // then
         for (var nodeRef: nodeRefs.values()) {
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
         }
     }
 
-    // TODO a test like the above but where the ISR means that availability is affected
+    @Test
+    public void shouldRestartInExpectedOrderAndBatchedWithUrp() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, false, 0, 1, 2) // controllers
+                .addNodes(false, true, // brokers
+                        3, 6, // rack X
+                        4, 7, // rack Y
+                        5, 8) // rack Z
+                .mockLeader(rollClient, 1)
+                .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                // topic A is at its min ISR, so neither 3 nor 4 should be rolled
+                .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4), 2)
+                .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
+                .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
+                .addTopic("topic-D", 7, List.of(7, 3, 5), List.of(7, 3, 5))
+                .addTopic("topic-E", 6, List.of(6, 4, 5), List.of(6, 4, 5))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 5, 6, 7, 8)
+                .done();
 
-    private static void assertBrokerRestarted(PlatformClient platformClient,
-                                              RollClient rollClient,
-                                              Map<Integer, NodeRef> nodeRefs,
-                                              RackRolling rr,
-                                              int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
-        for (var nodeId : nodeIds) {
-            Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
-        }
-        assertEquals(IntStream.of(nodeIds).boxed().toList(), rr.loop());
-        for (var nodeId : nodeIds) {
-            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+        // when
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
+        // We expect all the nodes which can be restarted to have been restarted
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+
+        // TODO should we fail fast (after other nodes have been restarted)
+        //  or wait for some amount of time in case those brokers not in the replicas rejoin?
+
+        // But for the reconciliation to eventually fail becuse of the unrestartable nodes
+        var ex = assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+                "Expect timeout because neither broker 3 nor 4 can be rolled while respecting the min ISR on topic A");
+        assertEquals("Cannot restart nodes {4,3} without violating some topics' min.in.sync.replicas", ex.getMessage());
+
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(3)));
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(4)));
+
+        for (var nodeRef: nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
         }
     }
+
+    // TODO test as above, but with the force restart annotation
+
 
 }
