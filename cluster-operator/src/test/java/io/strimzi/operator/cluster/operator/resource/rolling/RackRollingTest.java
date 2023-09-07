@@ -170,6 +170,17 @@ public class RackRollingTest {
             return addTopic(topicName, leaderId, List.of(leaderId), List.of(leaderId));
         }
         MockBuilder addTopic(String topicName, int leaderId, List<Integer> replicaIds, List<Integer> isrIds) {
+            if (!replicaIds.contains(leaderId)) {
+                throw new RuntimeException("Leader is not a replica");
+            }
+            for (var isrId : isrIds) {
+                if (!replicaIds.contains(isrId)) {
+                    throw new RuntimeException("ISR is not a subset of replicas");
+                }
+            }
+            if (topicListing.stream().anyMatch(tl -> tl.name().equals(topicName))) {
+                throw new RuntimeException("Topic already exists");
+            }
             Uuid topicId = Uuid.randomUuid();
             topicListing.add(new TopicListing(topicName, topicId, false));
             Node leaderNode = nodes.get(leaderId);
@@ -667,12 +678,18 @@ Set.of(), 0)
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
-                .addNodes(false, true, 3, 4, 5, 6, 7, 8)
+                .addNodes(true, false, 0, 1, 2) // controllers
+                .addNodes(false, true, // brokers
+                        3, 6, // rack X
+                        4, 7, // rack Y
+                        5, 8) // rack Z
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
-                .addTopic("topic-B", 4, List.of(6, 7, 8), List.of(6, 7, 8))
+                .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
+                .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
+                .addTopic("topic-D", 7, List.of(7, 3, 5), List.of(7, 3, 5))
+                .addTopic("topic-E", 6, List.of(6, 4, 5), List.of(6, 4, 5))
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 3, 4, 5, 6, 7, 8)
                 .mockTopics(rollClient)
                 .mockElectLeaders(rollClient, 3, 4, 5, 6, 7, 8)
@@ -701,9 +718,9 @@ Set.of(), 0)
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 6);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 6);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 7);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
@@ -714,6 +731,8 @@ Set.of(), 0)
             Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
         }
     }
+
+    // TODO a test like the above but where the ISR means that availability is affected
 
     private static void assertBrokerRestarted(PlatformClient platformClient,
                                               RollClient rollClient,
