@@ -41,24 +41,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
 public class RackRollingTest {
-
-
-    // TODO write tests with realistic clusters:
-    // 3 Pure controllers, 3 brokers
-
-    // 3 combined nodes
-    // combinedModeCluster(3).node(1).healthy().node(2).unhealthy().activeController().node(3)...done()
-    // Single node
-
-    // TODO assertions that the active controller is last
-    // TODO assertions that controllers are always in different batches
-    // TODO Tests for combined-mode brokers
-    // TODO Tests for pure controllers
-    // TODO Tests for pure brokers
-    // TODO Tests for nodes with both pure-controllers and and pure brokers
-
+        
+    // TODO Tests for combined-mode clusters
+    // TODO Tests for ZooKeeper-like clusters
     // TODO handling of exceptions from the admin client
-
 
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
 
