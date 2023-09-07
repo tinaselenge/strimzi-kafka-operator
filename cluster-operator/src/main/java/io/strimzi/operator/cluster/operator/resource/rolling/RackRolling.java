@@ -285,6 +285,7 @@ class RackRolling {
                 }
             }
         }));
+        // FIXME The non-nextBatchNonActiveBrokerish branches are not testing for minISR availability
         if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
             NodeRef value = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).get(0).getValue();
             return Set.of(new KafkaNode(value.nodeId(), value.controller(), value.broker(), Set.of()));
