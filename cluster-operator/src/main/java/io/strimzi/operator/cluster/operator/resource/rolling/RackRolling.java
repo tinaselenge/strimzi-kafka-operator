@@ -94,7 +94,8 @@ class RackRolling {
             Set<KafkaNode> unavail = new HashSet<>();
             for (var kafkaNode : cell) {
                 if (avail(kafkaNode, minIsrByTopic)) {
-                    LOGGER.debugCr(reconciliation, "No replicas of {} will be unavailable => add to batch", kafkaNode);
+                    LOGGER.debugCr(reconciliation, "No replicas of node {} will be unavailable => add to batch",
+                            kafkaNode.id());
                     var currentBatch = availBatches.isEmpty() ? null : availBatches.get(availBatches.size() - 1);
                     if (currentBatch == null || currentBatch.size() >= maxBatchSize) {
                         currentBatch = new HashSet<>();
@@ -102,7 +103,7 @@ class RackRolling {
                     }
                     currentBatch.add(kafkaNode);
                 } else {
-                    LOGGER.debugCr(reconciliation, "Some replicas of {} will be unavailable => do not add to batch", kafkaNode);
+                    LOGGER.debugCr(reconciliation, "Some replicas of node {} will be unavailable => do not add to batch", kafkaNode.id());
                     unavail.add(kafkaNode);
                 }
             }
@@ -111,22 +112,36 @@ class RackRolling {
         return result;
     }
 
-    static <T> boolean intersects(Set<T> set, Set<T> set2) {
+    static <T> T elementInIntersection(Set<T> set, Set<T> set2) {
         for (T t : set) {
             if (set2.contains(t)) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    static boolean containsAny(Reconciliation reconciliation,
+                               KafkaNode node,
+                               Set<Replica> nodeReplicas,
+                               Set<KafkaNode> cell) {
+        for (var b : cell) {
+            var commonReplica = elementInIntersection(b.replicas(), nodeReplicas);
+            if (commonReplica != null) {
+                LOGGER.debugCr(reconciliation, "Nodes {} and {} have at least {} in common",
+                        node.id(), b.id(), commonReplica);
                 return true;
             }
         }
+        LOGGER.debugCr(reconciliation, "Node {} has no replicas in common with any of the nodes in {}",
+                node.id(), idsOf(cell));
         return false;
     }
 
-    static boolean containsAny(Set<KafkaNode> cell, Set<Replica> replicas) {
-        for (var b : cell) {
-            if (intersects(b.replicas(), replicas)) {
-                return true;
-            }
-        }
-        return false;
+    private static String idsOf(Collection<KafkaNode> cell) {
+        return cell.stream()
+                .map(kafkaNode -> Integer.toString(kafkaNode.id()))
+                .collect(Collectors.joining(",", "{", "}"));
     }
 
     /** Returns a new set that is the union of each of the sets in the given {@code merge}. I.e. flatten without duplicates. */
@@ -138,15 +153,16 @@ class RackRolling {
         return result;
     }
 
-    private static Set<Set<KafkaNode>> partitionByHasAnyReplicasInCommon(Set<KafkaNode> rollable) {
+    private static Set<Set<KafkaNode>> partitionByHasAnyReplicasInCommon(Reconciliation reconciliation, Set<KafkaNode> rollable) {
         Set<Set<KafkaNode>> disjoint = new HashSet<>();
-        for (var server : rollable) {
-            var replicas = server.replicas();
+        for (var node : rollable) {
+            var nodeReplicas = node.replicas();
             Set<Set<KafkaNode>> merge = new HashSet<>();
             for (Set<KafkaNode> cell : disjoint) {
-                if (!containsAny(cell, replicas)) {
+                if (!containsAny(reconciliation, node, nodeReplicas, cell)) {
+                    LOGGER.debugCr(reconciliation, "Add {} to {{}}", node.id(), idsOf(cell));
                     merge.add(cell);
-                    merge.add(Set.of(server));
+                    merge.add(Set.of(node));
                     // problem is here, we're iterating over all cells (ones which we've decided should be disjoint)
                     // and we merged them in violation of that
                     // we could break here at the end of the if block (which would be correct)
@@ -155,15 +171,27 @@ class RackRolling {
                 }
             }
             if (merge.isEmpty()) {
-                disjoint.add(Set.of(server));
+                LOGGER.debugCr(reconciliation, "New cell: {{}}", node.id());
+                disjoint.add(Set.of(node));
             } else {
+                LOGGER.debugCr(reconciliation, "Merge {}", idsOf2(merge));
                 for (Set<KafkaNode> r : merge) {
+                    LOGGER.debugCr(reconciliation, "Remove cell: {}", idsOf(r));
                     disjoint.remove(r);
                 }
-                disjoint.add(union(merge));
+                Set<KafkaNode> newCell = union(merge);
+                LOGGER.debugCr(reconciliation, "New cell: {{}}", idsOf(newCell));
+                disjoint.add(newCell);
             }
+            LOGGER.debugCr(reconciliation, "Disjoint cells now: {}", idsOf2(disjoint));
         }
         return disjoint;
+    }
+
+    private static String idsOf2(Collection<? extends Collection<KafkaNode>> merge) {
+        return merge.stream()
+                .map(RackRolling::idsOf)
+                .collect(Collectors.joining(",", "{", "}"));
     }
 
     /**
@@ -171,7 +199,8 @@ class RackRolling {
      * into cells that can be rolled in parallel because they
      * contain no replicas in common.
      */
-    static List<Set<KafkaNode>> cells(Collection<KafkaNode> brokers) {
+    static List<Set<KafkaNode>> cells(Reconciliation reconciliation,
+                                      Collection<KafkaNode> brokers) {
 
         // find brokers that are individually rollable
         var rollable = brokers.stream().collect(Collectors.toCollection(() ->
@@ -180,7 +209,7 @@ class RackRolling {
             return List.of(rollable);
         } else {
             // partition the set under the equivalence relation "shares a partition with"
-            Set<Set<KafkaNode>> disjoint = partitionByHasAnyReplicasInCommon(rollable);
+            Set<Set<KafkaNode>> disjoint = partitionByHasAnyReplicasInCommon(reconciliation, rollable);
             // disjoint cannot be empty, because rollable isn't empty, and disjoint is a partitioning or rollable
             // We find the biggest set of brokers which can parallel-rolled
             var sorted = disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
@@ -319,21 +348,30 @@ class RackRolling {
         //      that the controller may shrink the ISR during the reassignment.
 
         // Split the set of all brokers replicating any partition
-        var cells = cells(nodeIdToKafkaNode.values());
-        LOGGER.debugCr(reconciliation, "Cells {}", cells);
+        var cells = cells(reconciliation, nodeIdToKafkaNode.values());
+        int cellNum = 0;
+        for (var cell: cells) {
+            LOGGER.debugCr(reconciliation, "Cell {}: {}", ++cellNum, cell);
+        }
 
         // filter each cell by brokers that actually need to be restarted
-        cells = cells.stream().map(cell -> cell.stream().filter(kafkaNode -> nodesNeedingRestart.containsKey(kafkaNode.id())).collect(Collectors.toSet())).toList();
-        LOGGER.debugCr(reconciliation, "Filtered cells {}", cells);
+        cells = cells.stream()
+                .map(cell -> cell.stream()
+                        .filter(kafkaNode -> nodesNeedingRestart.containsKey(kafkaNode.id())).collect(Collectors.toSet()))
+                .toList();
+        cellNum = 0;
+        for (var cell: cells) {
+            LOGGER.debugCr(reconciliation, "Restart-eligible cell {}: {}", ++cellNum, cell);
+        }
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
         var batches = batchCells(reconciliation, cells, minIsrByTopic, maxRestartBatchSize);
-        LOGGER.debugCr(reconciliation, "Batches {}", batches);
+        LOGGER.debugCr(reconciliation, "Batches {}", idsOf2(batches));
 
         // TODO what does describe quorum return in ZK mode?
         // TODO what should the return value of activeController be during a migration?
         var bestBatch = pickBestBatchForRestart(batches, controllerId);
-        LOGGER.debugCr(reconciliation, "Best batch {}", bestBatch);
+        LOGGER.debugCr(reconciliation, "Best batch {}", idsOf(bestBatch));
         return bestBatch;
     }
 
@@ -376,7 +414,7 @@ class RackRolling {
 
         // TODO validate
 
-        var results = cells(kafkaNodes);
+        var results = cells(Reconciliation.DUMMY_RECONCILIATION, kafkaNodes);
 
         int group = 0;
         for (var result : results) {
@@ -636,8 +674,6 @@ class RackRolling {
         return new RackRolling(time,
                 platformClient,
                 rollClient,
-                nodes,
-                predicate,
                 reconciliation,
                 kafkaVersion,
                 kafkaConfigProvider,
@@ -653,8 +689,6 @@ class RackRolling {
     private final Time time;
     private final PlatformClient platformClient;
     private final RollClient rollClient;
-    private final Collection<NodeRef> nodes;
-    private final Function<Integer, RestartReasons> predicate;
     private final Reconciliation reconciliation;
     private final KafkaVersion kafkaVersion;
     private final Function<Integer, String> kafkaConfigProvider;
@@ -667,8 +701,6 @@ class RackRolling {
     public RackRolling(Time time,
                        PlatformClient platformClient,
                        RollClient rollClient,
-                       Collection<NodeRef> nodes,
-                       Function<Integer, RestartReasons> predicate,
                        Reconciliation reconciliation,
                        KafkaVersion kafkaVersion,
                        Function<Integer, String> kafkaConfigProvider,
@@ -682,8 +714,6 @@ class RackRolling {
         this.time = time;
         this.platformClient = platformClient;
         this.rollClient = rollClient;
-        this.nodes = nodes;
-        this.predicate = predicate;
         this.reconciliation = reconciliation;
         this.kafkaVersion = kafkaVersion;
         this.kafkaConfigProvider = kafkaConfigProvider;
