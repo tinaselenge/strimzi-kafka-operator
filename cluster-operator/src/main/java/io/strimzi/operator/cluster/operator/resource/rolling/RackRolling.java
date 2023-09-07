@@ -89,9 +89,9 @@ class RackRolling {
                                            Map<String, Integer> minIsrByTopic,
                                            int maxBatchSize) {
         List<Set<KafkaNode>> result = new ArrayList<>();
+        Set<KafkaNode> unavail = new HashSet<>();
         for (var cell : cells) {
             List<Set<KafkaNode>> availBatches = new ArrayList<>();
-            Set<KafkaNode> unavail = new HashSet<>();
             for (var kafkaNode : cell) {
                 if (avail(kafkaNode, minIsrByTopic)) {
                     LOGGER.debugCr(reconciliation, "No replicas of node {} will be unavailable => add to batch",
@@ -108,6 +108,9 @@ class RackRolling {
                 }
             }
             result.addAll(availBatches);
+        }
+        if (result.isEmpty() && !unavail.isEmpty()) {
+            throw new UnrestartableNodesException("Cannot restart nodes " + idsOf(unavail) + " without violating some topics' min.in.sync.replicas");
         }
         return result;
     }
@@ -782,7 +785,7 @@ class RackRolling {
                 return List.of(context.nodeId());
             }
 
-            // If we get this far that all remaining nodes require a restart
+            // If we get this far then all remaining nodes require a restart
             // determine batches of nodes to be restarted together
             var batch = nextBatch(reconciliation, rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
                     Context::nodeId,
