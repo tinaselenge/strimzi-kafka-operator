@@ -519,10 +519,6 @@ public class KafkaRoller {
     private void checkReconfigurability(NodeRef nodeRef, Pod pod, RestartContext restartContext) throws ForceableProblem, InterruptedException, FatalProblem {
         RestartReasons reasonToRestartPod = restartContext.restartReasons;
         boolean podStuck = isPodStuck(pod);
-        if (podStuck) {
-            LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it seems to be stuck and restart might help", nodeRef);
-            restartContext.restartReasons.add(RestartReason.POD_STUCK);
-        }
 
         if (podStuck && !reasonToRestartPod.contains(RestartReason.POD_HAS_OLD_REVISION)) {
             // If the pod is unschedulable then deleting it, or trying to open an Admin client to it will make no difference
@@ -530,6 +526,17 @@ public class KafkaRoller {
             // and deleting a different pod in the meantime will likely result in another unschedulable pod.
             throw new FatalProblem("Pod is unschedulable or is not starting");
         }
+
+        if (podStuck) {
+            LOGGER.infoCr(reconciliation, "Pod {} needs to be restarted, because it seems to be stuck and restart might help", nodeRef);
+            restartContext.restartReasons.add(RestartReason.POD_STUCK);
+            restartContext.needsRestart = false;
+            restartContext.needsReconfig = false;
+            restartContext.forceRestart = true;
+            restartContext.diff = null;
+            restartContext.logDiff = null;
+        }
+
         // Unless the annotation is present, check the pod is at least ready.
         boolean needsRestart = reasonToRestartPod.shouldRestart();
         KafkaBrokerConfigurationDiff diff = null;
