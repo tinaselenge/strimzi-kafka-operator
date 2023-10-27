@@ -118,6 +118,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasProperty;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SuppressWarnings({"checkstyle:ClassDataAbstractionCoupling", "checkstyle:ClassFanOutComplexity", "checkstyle:JavaNCSS"})
@@ -3932,6 +3933,17 @@ public class KafkaClusterTest {
         EnvVar kraftEnabledEnvVar = kafkaEnvVars.stream().filter(env -> KafkaCluster.ENV_VAR_STRIMZI_KRAFT_ENABLED.equals(env.getName())).findFirst().orElse(null);
         assertThat(kraftEnabledEnvVar, is(Matchers.notNullValue()));
         assertThat(kraftEnabledEnvVar.getValue().isEmpty(), is(false));
+    }
+
+    @ParallelTest
+    public void testEmptyMapForAdvertisedListeners() {
+        String clusterId = Uuid.randomUuid().toString();
+        List<KafkaPool> pools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, KAFKA, null, Map.of(), Map.of(), true, SHARED_ENV_PROVIDER);
+        KafkaCluster kc = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, KAFKA, pools, VERSIONS, true, clusterId, SHARED_ENV_PROVIDER);
+
+        // Test that the broker configuration can be created with empty maps for advertised listener hostnames and ports
+        String config = kc.generatePerBrokerConfiguration(2, Map.of(), Map.of());
+        assertNotNull(config);
     }
 
     @ParallelTest

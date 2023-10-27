@@ -90,6 +90,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -1615,6 +1616,10 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      * @return  String with the Kafka broker configuration
      */
     private String generatePerBrokerConfiguration(NodeRef node, KafkaPool pool, Map<Integer, Map<String, String>> advertisedHostnames, Map<Integer, Map<String, String>> advertisedPorts)   {
+        // When doing manual rolling updates, empty maps are passed for advertised listeners and allowReconfiguration set to false.
+        // In broker case, we do not generate configurations if allowReconfiguration is set to false therefore this functions is never called.
+        // However, for controllers, we always generate configuration to read a controller specific configuration to use it for quorum healthcheck.
+        // Therefore, advertised hostname and ports should be nullable if empty maps are passed.
         KafkaBrokerConfigurationBuilder builder =
                 new KafkaBrokerConfigurationBuilder(reconciliation, String.valueOf(node.nodeId()), useKRaft)
                         .withRackId(rack)
@@ -1623,8 +1628,8 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                                 namespace,
                                 node,
                                 listeners,
-                                listenerId -> advertisedHostnames.get(node.nodeId()).get(listenerId),
-                                listenerId -> advertisedPorts.get(node.nodeId()).get(listenerId)
+                                listenerId -> Optional.ofNullable(advertisedHostnames.get(node.nodeId())).orElse(Map.of()).get(listenerId),
+                                listenerId -> Optional.ofNullable(advertisedPorts.get(node.nodeId())).orElse(Map.of()).get(listenerId)
                         )
                         .withAuthorization(cluster, authorization)
                         .withCruiseControl(cluster, ccMetricsReporter, node.broker())
