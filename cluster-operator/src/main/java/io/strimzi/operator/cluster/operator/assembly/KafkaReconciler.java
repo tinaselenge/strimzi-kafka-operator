@@ -42,6 +42,7 @@ import io.strimzi.operator.cluster.model.KafkaConfiguration;
 import io.strimzi.operator.cluster.model.KafkaPool;
 import io.strimzi.operator.cluster.model.KafkaVersionChange;
 import io.strimzi.operator.cluster.model.ListenersUtils;
+import io.strimzi.operator.cluster.model.MetricsAndLogging;
 import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.common.model.NodeUtils;
@@ -58,7 +59,6 @@ import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEve
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.BackOff;
-import io.strimzi.operator.cluster.model.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
@@ -244,7 +244,6 @@ public class KafkaReconciler {
         this.nodeOperator = supplier.nodeOperator;
         this.kafkaNodePoolOperator = supplier.kafkaNodePoolOperator;
         this.eventsPublisher = supplier.restartEventsPublisher;
-
         this.adminClientProvider = supplier.adminClientProvider;
     }
 
@@ -360,14 +359,18 @@ public class KafkaReconciler {
     protected Future<Void> manualRollingUpdate() {
         Future<List<NodeRef>> podsToRollThroughPodSetAnno = podsForManualRollingUpdateDiscoveredThroughPodSetAnnotation();
         Future<List<NodeRef>> podsToRollThroughPodAnno = podsForManualRollingUpdateDiscoveredThroughPodAnnotations();
+        Future<List<NodeRef>> podsForBootstrap = podsForBootstrapHostnames();
 
         return Future
-                .join(podsToRollThroughPodSetAnno, podsToRollThroughPodAnno)
+                .join(podsToRollThroughPodSetAnno, podsToRollThroughPodAnno, podsForBootstrap)
                 .compose(result -> {
                     // We merge the lists into set to avoid duplicates
                     Set<NodeRef> nodes = new LinkedHashSet<>();
                     nodes.addAll(result.resultAt(0));
                     nodes.addAll(result.resultAt(1));
+
+                    Set<NodeRef> bootstrapNodes = new LinkedHashSet<>();
+                    bootstrapNodes.addAll(result.resultAt(2));
 
                     if (!nodes.isEmpty())   {
                         return maybeRollKafka(
@@ -383,7 +386,8 @@ public class KafkaReconciler {
                                 },
                                 Map.of(),
                                 Map.of(),
-                                false
+                                false,
+                                bootstrapNodes
                         );
                     } else {
                         return Future.succeededFuture();
@@ -417,6 +421,23 @@ public class KafkaReconciler {
     }
 
     /**
+     * Checks all Kafka PodSets and if they have the manual rolling update annotation, it will take all their nodes and
+     * add them to a list for rolling update.
+     *
+     * @return  List with node references to nodes which should be rolled
+     */
+    private Future<List<NodeRef>> podsForBootstrapHostnames()   {
+        return strimziPodSetOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels())
+                .map(podSets -> {
+                    List<NodeRef> nodes = new ArrayList<>();
+                    for (StrimziPodSet podSet : podSets) {
+                        nodes.addAll(ReconcilerUtils.nodesFromPodSet(podSet).stream().filter(NodeRef::broker).toList());
+                    }
+                    return nodes;
+                });
+    }
+
+    /**
      * Checks all Kafka Pods and if they have the manual rolling update annotation, it will add them to a list for
      * rolling update.
      *
@@ -444,21 +465,21 @@ public class KafkaReconciler {
     /**
      * Rolls Kafka pods if needed
      *
-     * @param nodes                     List of nodes which should be considered for rolling
-     * @param podNeedsRestart           Function which serves as a predicate whether to roll pod or not
-     * @param kafkaAdvertisedHostnames  Map with advertised hostnames required to generate the per-broker configuration
-     * @param kafkaAdvertisedPorts      Map with advertised ports required to generate the per-broker configuration
-     * @param allowReconfiguration      Defines whether the rolling update should also attempt to do dynamic reconfiguration or not
-     *
-     * @return  Future which completes when the rolling is complete
+     * @param nodes                    List of nodes which should be considered for rolling
+     * @param podNeedsRestart          Function which serves as a predicate whether to roll pod or not
+     * @param kafkaAdvertisedHostnames Map with advertised hostnames required to generate the per-broker configuration
+     * @param kafkaAdvertisedPorts     Map with advertised ports required to generate the per-broker configuration
+     * @param allowReconfiguration     Defines whether the rolling update should also attempt to do dynamic reconfiguration or not
+     * @param bootstrapNodes
+     * @return Future which completes when the rolling is complete
      */
     protected Future<Void> maybeRollKafka(
             Set<NodeRef> nodes,
             Function<Pod, RestartReasons> podNeedsRestart,
             Map<Integer, Map<String, String>> kafkaAdvertisedHostnames,
             Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
-            boolean allowReconfiguration
-    ) {
+            boolean allowReconfiguration,
+            Set<NodeRef> bootstrapNodes) {
         return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
                 .compose(compositeFuture ->
                         new KafkaRoller(
@@ -472,11 +493,14 @@ public class KafkaReconciler {
                                 compositeFuture.resultAt(0),
                                 compositeFuture.resultAt(1),
                                 adminClientProvider,
-                                brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
+                                allowReconfiguration ?
+                                        brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts) :
+                                        brokerId -> kafka.getConfiguration().getConfiguration(),
                                 logging,
                                 kafka.getKafkaVersion(),
                                 allowReconfiguration,
-                                eventsPublisher
+                                eventsPublisher,
+                                bootstrapNodes
                         ).rollingRestart(podNeedsRestart));
     }
 
@@ -846,8 +870,8 @@ public class KafkaReconciler {
                 ),
                 listenerReconciliationResults.advertisedHostnames,
                 listenerReconciliationResults.advertisedPorts,
-                true
-        );
+                true,
+                null);
     }
 
     /**

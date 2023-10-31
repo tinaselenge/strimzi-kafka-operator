@@ -119,6 +119,7 @@ public class KafkaRoller {
     private final Set<NodeRef> nodes;
     private final KubernetesRestartEventPublisher eventsPublisher;
     private final Supplier<BackOff> backoffSupplier;
+    private final Set<NodeRef> bootstrapNodes;
     protected String namespace;
     private final AdminClientProvider adminClientProvider;
     private final Function<Integer, String> kafkaConfigProvider;
@@ -134,27 +135,28 @@ public class KafkaRoller {
     /**
      * Constructor
      *
-     * @param reconciliation        Reconciliation marker
-     * @param vertx                 Vert.x instance
-     * @param podOperations         Pod operator for managing pods
-     * @param pollingIntervalMs     Polling interval in milliseconds
-     * @param operationTimeoutMs    Operation timeout in milliseconds
-     * @param backOffSupplier       Backoff supplier
-     * @param nodes                 List of Kafka node references
-     * @param clusterCaCertSecret   Secret with the Cluster CA public key
-     * @param coKeySecret           Secret with the Cluster CA private key
-     * @param adminClientProvider   Kafka Admin client provider
-     * @param kafkaConfigProvider   Kafka configuration provider
-     * @param kafkaLogging          Kafka logging configuration
-     * @param kafkaVersion          Kafka version
-     * @param allowReconfiguration  Flag indicting whether reconfiguration is allowed or not
-     * @param eventsPublisher       Kubernetes Events publisher for publishing events about pod restarts
+     * @param reconciliation       Reconciliation marker
+     * @param vertx                Vert.x instance
+     * @param podOperations        Pod operator for managing pods
+     * @param pollingIntervalMs    Polling interval in milliseconds
+     * @param operationTimeoutMs   Operation timeout in milliseconds
+     * @param backOffSupplier      Backoff supplier
+     * @param nodes                List of Kafka node references
+     * @param clusterCaCertSecret  Secret with the Cluster CA public key
+     * @param coKeySecret          Secret with the Cluster CA private key
+     * @param adminClientProvider  Kafka Admin client provider
+     * @param kafkaConfigProvider  Kafka configuration provider
+     * @param kafkaLogging         Kafka logging configuration
+     * @param kafkaVersion         Kafka version
+     * @param allowReconfiguration Flag indicting whether reconfiguration is allowed or not
+     * @param eventsPublisher      Kubernetes Events publisher for publishing events about pod restarts
+     * @param bootstrapNodes       Kubernetes Events publisher for publishing events about pod restarts
      */
     public KafkaRoller(Reconciliation reconciliation, Vertx vertx, PodOperator podOperations,
                        long pollingIntervalMs, long operationTimeoutMs, Supplier<BackOff> backOffSupplier, Set<NodeRef> nodes,
                        Secret clusterCaCertSecret, Secret coKeySecret,
                        AdminClientProvider adminClientProvider,
-                       Function<Integer, String> kafkaConfigProvider, String kafkaLogging, KafkaVersion kafkaVersion, boolean allowReconfiguration, KubernetesRestartEventPublisher eventsPublisher) {
+                       Function<Integer, String> kafkaConfigProvider, String kafkaLogging, KafkaVersion kafkaVersion, boolean allowReconfiguration, KubernetesRestartEventPublisher eventsPublisher, Set<NodeRef> bootstrapNodes) {
         this.namespace = reconciliation.namespace();
         this.cluster = reconciliation.name();
         this.nodes = nodes;
@@ -175,6 +177,7 @@ public class KafkaRoller {
         this.kafkaVersion = kafkaVersion;
         this.reconciliation = reconciliation;
         this.allowReconfiguration = allowReconfiguration;
+        this.bootstrapNodes = bootstrapNodes;
     }
 
     /**
@@ -841,7 +844,13 @@ public class KafkaRoller {
         // TODO: Currently, when running in KRaft mode, only nodes which have the broker process role can be roller due
         //       to Kafka limitations. This should be fixed once Kafka supports using Kafka Admin APi with controller
         //       nodes. This is tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/8593.
-        String bootstrapHostnames = nodes.stream().filter(NodeRef::broker).map(node -> DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        long numOfBrokerNodes = nodes.stream().filter(NodeRef::broker).count();
+        String bootstrapHostnames;
+        if (numOfBrokerNodes == 0 && bootstrapNodes != null) {
+            bootstrapHostnames = bootstrapNodes.stream().map(node -> DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        } else {
+            bootstrapHostnames = nodes.stream().filter(NodeRef::broker).map(node -> DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        }
 
         try {
             LOGGER.debugCr(reconciliation, "Creating AdminClient for {}", bootstrapHostnames);

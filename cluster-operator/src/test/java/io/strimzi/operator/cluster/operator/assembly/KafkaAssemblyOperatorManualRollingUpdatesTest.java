@@ -674,8 +674,8 @@ public class KafkaAssemblyOperatorManualRollingUpdatesTest {
                 Function<Pod, RestartReasons> podNeedsRestart,
                 Map<Integer, Map<String, String>> kafkaAdvertisedHostnames,
                 Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
-                boolean allowReconfiguration
-        ) {
+                boolean allowReconfiguration,
+                Set<NodeRef> bootstrapNodes) {
             maybeRollKafkaInvocations++;
             kafkaRestartReasons = podNeedsRestart;
             kafkaNodesNeedRestart.addAll(nodes.stream().map(NodeRef::podName).toList());

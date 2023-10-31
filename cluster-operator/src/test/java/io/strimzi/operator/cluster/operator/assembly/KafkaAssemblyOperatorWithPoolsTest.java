@@ -1511,8 +1511,8 @@ public class KafkaAssemblyOperatorWithPoolsTest {
                 Function<Pod, RestartReasons> podNeedsRestart,
                 Map<Integer, Map<String, String>> kafkaAdvertisedHostnames,
                 Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
-                boolean allowReconfiguration
-        ) {
+                boolean allowReconfiguration,
+                Set<NodeRef> bootstrapNodes) {
             maybeRollKafkaInvocations++;
             kafkaPodNeedsRestart = podNeedsRestart;
             return Future.succeededFuture();
