@@ -119,7 +119,6 @@ public class KafkaRoller {
     private final Set<NodeRef> nodes;
     private final KubernetesRestartEventPublisher eventsPublisher;
     private final Supplier<BackOff> backoffSupplier;
-    private final Set<NodeRef> brokerNodesForBootstrap;
     protected String namespace;
     private final AdminClientProvider adminClientProvider;
     private final Function<Integer, String> kafkaConfigProvider;
@@ -150,13 +149,12 @@ public class KafkaRoller {
      * @param kafkaVersion         Kafka version
      * @param allowReconfiguration Flag indicting whether reconfiguration is allowed or not
      * @param eventsPublisher      Kubernetes Events publisher for publishing events about pod restarts
-     * @param brokerNodesForBootstrap    List of Kafka node references for all broker nodes in the cluster
      */
     public KafkaRoller(Reconciliation reconciliation, Vertx vertx, PodOperator podOperations,
                        long pollingIntervalMs, long operationTimeoutMs, Supplier<BackOff> backOffSupplier, Set<NodeRef> nodes,
                        Secret clusterCaCertSecret, Secret coKeySecret,
                        AdminClientProvider adminClientProvider,
-                       Function<Integer, String> kafkaConfigProvider, String kafkaLogging, KafkaVersion kafkaVersion, boolean allowReconfiguration, KubernetesRestartEventPublisher eventsPublisher, Set<NodeRef> brokerNodesForBootstrap) {
+                       Function<Integer, String> kafkaConfigProvider, String kafkaLogging, KafkaVersion kafkaVersion, boolean allowReconfiguration, KubernetesRestartEventPublisher eventsPublisher) {
         this.namespace = reconciliation.namespace();
         this.cluster = reconciliation.name();
         this.nodes = nodes;
@@ -177,7 +175,6 @@ public class KafkaRoller {
         this.kafkaVersion = kafkaVersion;
         this.reconciliation = reconciliation;
         this.allowReconfiguration = allowReconfiguration;
-        this.brokerNodesForBootstrap = brokerNodesForBootstrap;
     }
 
     /**
@@ -203,10 +200,9 @@ public class KafkaRoller {
             try {
                 // TODO: Currently, when running in KRaft mode Kafka does not support using Kafka Admin API with controller
                 //       nodes. This is tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/8593.
-                //       Therefore use broker nodes of the cluster to initialise adminClient for allClient.
-                //       Once Kafka Admin API is supported for controllers, brokerNodesForBootstrap can be removed
-                //       from KafkaRoller and we can use "nodes" here instead of it.
-                this.allClient = adminClient(brokerNodesForBootstrap, false);
+                //       Therefore use brokers service to initialise adminClient for allClient.
+                //       Once Kafka Admin API is supported for controllers, we can call the controller pod directly.
+                this.allClient = adminClient(String.format("%s:%s", KafkaResources.brokersServiceName(cluster), KafkaCluster.REPLICATION_PORT), false);
             } catch (ForceableProblem | FatalProblem e) {
                 LOGGER.warnCr(reconciliation, "Failed to create adminClient.", e);
                 return false;
@@ -452,7 +448,7 @@ public class KafkaRoller {
             }
         } catch (ForceableProblem e) {
             if (restartContext.podStuck || restartContext.backOff.done() || e.forceNow) {
-                if (canRoll(nodeRef, 60, TimeUnit.SECONDS, true, restartContext)) {
+                if (canRoll(nodeRef, 60_000, TimeUnit.MILLISECONDS, true, restartContext)) {
                     String errorMsg = e.getMessage();
                     if (e.getCause() != null) {
                         errorMsg += ", caused by:" + (e.getCause().getMessage() != null ? e.getCause().getMessage() : e.getCause());
@@ -843,23 +839,29 @@ public class KafkaRoller {
     }
 
     /**
-     * Returns an AdminClient instance bootstrapped from the given pod.
+     * Returns an AdminClient instance bootstrapped from the given nodes.
      */
     protected Admin adminClient(Set<NodeRef> nodes, boolean ceShouldBeFatal) throws ForceableProblem, FatalProblem {
-        String bootstrapHostnames = nodes.stream().map(node -> DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        String bootstrapAddress = nodes.stream().map(node -> DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        return adminClient(bootstrapAddress, ceShouldBeFatal);
+    }
 
+    /**
+     * Returns an AdminClient instance bootstrapped from the given address.
+     */
+    private Admin adminClient(String boostrapAddress, boolean ceShouldBeFatal) throws ForceableProblem, FatalProblem {
         try {
-            LOGGER.debugCr(reconciliation, "Creating AdminClient for {}", bootstrapHostnames);
-            return adminClientProvider.createAdminClient(bootstrapHostnames, this.clusterCaCertSecret, this.coKeySecret, "cluster-operator");
+            LOGGER.debugCr(reconciliation, "Creating AdminClient for {}", boostrapAddress);
+            return adminClientProvider.createAdminClient(boostrapAddress, this.clusterCaCertSecret, this.coKeySecret, "cluster-operator");
         } catch (KafkaException e) {
             if (ceShouldBeFatal && (e instanceof ConfigException
                     || e.getCause() instanceof ConfigException)) {
-                throw new FatalProblem("An error while try to create an admin client with bootstrap brokers " + bootstrapHostnames, e);
+                throw new FatalProblem("An error while try to create an admin client with bootstrap address " + boostrapAddress, e);
             } else {
-                throw new ForceableProblem("An error while try to create an admin client with bootstrap brokers " + bootstrapHostnames, e);
+                throw new ForceableProblem("An error while try to create an admin client with bootstrap address " + boostrapAddress, e);
             }
         } catch (RuntimeException e) {
-            throw new ForceableProblem("An error while try to create an admin client with bootstrap brokers " + bootstrapHostnames, e);
+            throw new ForceableProblem("An error while try to create an admin client with bootstrap address " + boostrapAddress, e);
         }
     }
 
