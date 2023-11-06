@@ -47,7 +47,7 @@ public class KafkaBrokerLoggingConfigurationDiff extends AbstractJsonDiff {
      * Returns logging difference
      * @return Collection of AlterConfigOp containing difference between current and desired logging configuration
      */
-    protected Collection<AlterConfigOp> getLoggingDiff() {
+    public Collection<AlterConfigOp> getLoggingDiff() {
         return diff;
     }
 
