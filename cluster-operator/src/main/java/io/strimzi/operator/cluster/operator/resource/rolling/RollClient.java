@@ -51,6 +51,14 @@ interface RollClient {
     Map<String, Integer> describeTopicMinIsrs(List<String> topicNames);
 
     /**
+     * Describe the metadata quorum info.
+     * @return A map from controller quorum followers to their {@code lastCaughtUpTimestamps}.
+     * @throws io.strimzi.operator.common.UncheckedExecutionException
+     * @throws io.strimzi.operator.common.UncheckedInterruptedException
+     */
+    Map<Integer, Long> describeQuorumState();
+
+    /**
      * @return The id of the server that is the current controller of the cluster.
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
@@ -115,7 +123,7 @@ interface RollClient {
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
-    Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList);
+    Map<Integer, Configs> describeKafkaConfigs(List<NodeRef> toList);
 
-    static record Configs(Config brokerConfigs, Config brokerLoggerConfigs) { }
+    static record Configs(Config kafkaConfigs, Config nodeLoggerConfigs) { }
 }
