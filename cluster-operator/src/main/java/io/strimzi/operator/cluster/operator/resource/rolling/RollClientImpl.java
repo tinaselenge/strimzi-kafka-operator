@@ -13,10 +13,13 @@ import io.strimzi.operator.common.UncheckedInterruptedException;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.ElectionType;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.TopicCollection;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
@@ -115,16 +118,35 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public int activeController() {
+    public Map<Integer, Long> describeQuorumState() {
+        DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
         try {
-            // TODO when controllers not colocated with brokers, how do we find the active controller?
-            DescribeClusterResult dcr = admin.describeCluster();
-            var activeController = dcr.controller().get();
-            return activeController.id();
+            return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
+                    QuorumInfo.ReplicaState::replicaId,
+                    state -> state.lastCaughtUpTimestamp().isPresent() ? state.lastCaughtUpTimestamp().getAsLong() : -1));
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        }
+    }
+
+    @Override
+    public int activeController() {
+        try {
+            try {
+                DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
+                var activeController = dmqr.quorumInfo().get().leaderId();
+                return activeController;
+            } catch (UnsupportedVersionException e) {
+                DescribeClusterResult dcr = admin.describeCluster();
+                var activeController = dcr.controller().get();
+                return activeController.id();
+            }
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -200,7 +222,7 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) {
+    public Map<Integer, Configs> describeKafkaConfigs(List<NodeRef> toList) {
         try {
             var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
             var result = dc.all().get();
