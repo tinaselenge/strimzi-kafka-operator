@@ -41,6 +41,16 @@ import java.util.stream.Collectors;
 class RollClientImpl implements RollClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
+    private final Admin admin;
+
+    private final KafkaAgentClient kafkaAgentClient;
+
+    private int quorumLeader = -1;
+
+    RollClientImpl(Admin admin, KafkaAgentClient kafkaAgentClient) {
+        this.admin = admin;
+        this.kafkaAgentClient = kafkaAgentClient;
+    }
 
     /** Return a future that completes when all of the given futures complete */
     @SuppressWarnings("rawtypes")
@@ -61,15 +71,6 @@ class RollClientImpl implements RollClient {
             currentBatch.add(topicId);
         }
         return allBatches;
-    }
-
-    private final Admin admin;
-
-    private final KafkaAgentClient kafkaAgentClient;
-
-    RollClientImpl(Admin admin, KafkaAgentClient kafkaAgentClient) {
-        this.admin = admin;
-        this.kafkaAgentClient = kafkaAgentClient;
     }
 
     @Override
@@ -121,6 +122,7 @@ class RollClientImpl implements RollClient {
     public Map<Integer, Long> describeQuorumState() {
         DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
         try {
+            quorumLeader = dmqr.quorumInfo().get().leaderId();
             return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
                     QuorumInfo.ReplicaState::replicaId,
                     state -> state.lastCaughtUpTimestamp().isPresent() ? state.lastCaughtUpTimestamp().getAsLong() : -1));
@@ -133,6 +135,10 @@ class RollClientImpl implements RollClient {
 
     @Override
     public int activeController() {
+        if (quorumLeader != -1) {
+            return quorumLeader;
+        }
+
         try {
             try {
                 DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
