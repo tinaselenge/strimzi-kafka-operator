@@ -14,7 +14,7 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
-import io.strimzi.operator.common.model.OrderedProperties;
+import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
@@ -86,7 +86,7 @@ class RackRolling {
         return true;
     }
 
-    private static boolean affectsQuorumHealth(Reconciliation reconciliation, int controllerNeedRestarting, int activeControllerId, Map<Integer, Long> quorumFollowerStates) {
+    private static boolean isQuorumHealthyWithoutNode(Reconciliation reconciliation, int controllerNeedRestarting, int activeControllerId, Map<Integer, Long> quorumFollowerStates) {
         LOGGER.debugCr(reconciliation, "Determining the impact of restarting controller {} on quorum health", controllerNeedRestarting);
         if (activeControllerId < 0) {
             LOGGER.warnCr(reconciliation, "No controller quorum leader is found because the leader id is set to {}", activeControllerId);
@@ -304,6 +304,7 @@ class RackRolling {
      * </ol>
      *
      * @param rollClient The roll client
+     * @param nodeMap The ids of the nodes in the cluster
      * @param nodesNeedingRestart The ids of the nodes which need to be restarted
      * @param maxRestartBatchSize The maximum allowed size for a batch
      * @return The nodes corresponding to a subset of {@code nodeIdsNeedingRestart} that can safely be rolled together
@@ -321,6 +322,7 @@ class RackRolling {
             BROKER_AND_ACTIVE_CONTROLLER // A KRaft or ZooKeeper node that is a broker and also the active controller
         }
 
+        Map<Integer, Long> quorumState = rollClient.describeQuorumState();
         int activeControllerId = rollClient.activeController();
         var partitioned = nodesNeedingRestart.entrySet().stream().collect(Collectors.groupingBy(entry -> {
             NodeRef nodeRef = entry.getValue();
@@ -340,9 +342,18 @@ class RackRolling {
                 }
             }
         }));
-        // FIXME The non-nextBatchBrokers branches are not testing for minISR availability
 
-        Map<Integer, Long> quorumState = rollClient.describeQuorumState();
+
+        if(activeControllerId > -1) {
+            var nodeKafkaConfigs = rollClient.describeKafkaConfigs(List.of(nodeMap.get(activeControllerId)));
+            RollClient.Configs configs = nodeKafkaConfigs.get(activeControllerId);
+            if (configs != null) {
+                ConfigEntry controllerQuorumFetchTimeoutConfig = configs.kafkaConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME);
+                controllerQuorumFetchTimeout = controllerQuorumFetchTimeoutConfig != null ? Long.parseLong(controllerQuorumFetchTimeoutConfig.value()) : CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
+            }
+        }
+
+        // FIXME The non-nextBatchBrokers branches are not testing for minISR availability
         if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -353,7 +364,7 @@ class RackRolling {
             return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
         } else if (partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
-                    .filter(entry -> affectsQuorumHealth(reconciliation, entry.getKey(), activeControllerId, quorumState))
+                    .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, quorumState) : true)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, activeControllerId);
         } else if (partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER) != null) {
@@ -370,7 +381,7 @@ class RackRolling {
                                             int activeControllerId,
                                             Map<Integer, Long> quorumState) {
         List<Integer> controllersNeedingRestart = nodesNeedingRestart.keySet().stream()
-                .filter(nodeId -> affectsQuorumHealth(reconciliation, nodeId, activeControllerId, quorumState))
+                .filter(nodeId -> isQuorumHealthyWithoutNode(reconciliation, nodeId, activeControllerId, quorumState))
                 .collect(Collectors.toList());
         if (controllersNeedingRestart.size() > 0) {
             return Set.of(new KafkaNode(controllersNeedingRestart.get(0),true, false, Set.of()));
@@ -618,14 +629,6 @@ class RackRolling {
 
         var refinedPlan = contexts.stream().collect(Collectors.groupingBy(context -> {
             RollClient.Configs configPair = nodeKafkaConfigs.get(context.nodeId());
-
-            var desiredConfig = kafkaConfigProvider.apply(context.nodeId());
-            OrderedProperties orderedProperties = new OrderedProperties();
-            if (orderedProperties.addStringPairs(desiredConfig).asMap().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME) != null ) {
-                controllerQuorumFetchTimeout = Long.parseLong(orderedProperties.addStringPairs(desiredConfig).asMap().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME));
-            } else if (configPair.kafkaConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME) != null) {
-                controllerQuorumFetchTimeout =  Long.parseLong(configPair.kafkaConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME).value());
-            }
 
             var diff = new KafkaBrokerConfigurationDiff(reconciliation,
                     configPair.kafkaConfigs(),
