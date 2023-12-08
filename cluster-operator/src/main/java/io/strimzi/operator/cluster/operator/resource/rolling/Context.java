@@ -33,6 +33,9 @@ final class Context {
     /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
+    private static final long CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT = 2000L;
+    private static long controllerQuorumFetchTimeout = CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
+
     private Context(NodeRef nodeRef, State state, long lastTransition, RestartReasons reason, int numRestarts) {
         this.nodeRef = nodeRef;
         this.state = state;
