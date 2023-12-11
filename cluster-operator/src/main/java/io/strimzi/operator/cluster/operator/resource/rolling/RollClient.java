@@ -33,7 +33,7 @@ interface RollClient {
 
     /**
      * Describe the topics with the given ids.
-     * If the given {@code topicIds} is large multiple requests (to different brokers) may be used.
+     * If the given {@code topicIds} is large, multiple requests (to different brokers) may be used.
      * @param topicIds The topic ids.
      * @return The topic descriptions.
      * @throws io.strimzi.operator.common.UncheckedExecutionException
