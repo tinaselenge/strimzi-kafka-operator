@@ -825,8 +825,10 @@ class RackRolling {
         try {
             LOGGER.debugCr(reconciliation, "Loop");
             // Observe current state and update the contexts
+            int totalNumOfControllers = 0;
             for (var context : contexts) {
                 context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
+                if (context.nodeRef().controller()) totalNumOfControllers++;
             }
 
             int maxReconfigs = 1;
@@ -834,12 +836,10 @@ class RackRolling {
             LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
 
             // Restart any initially unready nodes
-            for (var context : byPlan.getOrDefault(Plan.RESTART_FIRST, List.of())) {
-                restartNode(reconciliation, time, platformClient, context, maxRestarts);
-                long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, context, State.SERVING, postRestartTimeoutMs);
-                awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
-                return List.of(context.nodeId());
+            if (!byPlan.getOrDefault(Plan.RESTART_FIRST, List.of()).isEmpty()) {
+                return restartUnReadyNodes(byPlan.get(Plan.RESTART_FIRST), totalNumOfControllers);
             }
+
             // If we get this far we know all nodes are ready
 
             // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
@@ -898,6 +898,49 @@ class RackRolling {
         } catch (UncheckedExecutionException e) {
             throw e.getCause();
         }
+    }
+
+    private List<Integer> restartUnReadyNodes(List<Context> contexts, int totalNumOfControllers) throws TimeoutException {
+        List<Context> controllerNodesToRestartFirst = new ArrayList<>();
+        int numOfCombinedNodes = 0;
+        for (var context : contexts.stream().filter(context -> context.nodeRef().controller()).collect(Collectors.toList())) {
+            // restart pure controllers first and then combined nodes
+            if (!context.nodeRef().broker()) {
+                controllerNodesToRestartFirst.add(0, context);
+            } else {
+                controllerNodesToRestartFirst.add(controllerNodesToRestartFirst.size(), context);
+                numOfCombinedNodes++;
+            }
+        }
+
+        Context nodeToRestart;
+        boolean restartWithoutWaitingForReadyState = false;
+        if (controllerNodesToRestartFirst.size() > 0) {
+            nodeToRestart = controllerNodesToRestartFirst.get(0);
+
+            // if all controller nodes (not single node quorum) are combined and all of them are not ready/pending, we need to restart the first node and not wait for it to become ready.
+            // We then should restart the next node so that the quorum can be formed. This is because until the quorum has been formed, the combined node
+            // does not become ready.
+            if (totalNumOfControllers > 1 && totalNumOfControllers == numOfCombinedNodes ) {
+                restartWithoutWaitingForReadyState = true;
+            }
+        } else {
+            nodeToRestart = contexts.get(0);
+        }
+
+        restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
+
+        if (restartWithoutWaitingForReadyState) {
+            awaitState(reconciliation, time, platformClient, rollClient, nodeToRestart, State.NOT_READY, postRestartTimeoutMs);
+
+            // if we don't restart the next node immediately, we would be blocked on the first node waiting for it to become ready
+            nodeToRestart = controllerNodesToRestartFirst.get(1);
+            restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
+        }
+
+        long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, nodeToRestart, State.SERVING, postRestartTimeoutMs);
+        awaitPreferred(reconciliation, time, rollClient, nodeToRestart, remainingTimeoutMs);
+        return List.of(nodeToRestart.nodeId());
     }
 
     private static Map<Plan, List<Context>> initialPlan(List<Context> contexts, int maxReconfigs) {
