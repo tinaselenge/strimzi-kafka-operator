@@ -44,7 +44,6 @@ public class RackRollingTest {
 
     // TODO Tests for combined-mode clusters
     // TODO handling of exceptions from the admin client
-    // TODO Tests for pending nodes
 
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
 
@@ -1194,5 +1193,63 @@ public class RackRollingTest {
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
+    }
+
+    @Test
+    public void shouldRollNodesIfAllNotRunning() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, false, 0)
+                .addNodes(true, true, 1)
+                .addNodes(false, true, 2)
+                .mockLeader(rollClient, 0)
+                .addTopic("topic-A", 0)
+                // this is the order we expect the nodes to restart in (pure controller, combined, broker only)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 2)
+                .mockTopics(rollClient)
+                .done();
+
+
+        doRollingRestart(platformClient, rollClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+
+        for (var nodeId : nodeRefs.keySet()) {
+            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(nodeId)), any(), any());
+        }
+    }
+
+    @Test
+    public void shouldRestartCombinedNodesIfAllNotRunning() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, true, 0, 1, 2)
+                .addTopic("topic-A", 0)
+                // node 0 is not running initially therefore should get restarted. It then does not become ready after the restart because quorum has not been formed.
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY), 0)
+                // node 1 is not running initially and should get restarted immediately after node 0 without waiting for 0 to become ready.
+                // On the second loop, node 0 is ready because it was able to form quorum after restarting node 1.
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
+                // node 2 is not running initially and should get restarted on the second loop because it's still not running. It is ready after the restart because quorum is formed.
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 2)
+                .mockTopics(rollClient)
+                .done();
+
+        doRollingRestart(platformClient, rollClient, List.of(nodeRefs.get(0), nodeRefs.get(1), nodeRefs.get(2)), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+
+        for (var nodeId : nodeRefs.keySet()) {
+            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
+            // since we don't wait for node 0 to become ready after the restart, tryElectAllPreferredLeaders won't be called for it
+            if (nodeId != 0) {
+                Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+            }
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(nodeId)), any(), any());
+        }
     }
 }
