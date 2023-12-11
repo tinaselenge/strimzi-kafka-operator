@@ -43,7 +43,6 @@ import static org.mockito.Mockito.times;
 public class RackRollingTest {
 
     // TODO Tests for combined-mode clusters
-    // TODO Tests for ZooKeeper-like clusters
     // TODO handling of exceptions from the admin client
     // TODO Tests for pending nodes
 
@@ -400,9 +399,9 @@ public class RackRollingTest {
         var te = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
 
-        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 117000: " +
+        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 119000: " +
                         "Context[nodeRef=pool-kafka-0/0, state=SERVING, " +
-                        "lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1]",
+                        "lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1]",
                 te.getMessage());
 
     }
@@ -466,8 +465,8 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(false, true, 0)
                 .addTopic("topic-A", 0)
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
-                .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING), 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_READY), 0)
+                .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.RECOVERY), 0)
                 .mockTopics(rollClient)
                 .mockDescribeQuorum(rollClient, Map.of(0, 10000L))
                 .done().get(0);
@@ -477,8 +476,29 @@ public class RackRollingTest {
 
         assertEquals("Failed to reach SERVING within 120000 ms: " +
                         "Context[nodeRef=pool-kafka-0/0, state=RECOVERING, " +
-                        "lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1]",
+                        "lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1]",
                 te.getMessage());
+    }
+
+    @Test
+    void shouldNotRestartNodeInRecoveryState() throws ExecutionException, InterruptedException, TimeoutException {
+
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRef = new MockBuilder()
+                .addNode(false, true, 0)
+                .addTopic("topic-A", 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
+                .mockBrokerState(rollClient, List.of(BrokerState.RECOVERY), 0)
+                .mockTopics(rollClient)
+                .mockDescribeQuorum(rollClient, Map.of(0, 10000L))
+                .done().get(0);
+
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
+
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
+        Mockito.verify(platformClient, times(0)).restartNode(eq(nodeRef));
     }
 
     @Test
@@ -490,7 +510,7 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(false, true, 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY), 0)
-                .mockBrokerState(rollClient, List.of(BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
+                .mockBrokerState(rollClient, List.of(BrokerState.UNKNOWN, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
                 .mockTopics(rollClient)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)

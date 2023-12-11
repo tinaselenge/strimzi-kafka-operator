@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.api.model.Pod;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -663,25 +664,23 @@ class RackRolling {
      * @return The state
      */
     private static State observe(Reconciliation reconciliation, PlatformClient platformClient, RollClient rollClient, NodeRef nodeRef) {
-        State state = State.NOT_READY;
+        State state;
         var nodeState = platformClient.nodeState(nodeRef);
         LOGGER.debugCr(reconciliation, "Node {}: nodeState is {}", nodeRef, nodeState);
         switch (nodeState) {
             case NOT_RUNNING:
                 state = State.NOT_READY;
                 break;
-            case NOT_READY:
-                state = State.NOT_READY;
-                break;
             case READY:
+                state = State.SERVING;
+                break;
+            case NOT_READY:
             default:
                 try {
                     var bs = rollClient.getBrokerState(nodeRef);
                     LOGGER.debugCr(reconciliation, "Node {}: brokerState is {}", nodeRef, bs);
-                    if (bs.value() < BrokerState.RUNNING.value()) {
+                    if (bs.value() == BrokerState.RECOVERY.value()) {
                         state = State.RECOVERING;
-                    } else if (bs.value() == BrokerState.RUNNING.value()) {
-                        state = State.SERVING;
                     } else {
                         state = State.NOT_READY;
                     }
@@ -906,6 +905,8 @@ class RackRolling {
             if (context.state() == State.NOT_READY) {
                 context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed rolling health check");
                 return Plan.RESTART_FIRST;
+            } else if (context.state() == State.RECOVERING) {
+                return Plan.NOP;
             } else {
                 var reasons = context.reason();
                 if (!reasons.getReasons().isEmpty()) {
