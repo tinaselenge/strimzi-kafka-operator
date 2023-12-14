@@ -9,6 +9,7 @@ import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.common.Reconciliation;
+import java.util.Comparator;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -710,11 +711,64 @@ public class RackRollingTest {
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3);
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4);
+
+        assertEquals(List.of(), rr.loop());
+
+        // then
+        for (var nodeRef : nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    @Test
+    public void shouldRestartCombinedNodesInExpectedOrder() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        Map<Integer, Long> quorumState = new HashMap<>();
+        quorumState.put(0, 10000L);
+        quorumState.put(1, 10000L);
+        quorumState.put(2, 10000L);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, true, 0, 1, 2)
+                .mockLeader(rollClient, 1)
+                .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
+                .addTopic("topic-A", 0, List.of(0, 1, 2), List.of(0, 1, 2))
+                .addTopic("topic-B", 1, List.of(1, 2, 0), List.of(0, 1, 2))
+                .addTopic("topic-C", 2, List.of(2, 0, 1), List.of(0, 1, 2))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
+                .mockDescribeQuorum(rollClient, quorumState)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 0, 1, 2)
+                .done();
+
+        // when
+
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
         assertEquals(List.of(), rr.loop());
 
@@ -757,7 +811,7 @@ public class RackRollingTest {
         var rr = RackRolling.rollingRestart(time,
                 platformClient,
                 rollClient,
-                nodeRefs.values(),
+                nodeRefs.values().stream().sorted(Comparator.comparing(NodeRef::nodeId)).toList(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
@@ -775,11 +829,73 @@ public class RackRollingTest {
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 6);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
 
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 6);
+
+        assertEquals(List.of(), rr.loop());
+
+        for (var nodeRef : nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    @Test
+    public void shouldRestartCombinedNodesInExpectedOrderAndBatched() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        Map<Integer, Long> quorumState = new HashMap<>();
+        quorumState.put(3, 10000L);
+        quorumState.put(4, 10000L);
+        quorumState.put(5, 10000L);
+        quorumState.put(6, 10000L);
+        quorumState.put(7, 10000L);
+        quorumState.put(8, 5000L);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, true, // combined nodes
+                        3, 6, // rack X
+                        4, 7, // rack Y
+                        5, 8) // rack Z
+                .mockLeader(rollClient, 3)
+                .mockHealthyNodes(platformClient, rollClient, 3, 4, 5, 6, 7, 8)
+                .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
+                .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
+                .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
+                .addTopic("topic-D", 7, List.of(7, 3, 5), List.of(7, 3, 5))
+                .addTopic("topic-E", 6, List.of(6, 4, 5), List.of(6, 4, 5))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 3, 4, 5, 6, 7, 8)
+                .mockDescribeQuorum(rollClient, quorumState)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 5, 6, 7, 8)
+                .done();
+
+        // when
+
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values().stream().sorted(Comparator.comparing(NodeRef::nodeId)).toList(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3);
 
         assertEquals(List.of(), rr.loop());
 
@@ -840,11 +956,12 @@ public class RackRollingTest {
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
         assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+
 
         // TODO should we fail fast (after other nodes have been restarted)
         //  or wait for some amount of time in case those brokers not in the replicas rejoin?
@@ -863,7 +980,79 @@ public class RackRollingTest {
     }
 
     @Test
-    public void oddSizedQuorumOneControllerBehind() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldRestartCombinedNodesInExpectedOrderAndBatchedWithUrp() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        Map<Integer, Long> quorumState = new HashMap<>();
+        quorumState.put(3, 10000L);
+        quorumState.put(4, 10000L);
+        quorumState.put(5, 10000L);
+        quorumState.put(6, 10000L);
+        quorumState.put(7, 10000L);
+        quorumState.put(8, 10000L);
+        var nodeRefs = new MockBuilder()
+                .addNodes(true, true, // combined nodes
+                        3, 6, // rack X
+                        4, 7, // rack Y
+                        5, 8) // rack Z
+                .mockLeader(rollClient, 6)
+                .mockHealthyNodes(platformClient, rollClient,  3, 4, 5, 6, 7, 8)
+                // topic A is at its min ISR, so neither 3 nor 4 should be rolled
+                .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4), 2)
+                .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
+                .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
+                .addTopic("topic-D", 7, List.of(7, 3, 5), List.of(7, 3, 5))
+                .addTopic("topic-E", 6, List.of(6, 4, 5), List.of(6, 4, 5))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 3, 4, 5, 6, 7, 8)
+                .mockDescribeQuorum(rollClient, quorumState)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 5, 6, 7, 8)
+                .done();
+
+        // when
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        // then
+        // We expect all the nodes which can be restarted to have been restarted
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+
+        // TODO should we fail fast (after other nodes have been restarted)
+        //  or wait for some amount of time in case those brokers not in the replicas rejoin?
+
+        // But for the reconciliation to eventually fail becuse of the unrestartable nodes
+        var ex = assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+                "Expect timeout because neither broker 3 nor 4 can be rolled while respecting the min ISR on topic A");
+        assertEquals("Cannot restart nodes {4,3} without violating some topics' min.in.sync.replicas", ex.getMessage());
+
+        //TODO: we do not restart the active controller until all the other brokers restart?
+//        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6);
+
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(3)));
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(4)));
+
+        for (var nodeRef : nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    @Test
+    public void shouldRollOddSizedQuorumOneControllerBehind() throws ExecutionException, InterruptedException, TimeoutException {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
@@ -910,7 +1099,7 @@ public class RackRollingTest {
     }
 
     @Test
-    public void evenSizedQuorumTwoControllersBehind() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldNotRollEvenSizedQuorumTwoControllersBehind() throws ExecutionException, InterruptedException, TimeoutException {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
@@ -920,7 +1109,7 @@ public class RackRollingTest {
         quorumState.put(2, 7000L);
         quorumState.put(3, 6000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2, 4)
+                .addNodes(true, true, 0, 1, 2, 4) //combined nodes
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 4)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 4)
