@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-import io.fabric8.kubernetes.api.model.Pod;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -279,19 +278,15 @@ class RackRolling {
 
     /**
      * Pick the "best" batch to be restarted.
-     * This is the largest batch of available servers excluding the
+     * This is the largest batch of available servers
      * @return the "best" batch to be restarted
      */
-    static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches, int controllerId) {
+    static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches) {
         var sorted = batches.stream().sorted(Comparator.comparing(Set::size)).toList();
         if (sorted.size() == 0) {
             return Set.of();
         }
-        if (sorted.size() > 1
-                && sorted.get(0).stream().anyMatch(s -> s.id() == controllerId)) {
-            return sorted.get(1);
-        }
-        return sorted.get(0);
+        return sorted.get(sorted.size() - 1);
     }
 
     /**
@@ -354,24 +349,32 @@ class RackRolling {
             }
         }
 
-        // FIXME The non-nextBatchBrokers branches are not testing for minISR availability
         if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
+
         } else if (partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
+
         } else if (partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
                     .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, quorumState) : true)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize, activeControllerId);
+            return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize);
+
         } else if (partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
+
+            if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState).isEmpty()) {
+                return Set.of();
+            } else {
+                return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, 1);
+            }
+
         } else {
             throw new RuntimeException();
         }
@@ -394,8 +397,7 @@ class RackRolling {
                                                               RollClient rollClient,
                                                               Map<Integer, NodeRef> nodeMap,
                                                               Map<Integer, NodeRef> nodesNeedingRestart,
-                                                              int maxRestartBatchSize,
-                                                              int controllerId) {
+                                                              int maxRestartBatchSize) {
         Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
 
         // Get all the topics in the cluster
@@ -458,8 +460,7 @@ class RackRolling {
         var batches = batchCells(reconciliation, cells, minIsrByTopic, maxRestartBatchSize);
         LOGGER.debugCr(reconciliation, "Batches {}", idsOf2(batches));
 
-        // TODO what should the return value of activeController be during a migration? (Read migration steps again and do some testing)
-        var bestBatch = pickBestBatchForRestart(batches, controllerId);
+        var bestBatch = pickBestBatchForRestart(batches);
         LOGGER.debugCr(reconciliation, "Best batch {}", idsOf(bestBatch));
         return bestBatch;
     }
@@ -644,7 +645,6 @@ class RackRolling {
             } else if (diff.isEmpty()) {
                 return Plan.NOP;
             } else {
-                // TODO test if context has the the correct reason
                 context.reason().add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
                 return Plan.RESTART;
             }
