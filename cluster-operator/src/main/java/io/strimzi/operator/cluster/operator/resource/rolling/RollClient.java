@@ -56,10 +56,10 @@ interface RollClient {
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
-    Map<Integer, Long> describeQuorumState();
+    Map<Integer, Long> quorumLastCaughtUpTimestamps();
 
     /**
-     * @return The id of the server that is the current controller of the cluster.
+     * @return The id of the node that is the active controller of the cluster.
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
@@ -117,13 +117,11 @@ interface RollClient {
     int tryElectAllPreferredLeaders(NodeRef nodeRef);
 
     /**
-     * Return the broker configs and broker logger configs for each of the given brokers
-     * @param toList The brokers to get the configs for
-     * @return A map from broker id to configs
+     * Return the Kafka broker configs and logger configs for each of the given nodes
+     * @param toList The nodes to get the configs for
+     * @return A map from node id to configs
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
-    Map<Integer, Configs> describeKafkaConfigs(List<NodeRef> toList);
-
-    static record Configs(Config kafkaConfigs, Config nodeLoggerConfigs) { }
+    Map<Integer, Configs> describeNodeConfigs(List<NodeRef> toList);
 }
