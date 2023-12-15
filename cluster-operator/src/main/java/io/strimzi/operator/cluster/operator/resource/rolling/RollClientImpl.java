@@ -119,13 +119,13 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Long> describeQuorumState() {
+    public Map<Integer, Long> quorumLastCaughtUpTimestamps() {
         DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
         try {
             quorumLeader = dmqr.quorumInfo().get().leaderId();
             return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
                     QuorumInfo.ReplicaState::replicaId,
-                    state -> state.lastCaughtUpTimestamp().isPresent() ? state.lastCaughtUpTimestamp().getAsLong() : -1));
+                    state -> state.lastCaughtUpTimestamp().orElse(-1)));
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
@@ -228,7 +228,7 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Configs> describeKafkaConfigs(List<NodeRef> toList) {
+    public Map<Integer, Configs> describeNodeConfigs(List<NodeRef> toList) {
         try {
             var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
             var result = dc.all().get();
