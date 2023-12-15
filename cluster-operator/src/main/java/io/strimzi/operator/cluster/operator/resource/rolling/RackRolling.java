@@ -34,8 +34,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static java.lang.Math.ceil;
-
 class RackRolling {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
@@ -86,7 +84,15 @@ class RackRolling {
         return true;
     }
 
-    private static boolean isQuorumHealthyWithoutNode(Reconciliation reconciliation, int controllerNeedRestarting, int activeControllerId, Map<Integer, Long> quorumFollowerStates) {
+    /**
+     * Returns true if the majority of the controllers' lastCaughtUpTimestamps are within
+     * the controller.quorum.fetch.timeout.ms based on the given quorum info.
+     * The given controllerNeedRestarting is the one being considered to restart, therefore excluded from the check.
+     */
+    private static boolean isQuorumHealthyWithoutNode(Reconciliation reconciliation,
+                                                      int controllerNeedRestarting,
+                                                      int activeControllerId,
+                                                      Map<Integer, Long> quorumFollowerStates) {
         LOGGER.debugCr(reconciliation, "Determining the impact of restarting controller {} on quorum health", controllerNeedRestarting);
         if (activeControllerId < 0) {
             LOGGER.warnCr(reconciliation, "No controller quorum leader is found because the leader id is set to {}", activeControllerId);
@@ -131,7 +137,7 @@ class RackRolling {
                 return false;
             }
         } else {
-            return numOfCaughtUpControllers >= ceil((double) (totalNumOfControllers + 1) / 2);
+            return numOfCaughtUpControllers >= (totalNumOfControllers + 2) / 2;
         }
     }
 
@@ -318,7 +324,7 @@ class RackRolling {
             BROKER_AND_ACTIVE_CONTROLLER // A KRaft or ZooKeeper node that is a broker and also the active controller
         }
 
-        Map<Integer, Long> quorumState = rollClient.describeQuorumState();
+        Map<Integer, Long> quorumState = rollClient.quorumLastCaughtUpTimestamps();
         int activeControllerId = rollClient.activeController();
         var partitioned = nodesNeedingRestart.entrySet().stream().collect(Collectors.groupingBy(entry -> {
             NodeRef nodeRef = entry.getValue();
@@ -341,10 +347,10 @@ class RackRolling {
 
 
         if(activeControllerId > -1) {
-            var nodeKafkaConfigs = rollClient.describeKafkaConfigs(List.of(nodeMap.get(activeControllerId)));
-            RollClient.Configs configs = nodeKafkaConfigs.get(activeControllerId);
+            var nodeConfigs = rollClient.describeNodeConfigs(List.of(nodeMap.get(activeControllerId)));
+            Configs configs = nodeConfigs.get(activeControllerId);
             if (configs != null) {
-                ConfigEntry controllerQuorumFetchTimeoutConfig = configs.kafkaConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME);
+                ConfigEntry controllerQuorumFetchTimeoutConfig = configs.nodeConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME);
                 controllerQuorumFetchTimeout = controllerQuorumFetchTimeoutConfig != null ? Long.parseLong(controllerQuorumFetchTimeoutConfig.value()) : CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
             }
         }
@@ -380,19 +386,32 @@ class RackRolling {
         }
     }
 
+    /**
+     * Returns the next controller that can be restarted without impacting the quorum health.
+     */
     private static Set<KafkaNode> nextController(Reconciliation reconciliation,
                                             Map<Integer, NodeRef> nodesNeedingRestart,
                                             int activeControllerId,
                                             Map<Integer, Long> quorumState) {
-        List<Integer> controllersNeedingRestart = nodesNeedingRestart.keySet().stream()
-                .filter(nodeId -> isQuorumHealthyWithoutNode(reconciliation, nodeId, activeControllerId, quorumState))
-                .collect(Collectors.toList());
-        if (controllersNeedingRestart.size() > 0) {
-            return Set.of(new KafkaNode(controllersNeedingRestart.get(0),true, false, Set.of()));
+        KafkaNode controllerToRestart = null;
+
+        for (int nodeId : nodesNeedingRestart.keySet()) {
+            if (isQuorumHealthyWithoutNode(reconciliation, nodeId, activeControllerId, quorumState)) {
+                controllerToRestart = new KafkaNode(nodeId, true, false, Set.of());
+                break;
+            }
         }
-        return Set.of();
+
+        if (controllerToRestart != null) {
+            return Set.of(controllerToRestart);
+        } else {
+            return Set.of();
+        }
     }
 
+    /**
+     * Returns a batch of broker nodes that have no topic partitions in common and have no impact on cluster availability if restarted.
+     */
     private static Set<KafkaNode> nextBatchBrokers(Reconciliation reconciliation,
                                                               RollClient rollClient,
                                                               Map<Integer, NodeRef> nodeMap,
@@ -626,14 +645,14 @@ class RackRolling {
                                                                            RollClient rollClient,
                                                                            Map<Plan, List<Context>> byPlan) {
         var contexts = byPlan.getOrDefault(Plan.MAYBE_RECONFIGURE, List.of());
-        var nodeKafkaConfigs = rollClient.describeKafkaConfigs(contexts.stream()
+        var nodeConfigs = rollClient.describeNodeConfigs(contexts.stream()
                 .map(Context::nodeRef).toList());
 
         var refinedPlan = contexts.stream().collect(Collectors.groupingBy(context -> {
-            RollClient.Configs configPair = nodeKafkaConfigs.get(context.nodeId());
+            Configs configPair = nodeConfigs.get(context.nodeId());
 
             var diff = new KafkaBrokerConfigurationDiff(reconciliation,
-                    configPair.kafkaConfigs(),
+                    configPair.nodeConfigs(),
                     kafkaConfigProvider.apply(context.nodeId()),
                     kafkaVersion,
                     context.nodeId());
