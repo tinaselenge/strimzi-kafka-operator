@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.api.model.Pod;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -688,7 +689,7 @@ class RackRolling {
         LOGGER.debugCr(reconciliation, "Node {}: nodeState is {}", nodeRef, nodeState);
         switch (nodeState) {
             case NOT_RUNNING:
-                state = State.NOT_READY;
+                state = State.NOT_RUNNING;
                 break;
             case READY:
                 state = State.SERVING;
@@ -920,43 +921,38 @@ class RackRolling {
     }
 
     private List<Integer> restartUnReadyNodes(List<Context> contexts, int totalNumOfControllers) throws TimeoutException {
-        List<Context> controllerNodesToRestartFirst = new ArrayList<>();
-        int numOfCombinedNodes = 0;
+        Set<Context> pureControllerNodesToRestart = new HashSet();
+        Set<Context> combinedNodesToRestart = new HashSet<>();
+        int numOfPendingCombinedNodes = 0;
         for (var context : contexts.stream().filter(context -> context.nodeRef().controller()).collect(Collectors.toList())) {
             // restart pure controllers first and then combined nodes
             if (!context.nodeRef().broker()) {
-                controllerNodesToRestartFirst.add(0, context);
+                pureControllerNodesToRestart.add(context);
             } else {
-                controllerNodesToRestartFirst.add(controllerNodesToRestartFirst.size(), context);
-                numOfCombinedNodes++;
+                if (context.state().equals(State.NOT_RUNNING)) {
+                    numOfPendingCombinedNodes++;
+                }
+                combinedNodesToRestart.add(context);
             }
         }
 
-        Context nodeToRestart;
-        boolean restartWithoutWaitingForReadyState = false;
-        if (controllerNodesToRestartFirst.size() > 0) {
-            nodeToRestart = controllerNodesToRestartFirst.get(0);
+        if (totalNumOfControllers > 1 && totalNumOfControllers == numOfPendingCombinedNodes) {
+            // if all controller nodes (not single node quorum) are combined and all of them are not running e.g. Pending, we need to restart them all at the same time to form the quorum.
+            // This is because until the quorum has been formed and broker process can connect to it, the combined nodes do not become ready.
+            restartInParallel(reconciliation, time, platformClient, rollClient, combinedNodesToRestart, postRestartTimeoutMs, maxRestarts);
+            return combinedNodesToRestart.stream().map(Context::nodeId).toList();
+        }
 
-            // if all controller nodes (not single node quorum) are combined and all of them are not ready/pending, we need to restart the first node and not wait for it to become ready.
-            // We then should restart the next node so that the quorum can be formed. This is because until the quorum has been formed, the combined node
-            // does not become ready.
-            if (totalNumOfControllers > 1 && totalNumOfControllers == numOfCombinedNodes ) {
-                restartWithoutWaitingForReadyState = true;
-            }
+        Context nodeToRestart;
+        if (pureControllerNodesToRestart.size() > 0) {
+            nodeToRestart = pureControllerNodesToRestart.iterator().next();
+        } else if(combinedNodesToRestart.size() > 0) {
+            nodeToRestart = combinedNodesToRestart.iterator().next();
         } else {
             nodeToRestart = contexts.get(0);
         }
 
         restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
-
-        if (restartWithoutWaitingForReadyState) {
-            awaitState(reconciliation, time, platformClient, rollClient, nodeToRestart, State.NOT_READY, postRestartTimeoutMs);
-
-            // if we don't restart the next node immediately, we would be blocked on the first node waiting for it to become ready
-            nodeToRestart = controllerNodesToRestartFirst.get(1);
-            restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
-        }
-
         long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, rollClient, nodeToRestart, State.SERVING, postRestartTimeoutMs);
         awaitPreferred(reconciliation, time, rollClient, nodeToRestart, remainingTimeoutMs);
         return List.of(nodeToRestart.nodeId());
@@ -964,7 +960,7 @@ class RackRolling {
 
     private static Map<Plan, List<Context>> initialPlan(List<Context> contexts, int maxReconfigs) {
         return contexts.stream().collect(Collectors.groupingBy(context -> {
-            if (context.state() == State.NOT_READY) {
+            if (context.state() == State.NOT_READY || context.state() == State.NOT_RUNNING) {
                 context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed rolling health check");
                 return Plan.RESTART_FIRST;
             } else if (context.state() == State.RECOVERING) {

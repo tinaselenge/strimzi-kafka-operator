@@ -9,7 +9,6 @@ import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.common.Reconciliation;
-import java.util.Comparator;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -33,6 +32,7 @@ import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
@@ -249,16 +249,19 @@ public class RackRollingTest {
     }
 
 
-    private static void assertBrokerRestarted(PlatformClient platformClient,
-                                              RollClient rollClient,
-                                              Map<Integer, NodeRef> nodeRefs,
-                                              RackRolling rr,
-                                              int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
+    private static void assertNodesRestarted(PlatformClient platformClient,
+                                             RollClient rollClient,
+                                             Map<Integer, NodeRef> nodeRefs,
+                                             RackRolling rr,
+                                             int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
         for (var nodeId : nodeIds) {
             Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)));
             Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
         }
-        assertEquals(IntStream.of(nodeIds).boxed().toList(), rr.loop());
+        List<Integer> restartedNodes = rr.loop();
+        List<Integer> expectedRestartedNodes = IntStream.of(nodeIds).boxed().toList();
+        assertEquals(expectedRestartedNodes.size(), restartedNodes.size());
+        assertTrue(restartedNodes.containsAll(expectedRestartedNodes));
         for (var nodeId : nodeIds) {
             Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
             Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
@@ -702,17 +705,17 @@ public class RackRollingTest {
                 1);
 
         // then
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 3);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4);
 
         assertEquals(List.of(), rr.loop());
 
@@ -758,11 +761,11 @@ public class RackRollingTest {
                 1);
 
         // then
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
         assertEquals(List.of(), rr.loop());
 
@@ -802,7 +805,7 @@ public class RackRollingTest {
         var rr = RackRolling.rollingRestart(time,
                 platformClient,
                 rollClient,
-                nodeRefs.values().stream().sorted(Comparator.comparing(NodeRef::nodeId)).toList(),
+                nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
@@ -814,17 +817,17 @@ public class RackRollingTest {
                 1);
 
         // The expected order is non-active controllers, active controller and batches of brokers that don't have partitions in common
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0); //non-active controller
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0); //non-active controller
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2); //non-active controller
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2); //non-active controller
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1); //active controller
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1); //active controller
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3, 6);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 3, 6);
 
         assertEquals(List.of(), rr.loop());
 
@@ -865,7 +868,7 @@ public class RackRollingTest {
         var rr = RackRolling.rollingRestart(time,
                 platformClient,
                 rollClient,
-                nodeRefs.values().stream().sorted(Comparator.comparing(NodeRef::nodeId)).toList(),
+                nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
@@ -878,13 +881,13 @@ public class RackRollingTest {
 
         // The expected order to restart is batches of nodes that do not have partitions in common
         // starting with the largest batches and then the broker that is the active controller
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6); // the smallest batch
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 6); // the smallest batch
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 3); // the active controller
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 3); // the active controller
 
         assertEquals(List.of(), rr.loop());
 
@@ -934,17 +937,17 @@ public class RackRollingTest {
 
         // The expected order is non-active controller nodes, the active controller,
         // batches of brokers starting with the largest.
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8); // the largest batch of brokers that do not have partitions in common
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8); // the largest batch of brokers that do not have partitions in common
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6); // 6 doesn't have partitions in common with 3 but 3 will cause under min ISR
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 6); // 6 doesn't have partitions in common with 3 but 3 will cause under min ISR
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7); // 7 doesn't have partitions in common with 4 but 4 will cause under min ISR
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 7); // 7 doesn't have partitions in common with 4 but 4 will cause under min ISR
 
 
         // TODO should we fail fast (after other nodes have been restarted)
@@ -1011,9 +1014,9 @@ public class RackRollingTest {
         // Expected to restart batches of nodes that do not have partitions in common
         // starting with the largest batches. The active controller 6 is not restarted until
         // 3 and 4 are restarted, but they impact the cluster availability if restarted.
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 7); //7 doesn't have partitions in common with 4 but 4 will cause under min ISR
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 7); //7 doesn't have partitions in common with 4 but 4 will cause under min ISR
 
         // TODO should we fail fast (after other nodes have been restarted)
         //  or wait for some amount of time in case those brokers not in the replicas rejoin?
@@ -1065,9 +1068,9 @@ public class RackRollingTest {
                 1);
 
         // We should be able to restart only the controller that is behind
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
 
@@ -1107,7 +1110,7 @@ public class RackRollingTest {
                 1);
 
         // we should not restart any controllers as the majority have not caught up to the leader
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1145,14 +1148,14 @@ public class RackRollingTest {
                 1);
 
         // We should be able to restart all the nodes because controller.quorum.fetch.timeout.ms value was increased
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
         //active controller gets restarted last
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
 
@@ -1191,7 +1194,7 @@ public class RackRollingTest {
                 3,
                 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1226,7 +1229,7 @@ public class RackRollingTest {
                 3,
                 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1260,11 +1263,11 @@ public class RackRollingTest {
                 3,
                 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1299,9 +1302,9 @@ public class RackRollingTest {
                 1);
 
         //only the controller that has fallen behind should be restarted
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1336,11 +1339,11 @@ public class RackRollingTest {
                 3,
                 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
-        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
         assertEquals(List.of(), rr.loop());
     }
@@ -1356,7 +1359,6 @@ public class RackRollingTest {
                 .addNodes(false, true, 2)
                 .mockLeader(rollClient, 0)
                 .addTopic("topic-A", 0)
-                // this is the order we expect the nodes to restart in (pure controller, combined, broker only)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 2)
@@ -1364,13 +1366,28 @@ public class RackRollingTest {
                 .done();
 
 
-        doRollingRestart(platformClient, rollClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
 
-        for (var nodeId : nodeRefs.keySet()) {
-            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(nodeId)), any(), any());
-        }
+        // the order we expect are pure controller, combined and broker only
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
     }
 
     @Test
@@ -1379,27 +1396,35 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, 0, 1, 2)
+                .addNodes(true, true, 0, 1, 2, 3, 4, 5)
                 .addTopic("topic-A", 0)
-                // node 0 is not running initially therefore should get restarted. It then does not become ready after the restart because quorum has not been formed.
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY), 0)
-                // node 1 is not running initially and should get restarted immediately after node 0 without waiting for 0 to become ready.
-                // On the second loop, node 0 is ready because it was able to form quorum after restarting node 1.
+                // all nodes are combined and not running e.g. pending
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
-                // node 2 is not running initially and should get restarted on the second loop because it's still not running. It is ready after the restart because quorum is formed.
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 2)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 2)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 3)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 4)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 5)
                 .mockTopics(rollClient)
                 .done();
 
-        doRollingRestart(platformClient, rollClient, List.of(nodeRefs.get(0), nodeRefs.get(1), nodeRefs.get(2)), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
 
-        for (var nodeId : nodeRefs.keySet()) {
-            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
-            // since we don't wait for node 0 to become ready after the restart, tryElectAllPreferredLeaders won't be called for it
-            if (nodeId != 0) {
-                Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
-            }
-            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(nodeId)), any(), any());
-        }
+        // we expect all the combined nodes to be restarted in parallel in order to form the quorum
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0, 1, 2, 3, 4, 5);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
     }
 }
