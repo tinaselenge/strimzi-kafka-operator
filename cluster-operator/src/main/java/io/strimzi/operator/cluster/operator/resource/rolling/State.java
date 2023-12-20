@@ -9,6 +9,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
  */
 enum State {
     UNKNOWN, // the initial state
+    NOT_RUNNING, // The pod/process is not running.
     NOT_READY, // decided to restart right now or broker state < 2 OR == 127
     RESTARTED, // after successful kube pod delete
     RECONFIGURED, // after successful reconfig
