@@ -91,6 +91,7 @@ class RackRolling {
     private static boolean isQuorumHealthyWithoutNode(Reconciliation reconciliation,
                                                       int controllerNeedRestarting,
                                                       int activeControllerId,
+                                                      int totalNumOfControllers,
                                                       Map<Integer, Long> quorumFollowerStates) {
         LOGGER.debugCr(reconciliation, "Determining the impact of restarting controller {} on quorum health", controllerNeedRestarting);
         if (activeControllerId < 0) {
@@ -98,7 +99,6 @@ class RackRolling {
             return false;
         }
 
-        int totalNumOfControllers = quorumFollowerStates.size();
         if (totalNumOfControllers == 1) {
             LOGGER.warnCr(reconciliation, "Performing rolling update on a controller quorum with a single node. The cluster may be " +
                     "in a defective state once the rolling update is complete. It is recommended that a minimum of three controllers are used.");
@@ -314,13 +314,14 @@ class RackRolling {
                                             RollClient rollClient,
                                             Map<Integer, Context> contextMap,
                                             Map<Integer, NodeRoles> nodesNeedingRestart,
+                                            int totalNumOfControllers,
                                             int maxRestartBatchSize) {
         enum NodeFlavour {
             NON_ACTIVE_PURE_CONTROLLER, // A pure KRaft controller node that is not the active controller
             ACTIVE_PURE_CONTROLLER, // A pure KRaft controllers node that is the active controller
-            BROKER_AND_NOT_ACTIVE_CONTROLLER, // A KRaft or ZooKeeper node that is at least a broker and might be a
-            // KRaft controller (combined node) but that is not the active controller
-            BROKER_AND_ACTIVE_CONTROLLER // A KRaft or ZooKeeper node that is a broker and also the active controller
+            BROKER_AND_NOT_ACTIVE_CONTROLLER, // A node that is at least a broker and might be a
+            // controller (combined node) but that is not the active controller
+            BROKER_AND_ACTIVE_CONTROLLER // A node that is a broker and also the active controller
         }
 
         Map<Integer, Long> quorumState = rollClient.quorumLastCaughtUpTimestamps();
@@ -330,16 +331,16 @@ class RackRolling {
             boolean isActiveController = entry.getKey() == activeControllerId;
             boolean isPureController = nodeRoles.controller() && !nodeRoles.broker();
             if (isPureController) {
-                if (!isActiveController) {
-                    return NodeFlavour.NON_ACTIVE_PURE_CONTROLLER;
-                } else {
+                if (isActiveController) {
                     return NodeFlavour.ACTIVE_PURE_CONTROLLER;
+                } else {
+                    return NodeFlavour.NON_ACTIVE_PURE_CONTROLLER;
                 }
             } else { //combined, or pure broker
-                if (!isActiveController) {
-                    return NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER;
-                } else {
+                if (isActiveController) {
                     return NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER;
+                } else {
+                    return NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER;
                 }
             }
         }));
@@ -357,16 +358,16 @@ class RackRolling {
         if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
+            return nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllers, quorumState);
 
         } else if (partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState);
+            return nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllers, quorumState);
 
         } else if (partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
-                    .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, quorumState) : true)
+                    .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, totalNumOfControllers, quorumState) : true)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
 
@@ -374,7 +375,7 @@ class RackRolling {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-            if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState).isEmpty()) {
+            if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllers, quorumState).isEmpty()) {
                 return Set.of();
             } else {
                 return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, 1);
@@ -391,11 +392,12 @@ class RackRolling {
     private static Set<KafkaNode> nextController(Reconciliation reconciliation,
                                             Map<Integer, NodeRoles> nodesNeedingRestart,
                                             int activeControllerId,
+                                            int totalNumOfControllers,
                                             Map<Integer, Long> quorumState) {
         KafkaNode controllerToRestart = null;
 
         for (int nodeId : nodesNeedingRestart.keySet()) {
-            if (isQuorumHealthyWithoutNode(reconciliation, nodeId, activeControllerId, quorumState)) {
+            if (isQuorumHealthyWithoutNode(reconciliation, nodeId, activeControllerId, totalNumOfControllers, quorumState)) {
                 controllerToRestart = new KafkaNode(nodeId, true, false, Set.of());
                 break;
             }
@@ -893,7 +895,7 @@ class RackRolling {
             var batch = nextBatch(reconciliation, rollClient, contextMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
                     Context::nodeId,
                     Context::nodeRoles
-            )), maxRestartBatchSize);
+            )), totalNumOfControllers, maxRestartBatchSize);
             var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
             LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
