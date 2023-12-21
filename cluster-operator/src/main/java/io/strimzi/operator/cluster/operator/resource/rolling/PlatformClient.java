@@ -33,4 +33,7 @@ public interface PlatformClient {
      * @param nodeRef The node.
      */
     public void restartNode(NodeRef nodeRef);
+
+    /** @return Kafka process roles for this node */
+    NodeRoles nodeRoles(NodeRef nodeRef);
 }
