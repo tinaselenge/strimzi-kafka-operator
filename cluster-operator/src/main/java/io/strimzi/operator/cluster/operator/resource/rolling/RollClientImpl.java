@@ -52,7 +52,7 @@ class RollClientImpl implements RollClient {
         this.kafkaAgentClient = kafkaAgentClient;
     }
 
-    /** Return a future that completes when all of the given futures complete */
+    /** Return a future that completes when all the given futures complete */
     @SuppressWarnings("rawtypes")
     private static CompletableFuture<Void> allOf(List<? extends CompletableFuture<?>> futures) {
         CompletableFuture[] ts = futures.toArray(new CompletableFuture[0]);
@@ -140,15 +140,7 @@ class RollClientImpl implements RollClient {
         }
 
         try {
-            try {
-                DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
-                var activeController = dmqr.quorumInfo().get().leaderId();
-                return activeController;
-            } catch (UnsupportedVersionException e) {
-                DescribeClusterResult dcr = admin.describeCluster();
-                var activeController = dcr.controller().get();
-                return activeController.id();
-            }
+            return admin.describeMetadataQuorum().quorumInfo().get().leaderId();
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         } catch (InterruptedException e) {

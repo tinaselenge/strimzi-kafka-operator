@@ -43,7 +43,6 @@ import static org.mockito.Mockito.times;
 
 public class RackRollingTest {
 
-    // TODO Tests for combined-mode clusters
     // TODO handling of exceptions from the admin client
 
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
@@ -326,9 +325,9 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
+                .mockLeader(rollClient, -1)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         // when
@@ -348,8 +347,8 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
+                .mockLeader(rollClient, -1)
                 .mockHealthyNode(platformClient, rollClient, 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         // when
@@ -446,12 +445,12 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
+                .mockLeader(rollClient, -1)
                 .addTopic("topic-A", 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockTopics(rollClient)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
                 .mockElectLeaders(rollClient, List.of(1, 1, 1, 1, 0), 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
@@ -469,11 +468,11 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
+                .mockLeader(rollClient, -1)
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.RECOVERY), 0)
                 .mockTopics(rollClient)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         var te = assertThrows(TimeoutException.class,
@@ -497,7 +496,6 @@ public class RackRollingTest {
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RECOVERY), 0)
                 .mockTopics(rollClient)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
@@ -567,6 +565,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
+                .mockLeader(rollClient,-1)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -574,7 +573,6 @@ public class RackRollingTest {
                 .mockDescribeConfigs(rollClient,
                         Set.of(new ConfigEntry("auto.leader.rebalance.enable", "true")), Set.of(), 0)
                 .mockElectLeaders(rollClient, 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
 
         // when
@@ -648,12 +646,12 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, false, true, 0, 1, 2)
+                .mockLeader(rollClient, -1)
                 .addTopic("topic-0", 0)
                 .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .mockTopics(rollClient)
                 .mockElectLeaders(rollClient, 0, 1, 2)
                 .done();
