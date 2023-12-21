@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-import io.fabric8.kubernetes.api.model.Pod;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -40,8 +39,7 @@ class RackRolling {
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
     private static final String CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME = "controller.quorum.fetch.timeout.ms";
     private static final long CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT = 2000L;
-    private final List<Context> contexts;
-    private final Map<Integer, NodeRef> nodeMap;
+    private final Map<Integer, Context> contextMap;
     private static long controllerQuorumFetchTimeout = CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
 
     private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
@@ -307,15 +305,15 @@ class RackRolling {
      * </ol>
      *
      * @param rollClient The roll client
-     * @param nodeMap The ids of the nodes in the cluster
+     * @param contextMap The ids of the nodes in the cluster mapped to its context
      * @param nodesNeedingRestart The ids of the nodes which need to be restarted
      * @param maxRestartBatchSize The maximum allowed size for a batch
      * @return The nodes corresponding to a subset of {@code nodeIdsNeedingRestart} that can safely be rolled together
      */
     private static Set<KafkaNode> nextBatch(Reconciliation reconciliation,
                                             RollClient rollClient,
-                                            Map<Integer, NodeRef> nodeMap,
-                                            Map<Integer, NodeRef> nodesNeedingRestart,
+                                            Map<Integer, Context> contextMap,
+                                            Map<Integer, NodeRoles> nodesNeedingRestart,
                                             int maxRestartBatchSize) {
         enum NodeFlavour {
             NON_ACTIVE_PURE_CONTROLLER, // A pure KRaft controller node that is not the active controller
@@ -328,9 +326,9 @@ class RackRolling {
         Map<Integer, Long> quorumState = rollClient.quorumLastCaughtUpTimestamps();
         int activeControllerId = rollClient.activeController();
         var partitioned = nodesNeedingRestart.entrySet().stream().collect(Collectors.groupingBy(entry -> {
-            NodeRef nodeRef = entry.getValue();
+            NodeRoles nodeRoles = entry.getValue();
             boolean isActiveController = entry.getKey() == activeControllerId;
-            boolean isPureController = nodeRef.controller() && !nodeRef.broker();
+            boolean isPureController = nodeRoles.controller() && !nodeRoles.broker();
             if (isPureController) {
                 if (!isActiveController) {
                     return NodeFlavour.NON_ACTIVE_PURE_CONTROLLER;
@@ -348,7 +346,7 @@ class RackRolling {
 
 
         if(activeControllerId > -1) {
-            var nodeConfigs = rollClient.describeNodeConfigs(List.of(nodeMap.get(activeControllerId)));
+            var nodeConfigs = rollClient.describeNodeConfigs(List.of(contextMap.get(activeControllerId).nodeRef()));
             Configs configs = nodeConfigs.get(activeControllerId);
             if (configs != null) {
                 ConfigEntry controllerQuorumFetchTimeoutConfig = configs.nodeConfigs().get(CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_NAME);
@@ -370,7 +368,7 @@ class RackRolling {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
                     .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, quorumState) : true)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, maxRestartBatchSize);
+            return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
 
         } else if (partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER).stream()
@@ -379,7 +377,7 @@ class RackRolling {
             if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, quorumState).isEmpty()) {
                 return Set.of();
             } else {
-                return nextBatchBrokers(reconciliation, rollClient, nodeMap, nodesNeedingRestart, 1);
+                return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, 1);
             }
 
         } else {
@@ -391,7 +389,7 @@ class RackRolling {
      * Returns the next controller that can be restarted without impacting the quorum health.
      */
     private static Set<KafkaNode> nextController(Reconciliation reconciliation,
-                                            Map<Integer, NodeRef> nodesNeedingRestart,
+                                            Map<Integer, NodeRoles> nodesNeedingRestart,
                                             int activeControllerId,
                                             Map<Integer, Long> quorumState) {
         KafkaNode controllerToRestart = null;
@@ -415,8 +413,8 @@ class RackRolling {
      */
     private static Set<KafkaNode> nextBatchBrokers(Reconciliation reconciliation,
                                                               RollClient rollClient,
-                                                              Map<Integer, NodeRef> nodeMap,
-                                                              Map<Integer, NodeRef> nodesNeedingRestart,
+                                                              Map<Integer, Context> contextMap,
+                                                              Map<Integer, NodeRoles> nodesNeedingRestart,
                                                               int maxRestartBatchSize) {
         Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
 
@@ -434,8 +432,8 @@ class RackRolling {
                 partition.replicas().forEach(replicatingBroker -> {
                     var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
                             ig -> {
-                                NodeRef nodeRef = nodeMap.get(replicatingBroker.id());
-                                return new KafkaNode(replicatingBroker.id(), nodeRef.controller(), nodeRef.broker(), new HashSet<>());
+                                NodeRoles nodeRoles = contextMap.get(replicatingBroker.id()).nodeRoles();
+                                return new KafkaNode(replicatingBroker.id(), nodeRoles.controller(), nodeRoles.broker(), new HashSet<>());
                             });
                     kafkaNode.replicas().add(new Replica(
                             replicatingBroker,
@@ -448,8 +446,8 @@ class RackRolling {
 
         // Add any servers which we know about but which were absent from any partition metadata
         // i.e. brokers without any assigned partitions
-        nodesNeedingRestart.forEach((nodeId, nodeRef) -> {
-            nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRef.controller(), nodeRef.broker(), Set.of()));
+        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> {
+            nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of()));
         });
 
         // TODO somewhere in here we need to take account of partition reassignments
@@ -766,9 +764,7 @@ class RackRolling {
                                       int maxRestartBatchSize,
                                       int maxRestarts)
             throws ExecutionException, TimeoutException, InterruptedException {
-
-        final var nodeMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, nodeRef -> nodeRef));
-        var contexts = nodes.stream().map(node -> Context.start(node, predicate, time)).toList();
+        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
         return new RackRolling(time,
                 platformClient,
                 rollClient,
@@ -780,8 +776,7 @@ class RackRolling {
                 postRestartTimeoutMs,
                 maxRestartBatchSize,
                 maxRestarts,
-                nodeMap,
-                contexts);
+                contextMap);
     }
 
     private final Time time;
@@ -806,9 +801,8 @@ class RackRolling {
                        long postReconfigureTimeoutMs,
                        long postRestartTimeoutMs,
                        int maxRestartBatchSize,
-                       int maxRestarts, Map<Integer,
-                       NodeRef> nodeMap,
-                       List<Context> contexts) {
+                       int maxRestarts,
+                       Map<Integer, Context> contextMap) {
         this.time = time;
         this.platformClient = platformClient;
         this.rollClient = rollClient;
@@ -820,8 +814,7 @@ class RackRolling {
         this.postRestartTimeoutMs = postRestartTimeoutMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
         this.maxRestarts = maxRestarts;
-        this.nodeMap = nodeMap;
-        this.contexts = contexts;
+        this.contextMap = contextMap;
     }
 
     /**
@@ -846,9 +839,10 @@ class RackRolling {
             LOGGER.debugCr(reconciliation, "Loop");
             // Observe current state and update the contexts
             int totalNumOfControllers = 0;
+            var contexts = contextMap.values().stream().toList();
             for (var context : contexts) {
                 context.transitionTo(observe(reconciliation, platformClient, rollClient, context.nodeRef()), time);
-                if (context.nodeRef().controller()) totalNumOfControllers++;
+                if (context.nodeRoles().controller()) totalNumOfControllers++;
             }
 
             int maxReconfigs = 1;
@@ -896,9 +890,9 @@ class RackRolling {
 
             // If we get this far then all remaining nodes require a restart
             // determine batches of nodes to be restarted together
-            var batch = nextBatch(reconciliation, rollClient, nodeMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
+            var batch = nextBatch(reconciliation, rollClient, contextMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
                     Context::nodeId,
-                    context -> nodeMap.get(context.nodeId())
+                    Context::nodeRoles
             )), maxRestartBatchSize);
             var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
@@ -924,9 +918,9 @@ class RackRolling {
         Set<Context> pureControllerNodesToRestart = new HashSet();
         Set<Context> combinedNodesToRestart = new HashSet<>();
         int numOfPendingCombinedNodes = 0;
-        for (var context : contexts.stream().filter(context -> context.nodeRef().controller()).collect(Collectors.toList())) {
+        for (var context : contexts.stream().filter(context -> context.nodeRoles().controller()).collect(Collectors.toList())) {
             // restart pure controllers first and then combined nodes
-            if (!context.nodeRef().broker()) {
+            if (!context.nodeRoles().broker()) {
                 pureControllerNodesToRestart.add(context);
             } else {
                 if (context.state().equals(State.NOT_RUNNING)) {

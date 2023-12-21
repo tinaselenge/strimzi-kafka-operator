@@ -18,6 +18,8 @@ import java.util.function.Function;
 final class Context {
     /** The node this context refers to */
     private final NodeRef nodeRef;
+    /** The process roles currently assigned to the node */
+    private final NodeRoles nodeRoles;
     /** The state of the node the last time it was observed */
     private State state;
     /** The time of the last state transition */
@@ -36,16 +38,17 @@ final class Context {
     private static final long CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT = 2000L;
     private static long controllerQuorumFetchTimeout = CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
 
-    private Context(NodeRef nodeRef, State state, long lastTransition, RestartReasons reason, int numRestarts) {
+    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts) {
         this.nodeRef = nodeRef;
+        this.nodeRoles = nodeRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
         this.numRestarts = numRestarts;
     }
 
-    static Context start(NodeRef nodeRef, Function<Integer, RestartReasons> predicate, Time time) {
-        return new Context(nodeRef, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0);
+    static Context start(NodeRef nodeRef, NodeRoles nodeRoles, Function<Integer, RestartReasons> predicate, Time time) {
+        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0);
     }
 
     State transitionTo(State state, Time time) {
@@ -69,6 +72,10 @@ final class Context {
 
     public NodeRef nodeRef() {
         return nodeRef;
+    }
+
+    public NodeRoles nodeRoles() {
+        return nodeRoles;
     }
 
     public State state() {
