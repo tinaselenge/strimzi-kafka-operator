@@ -14,6 +14,8 @@ import java.util.Set;
 
 public class PlatformClientImpl implements PlatformClient {
 
+    private static final String CONTROLLER_ROLE_LABEL = "strimzi.io/controller-role";
+    private static final String BROKER_ROLE_LABEL = "strimzi.io/broker-role";
     private final PodOperator podOps;
     private final String namespace;
 
@@ -67,5 +69,12 @@ public class PlatformClientImpl implements PlatformClient {
     public void restartNode(NodeRef nodeRef) {
         var pod = podOps.get(namespace, nodeRef.podName());
         podOps.restart(reconciliation, pod, 60_000);
+    }
+
+    @Override
+    public NodeRoles nodeRoles(NodeRef nodeRef) {
+        var podLabels = podOps.get(namespace, nodeRef.podName()).getMetadata().getLabels();
+        return new NodeRoles(Boolean.getBoolean(podLabels.get(CONTROLLER_ROLE_LABEL)),
+                Boolean.getBoolean(podLabels.get(BROKER_ROLE_LABEL)));
     }
 }

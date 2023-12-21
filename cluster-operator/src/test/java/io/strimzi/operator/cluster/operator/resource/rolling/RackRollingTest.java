@@ -69,21 +69,23 @@ public class RackRollingTest {
         private final Map<String, Integer> topicMinIsrs = new HashMap<>();
         private final Map<Uuid, TopicDescription> topicDescriptions = new HashMap<>();
 
-        MockBuilder addNode(boolean controller, boolean broker, int nodeId) {
+        MockBuilder addNode(PlatformClient platformClient, boolean controller, boolean broker, int nodeId) {
             if (nodeRefs.containsKey(nodeId)) {
                 throw new RuntimeException();
             }
             if (!controller && !broker) {
                 throw new RuntimeException();
             }
+
             nodeRefs.put(nodeId, new NodeRef("pool-kafka-" + nodeId, nodeId, "pool", controller, broker));
             nodes.put(nodeId, new Node(nodeId, "pool-kafka-" + nodeId, 9092));
+            doReturn(new NodeRoles(controller, broker)).when(platformClient).nodeRoles(nodeRefs.get(nodeId));
             return this;
         }
 
-        MockBuilder addNodes(boolean controller, boolean broker, int... nodeIds) {
+        MockBuilder addNodes(PlatformClient platformClient, boolean controller, boolean broker, int... nodeIds) {
             for (int nodeId : nodeIds) {
-                addNode(controller, broker, nodeId);
+                addNode(platformClient, controller, broker, nodeId);
             }
             return this;
         }
@@ -302,7 +304,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
                 .done().get(0);
@@ -323,7 +325,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
                 .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
@@ -345,7 +347,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .done().get(0);
@@ -366,7 +368,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
                 .mockPermanentlyUnhealthyNode(platformClient, rollClient, 0)
                 .mockTopics(rollClient)
@@ -389,7 +391,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
                 .mockUnhealthyNode(platformClient, rollClient, 0)
                 .mockTopics(rollClient)
@@ -416,7 +418,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .addTopic("topic-A", 0)
                 .mockTopics(rollClient)
@@ -443,7 +445,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
                 .mockHealthyNode(platformClient, rollClient, 0)
                 .mockTopics(rollClient)
@@ -466,7 +468,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.RECOVERY), 0)
@@ -490,7 +492,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RECOVERY), 0)
@@ -511,7 +513,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.UNKNOWN, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -536,7 +538,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -564,7 +566,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -591,7 +593,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(false, true, 0)
+                .addNode(platformClient, false, true, 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -618,7 +620,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(false, true, 0, 1, 2)
+                .addNodes(platformClient, false, true, 0, 1, 2)
                 .addTopic("topic-0", 0)
                 .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
@@ -645,7 +647,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(false, true, 0, 1, 2)
+                .addNodes(platformClient, false, true, 0, 1, 2)
                 .addTopic("topic-0", 0)
                 .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
@@ -675,8 +677,8 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
-                .addNodes(false, true, 3, 4, 5)
+                .addNodes(platformClient, true, false, 0, 1, 2)
+                .addNodes(platformClient, false, true, 3, 4, 5)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 3, 4, 5)
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
@@ -732,7 +734,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, 0, 1, 2)
+                .addNodes(platformClient, true, true, 0, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .addTopic("topic-A", 0, List.of(0, 1, 2), List.of(0, 1, 2))
@@ -782,8 +784,8 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2) // controllers
-                .addNodes(false, true, // brokers
+                .addNodes(platformClient, true, false, 0, 1, 2) // controllers
+                .addNodes(platformClient, false, true, // brokers
                         3, 6, // rack X
                         4, 7, // rack Y
                         5, 8) // rack Z
@@ -848,7 +850,7 @@ public class RackRollingTest {
                 7, 10_000L,
                 8, 5_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, // combined nodes
+                .addNodes(platformClient, true, true, // combined nodes
                         3, 6, // rack X
                         4, 7, // rack Y
                         5, 8) // rack Z
@@ -902,8 +904,8 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2) // controllers
-                .addNodes(false, true, // brokers
+                .addNodes(platformClient, true, false, 0, 1, 2) // controllers
+                .addNodes(platformClient, false, true, // brokers
                         3, 6, // rack X
                         4, 7, // rack Y
                         5, 8) // rack Z
@@ -978,7 +980,7 @@ public class RackRollingTest {
                 7, 10_000L,
                 8, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, // combined nodes
+                .addNodes(platformClient, true, true, // combined nodes
                         3, 6, // rack X
                         4, 7, // rack Y
                         5, 8) // rack Z
@@ -1042,7 +1044,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
+                .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
@@ -1086,7 +1088,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L, 3, 6000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, 0, 1, 2, 4) //combined nodes
+                .addNodes(platformClient, true, true, 0, 1, 2, 4) //combined nodes
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2, 4)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2, 4)
@@ -1122,7 +1124,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
+                .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(new ConfigEntry("controller.quorum.fetch.timeout.ms", "4000")), Set.of(), 0, 1, 2)
@@ -1171,7 +1173,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, -1L,1, 10_000L, 2, -1L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
+                .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
@@ -1206,7 +1208,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0, 1, 2)
+                .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(rollClient, -1)
                 .mockHealthyNodes(platformClient, rollClient, 0, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1, 2)
@@ -1240,7 +1242,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 1, 2)
+                .addNodes(platformClient, true, false, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 1, 2)
@@ -1278,7 +1280,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 7_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 1, 2)
+                .addNodes(platformClient, true, false, 1, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 1, 2)
@@ -1315,8 +1317,8 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(1, 10_000L);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 1)
-                .addNode(false, true, 2 )
+                .addNodes(platformClient, true, false, 1)
+                .addNode(platformClient, false, true, 2)
                 .mockLeader(rollClient, 1)
                 .mockHealthyNodes(platformClient, rollClient, 1, 2)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 1, 2)
@@ -1354,9 +1356,9 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, false, 0)
-                .addNodes(true, true, 1)
-                .addNodes(false, true, 2)
+                .addNodes(platformClient, true, false, 0)
+                .addNodes(platformClient, true, true, 1)
+                .addNodes(platformClient, false, true, 2)
                 .mockLeader(rollClient, 0)
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
@@ -1396,7 +1398,7 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(true, true, 0, 1, 2, 3, 4, 5)
+                .addNodes(platformClient, true, true, 0, 1, 2, 3, 4, 5)
                 .addTopic("topic-A", 0)
                 // all nodes are combined and not running e.g. pending
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
