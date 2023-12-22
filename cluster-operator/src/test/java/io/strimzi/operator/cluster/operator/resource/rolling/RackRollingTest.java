@@ -1033,6 +1033,62 @@ public class RackRollingTest {
     }
 
     @Test
+    public void shouldFailReconciliationWithUrpMixedNodes() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        Map<Integer, Long> quorumState = Map.of(3, 10_000L,
+                4, 10_000L,
+                6, 10_000L);
+        var nodeRefs = new MockBuilder()
+                .addNode(true, true, // combined nodes
+                        3)
+                .addNode(false, true, 4)
+                .addNode(true, false, 6)
+                .mockLeader(rollClient, 6)
+                .mockHealthyNodes(platformClient, rollClient,  3, 4, 6)
+                // topic A is at its min ISR, so neither 3 nor 4 should be restarted
+                .addTopic("topic-A", 3, List.of(3, 4, 6), List.of(3, 4), 2)
+                .addTopic("topic-B", 6, List.of(6, 3, 4), List.of(6, 3, 4))
+                .addTopic("topic-C", 4, List.of(4, 3, 6), List.of(4, 3, 6))
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 3, 4, 6)
+                .mockQuorumLastCaughtUpTimestamps(rollClient, quorumState)
+                .mockTopics(rollClient)
+                .mockElectLeaders(rollClient, 3, 4, 6)
+                .done();
+
+        // when
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::manualRolling,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                30_000,
+                120_000,
+                3,
+                1);
+
+        assertBrokerRestarted(platformClient, rollClient, nodeRefs, rr, 6); //active pure controller
+
+        // But for the reconciliation to eventually fail because of the unrestartable nodes
+        var ex = assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+                "Expect timeout because neither broker 3 nor 4 can be restarted while respecting the min ISR on topic A");
+        assertEquals("Cannot restart nodes {3,4} without violating some topics' min.in.sync.replicas", ex.getMessage());
+
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(3)));
+
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(4)));
+
+        for (var nodeRef : nodeRefs.values()) {
+            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
+        }
+    }
+
+    @Test
     public void shouldRollOddSizedQuorumOneControllerBehind() throws ExecutionException, InterruptedException, TimeoutException {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
