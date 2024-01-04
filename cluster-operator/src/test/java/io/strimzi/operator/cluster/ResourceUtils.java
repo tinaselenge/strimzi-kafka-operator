@@ -590,6 +590,11 @@ public class ResourceUtils {
             }
 
             @Override
+            public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+                return createAdminClient(controllerBootstrapHostnames, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+            }
+
+            @Override
             public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
                 return mockAdminClient;
             }

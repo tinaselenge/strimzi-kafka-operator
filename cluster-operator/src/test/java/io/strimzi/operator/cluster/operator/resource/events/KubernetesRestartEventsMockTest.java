@@ -599,6 +599,11 @@ public class KubernetesRestartEventsMockTest {
             }
 
             @Override
+            public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+                return adminClientSupplier.get();
+            }
+
+            @Override
             public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
                 return adminClientSupplier.get();
             }
