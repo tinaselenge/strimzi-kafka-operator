@@ -18,7 +18,17 @@ import java.util.Properties;
 public class DefaultAdminClientProvider implements AdminClientProvider {
     @Override
     public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
-        return createAdminClient(bootstrapHostnames, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+        return createAdminClient(bootstrapHostnames, false, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+    }
+
+    @Override
+    public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+        return createAdminClient(controllerBootstrapHostnames, true, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+    }
+
+    @Override
+    public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
+        return createAdminClient(bootstrapHostnames, false, clusterCaCertSecret, keyCertSecret, keyCertName, config);
     }
 
     /**
@@ -42,8 +52,7 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
      * Admin Client instance is configured to connect to the Apache Kafka bootstrap (defined via {@code hostname}) on
      * TLS encrypted connection and with TLS client authentication.
      */
-    @Override
-    public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
+    private Admin createAdminClient(String bootstrapHostnames, boolean controller, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
         String trustedCertificates = null;
         String privateKey = null;
         String certificateChain = null;
@@ -59,7 +68,12 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
             certificateChain = new String(Util.decodeFromSecret(keyCertSecret, keyCertName + ".crt"), StandardCharsets.US_ASCII);
         }
 
-        config.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapHostnames);
+        if (controller) {
+            //TODO when 3.7 is supported, this should be config.setProperty(AdminClientConfig.BOOTSTRAP_CONTROLLER_CONFIG, bootstrapHostnames);
+            config.setProperty("bootstrap.controllers", bootstrapHostnames);
+        } else {
+            config.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapHostnames);
+        }
 
         // configuring TLS encryption if requested
         if (trustedCertificates != null) {

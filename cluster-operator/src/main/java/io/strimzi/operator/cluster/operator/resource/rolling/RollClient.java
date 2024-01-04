@@ -7,7 +7,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
-import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
@@ -20,6 +20,16 @@ import java.util.Map;
  * An abstraction over both a Kafka Admin client, and a Kafka Agent client.
  */
 interface RollClient {
+
+    /**
+     * Sets admin client for brokers.
+     **/
+    void setBrokerAdmin(Admin admin);
+
+    /**
+     * Sets admin client for controllers.
+     **/
+    void setControllerAdmin(Admin admin);
 
     /** @return The broker state, according to the Kafka Agent */
     BrokerState getBrokerState(NodeRef nodeRef);
@@ -123,5 +133,14 @@ interface RollClient {
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
-    Map<Integer, Configs> describeNodeConfigs(List<NodeRef> toList);
+    Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList);
+
+    /**
+     * Return the Kafka controller configs for each of the given nodes
+     * @param toList The nodes to get the configs for
+     * @return A map from node id to configs
+     * @throws io.strimzi.operator.common.UncheckedExecutionException
+     * @throws io.strimzi.operator.common.UncheckedInterruptedException
+     */
+    Map<Integer, Configs> describeControllerConfigs(List<NodeRef> toList);
 }
