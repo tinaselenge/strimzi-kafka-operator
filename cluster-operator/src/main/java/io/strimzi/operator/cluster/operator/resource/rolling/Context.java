@@ -35,20 +35,18 @@ final class Context {
     /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private static final long CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT = 2000L;
-    private static long controllerQuorumFetchTimeout = CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
-
-    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts) {
+    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs) {
         this.nodeRef = nodeRef;
         this.nodeRoles = nodeRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
         this.numRestarts = numRestarts;
+        this.numReconfigs = numReconfigs;
     }
 
     static Context start(NodeRef nodeRef, NodeRoles nodeRoles, Function<Integer, RestartReasons> predicate, Time time) {
-        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0);
+        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0, 0);
     }
 
     State transitionTo(State state, Time time) {
@@ -106,7 +104,8 @@ final class Context {
                 "state=" + state + ", " +
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
-                "numRestarts=" + numRestarts + ']';
+                "numRestarts=" + numRestarts + ", " +
+                "numReconfigs=" + numReconfigs + ']';
     }
 
     public void brokerConfigDiff(KafkaBrokerConfigurationDiff diff) {

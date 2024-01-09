@@ -5,7 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.api.model.Secret;
-import io.strimzi.api.kafka.model.KafkaResources;
+import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.operator.cluster.model.DnsNameGenerator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaVersion;
@@ -550,7 +550,7 @@ class RackRolling {
                                     Context context,
                                     int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
-            throw new MaxRestartsExceededException("Broker " + context.nodeId() + " has been restarted " + maxRestarts + " times");
+            throw new MaxRestartsExceededException("Node " + context.nodeId() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
         platformClient.restartNode(context.nodeRef());
@@ -564,7 +564,7 @@ class RackRolling {
                                         RollClient rollClient,
                                         Context context,
                                         int maxReconfigs) {
-        if (context.numReconfigs() > maxReconfigs) {
+        if (context.numReconfigs() >= maxReconfigs) {
             context.reason().add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
             throw new RuntimeException("Too many reconfigs");
         }
@@ -662,7 +662,7 @@ class RackRolling {
                     configPair.nodeConfigs(),
                     kafkaConfigProvider.apply(context.nodeId()),
                     kafkaVersion,
-                    context.nodeId());
+                    context.nodeRef());
             var loggingDiff = new KafkaBrokerLoggingConfigurationDiff(reconciliation, configPair.nodeLoggerConfigs(), desiredLogging);
             context.brokerConfigDiff(diff);
             context.loggingDiff(loggingDiff);
@@ -769,6 +769,7 @@ class RackRolling {
                                       AdminClientProvider adminClientProvider,
                                       Reconciliation reconciliation,
                                       KafkaVersion kafkaVersion,
+                                      boolean allowReconfiguration,
                                       Function<Integer, String> kafkaConfigProvider,
                                       String desiredLogging,
                                       long postReconfigureTimeoutMs,
@@ -787,6 +788,7 @@ class RackRolling {
                 coKeySecret,
                 adminClientProvider,
                 kafkaVersion,
+                allowReconfiguration,
                 kafkaConfigProvider,
                 desiredLogging,
                 postReconfigureTimeoutMs,
@@ -806,6 +808,7 @@ class RackRolling {
                                                 Reconciliation reconciliation,
                                                 KafkaVersion kafkaVersion,
                                                 AdminClientProvider adminClientProvider,
+                                                boolean allowReconfiguration,
                                                 Function<Integer, String> kafkaConfigProvider,
                                                 String desiredLogging,
                                                 long postReconfigureTimeoutMs,
@@ -824,6 +827,7 @@ class RackRolling {
                 null,
                 adminClientProvider,
                 kafkaVersion,
+                allowReconfiguration,
                 kafkaConfigProvider,
                 desiredLogging,
                 postReconfigureTimeoutMs,
@@ -842,6 +846,7 @@ class RackRolling {
     private final Secret coKeySecret;
     private final AdminClientProvider adminClientProvider;
     private final KafkaVersion kafkaVersion;
+    private final boolean allowReconfiguration;
     private final Function<Integer, String> kafkaConfigProvider;
     private final String desiredLogging;
     private final long postReconfigureTimeoutMs;
@@ -858,6 +863,7 @@ class RackRolling {
                        Secret coKeySecret,
                        AdminClientProvider adminClientProvider,
                        KafkaVersion kafkaVersion,
+                       boolean allowReconfiguration,
                        Function<Integer, String> kafkaConfigProvider,
                        String desiredLogging,
                        long postReconfigureTimeoutMs,
@@ -882,6 +888,7 @@ class RackRolling {
         this.maxRestarts = maxRestarts;
         this.maxReconfigs = maxReconfigs;
         this.contextMap = contextMap;
+        this.allowReconfiguration = allowReconfiguration;
     }
 
     /**
@@ -926,17 +933,25 @@ class RackRolling {
 
             // Refine the plan, reassigning nodes under MAYBE_RECONFIGURE to either RECONFIGURE or RESTART
             // based on whether they have only reconfiguration config changes
-            byPlan = refinePlanForReconfigurability(reconciliation,
-                    kafkaVersion,
-                    kafkaConfigProvider,
-                    desiredLogging,
-                    rollClient,
-                    byPlan);
-            LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan);
+            if (allowReconfiguration) {
+                byPlan = refinePlanForReconfigurability(reconciliation,
+                        kafkaVersion,
+                        kafkaConfigProvider,
+                        desiredLogging,
+                        rollClient,
+                        byPlan);
+                LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan);
+            }
+
             // Reconfigure any reconfigurable nodes
             for (var context : byPlan.getOrDefault(Plan.RECONFIGURE, List.of())) {
                 // TODO decide whether to support canary reconfiguration for cluster-scoped configs (nice to have)
-                reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
+                try {
+                    reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
+                } catch (RuntimeException e) {
+                    return List.of(context.nodeId());
+                }
+
                 time.sleep(postReconfigureTimeoutMs / 2, 0);
                 // TODO decide whether we need an explicit healthcheck here
                 //      or at least to know that the kube health check probe will have failed at the time
@@ -1047,7 +1062,7 @@ class RackRolling {
             if (context.state() == State.NOT_READY || context.state() == State.NOT_RUNNING) {
                 context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed rolling health check");
                 return Plan.RESTART_FIRST;
-            } else if (context.numRestarts() > 0 && context.state() == State.RECOVERING) {
+            } else if (context.state() == State.RECOVERING) {
                 return Plan.NOP;
             } else {
                 var reasons = context.reason();
@@ -1062,7 +1077,7 @@ class RackRolling {
                 } else {
                     if (context.numReconfigs() > 0
                             && (context.state() == State.LEADING_ALL_PREFERRED
-                            || context.state() == State.SERVING)) {
+                            || context.state() == State.RECONFIGURED)) {
                         return Plan.NOP;
                     } else {
                         return Plan.MAYBE_RECONFIGURE;
