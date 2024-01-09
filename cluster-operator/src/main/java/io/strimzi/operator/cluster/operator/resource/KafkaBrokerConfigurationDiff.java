@@ -79,7 +79,7 @@ public class KafkaBrokerConfigurationDiff extends AbstractJsonDiff {
      * @param kafkaVersion      Kafka version
      * @param brokerNodeRef     Broker node reference
      */
-    protected KafkaBrokerConfigurationDiff(Reconciliation reconciliation, Config brokerConfigs, String desired, KafkaVersion kafkaVersion, NodeRef brokerNodeRef) {
+    public KafkaBrokerConfigurationDiff(Reconciliation reconciliation, Config brokerConfigs, String desired, KafkaVersion kafkaVersion, NodeRef brokerNodeRef) {
         this.reconciliation = reconciliation;
         this.configModel = KafkaConfiguration.readConfigModel(kafkaVersion);
         this.brokerConfigDiff = diff(brokerNodeRef, desired, brokerConfigs, configModel);
@@ -119,7 +119,7 @@ public class KafkaBrokerConfigurationDiff extends AbstractJsonDiff {
      * Returns configuration difference
      * @return Collection of AlterConfigOp containing difference between current and desired configuration
      */
-    protected Collection<AlterConfigOp> getConfigDiff() {
+    public Collection<AlterConfigOp> getConfigDiff() {
         return brokerConfigDiff;
     }
 
