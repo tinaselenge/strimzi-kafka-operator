@@ -55,6 +55,14 @@ public class KafkaAgentClient {
     private Secret coKeySecret;
     private HttpClient httpClient;
 
+    /**
+     * KafkaAgentClient constructor
+     * @param reconciliation Reconciliation marker
+     * @param cluster Name of the cluster
+     * @param namespace The namespace the cluster is in
+     * @param clusterCaCertSecret Secret with the Cluster CA public key
+     * @param coKeySecret Secret with the Cluster CA private key
+     */
     public KafkaAgentClient(Reconciliation reconciliation, String cluster, String namespace, Secret clusterCaCertSecret, Secret coKeySecret) {
         this.reconciliation = reconciliation;
         this.cluster = cluster;

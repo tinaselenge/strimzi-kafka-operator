@@ -11,12 +11,15 @@ import io.strimzi.operator.cluster.model.NodeRef;
  */
 public interface PlatformClient {
 
+    /**
+     * State of the node
+     */
     enum NodeState {
         /**
          * The pod/process is not running. This includes
-         * <li>the pod has {@code status.phase=="Pending"} and condition {@code c} in {@code status.conditions}
-         * with {@code c.type=="PodScheduled" && c.status=="False" && c.reason=="Unschedulable"}</li>
-         * <li>Any of the containers in the waiting state with ready ImagePullBackoff or CrashLoopBackoff</li>
+         * the pod has {@code status.phase=="Pending"} and condition {@code c} in {@code status.conditions}
+         * with {@code c.type=="PodScheduled" && c.status=="False" && c.reason=="Unschedulable"}
+         * and any of the containers in the waiting state with ready ImagePullBackoff or CrashLoopBackoff
          */
         NOT_RUNNING,
         /** The pod/process is not {@link #NOT_RUNNING}, but is lacks a "Ready" condition with status "True" */
@@ -25,15 +28,19 @@ public interface PlatformClient {
         READY
     }
 
-    /** @return true if the pod for this node is not ready according to kubernetes */
+    /**
+     * @param nodeRef Node reference
+     * @return true if the pod for this node is not ready according to kubernetes */
     NodeState nodeState(NodeRef nodeRef);
 
     /**
      * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
      * @param nodeRef The node.
      */
-    public void restartNode(NodeRef nodeRef);
+    void restartNode(NodeRef nodeRef);
 
-    /** @return Kafka process roles for this node */
+    /**
+     * @param nodeRef Node reference
+     * @return Kafka process roles for this node */
     NodeRoles nodeRoles(NodeRef nodeRef);
 }
