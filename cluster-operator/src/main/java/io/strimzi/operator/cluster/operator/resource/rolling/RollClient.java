@@ -7,7 +7,6 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
-import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
@@ -24,12 +23,14 @@ interface RollClient {
     /**
      * Sets admin client for brokers.
      **/
-    void setBrokerAdmin(Admin admin);
+    void initialiseBrokerAdmin();
 
     /**
      * Sets admin client for controllers.
      **/
-    void setControllerAdmin(Admin admin);
+    void initialiseControllerAdmin();
+
+    boolean cannotConnectToNode(NodeRef nodeRef, boolean controller);
 
     /** @return The broker state, according to the Kafka Agent */
     BrokerState getBrokerState(NodeRef nodeRef);

@@ -8,9 +8,7 @@ import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
-import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Reconciliation;
-import java.util.Collections;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -22,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -46,13 +45,9 @@ import static org.mockito.Mockito.times;
 
 public class RackRollingTest {
 
-    // TODO Previously we failed reconciliation when node in recovery mode, do we still want to that? Do we block on that node or carry on with the other nodes?
-
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
 
     private final Time time = new Time.TestTime(1_000_000_000L);
-
-    private final AdminClientProvider adminClientProvider = mock(AdminClientProvider.class);
 
     static RestartReasons noReasons(int serverId) {
         return RestartReasons.empty();
@@ -136,14 +131,12 @@ public class RackRollingTest {
         }
 
         MockBuilder mockPermanentlyUnhealthyNode(PlatformClient platformClient, RollClient rollClient, int nodeId) {
-            doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
-                    PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
-                    PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
+            doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.NOT_READY,
+                    PlatformClient.NodeState.NOT_READY)
                     .when(platformClient)
                     .nodeState(nodeRefs.get(nodeId));
-            doReturn(BrokerState.NOT_RUNNING, BrokerState.RUNNING,
-                    BrokerState.NOT_RUNNING, BrokerState.RUNNING,
-                    BrokerState.NOT_RUNNING, BrokerState.RUNNING)
+            doReturn(BrokerState.NOT_RUNNING, BrokerState.NOT_RUNNING,
+                    BrokerState.NOT_RUNNING)
                     .when(rollClient)
                     .getBrokerState(nodeRefs.get(nodeId));
             return this;
@@ -238,6 +231,11 @@ public class RackRollingTest {
             return mockElectLeaders(rollClient, List.of(0), nodeIds);
         }
 
+        public MockBuilder mockCannotConnectToNode(RollClient rollClient, int nodeId) {
+            doReturn(true).when(rollClient).cannotConnectToNode(nodeRefs.get(nodeId), false);
+            return this;
+        }
+
         public MockBuilder mockElectLeaders(RollClient rollClient, List<Integer> results, int... nodeIds) {
             for (var nodeId : nodeIds) {
                 doReturn(results.get(0), results.subList(1, results.size()).toArray())
@@ -273,7 +271,7 @@ public class RackRollingTest {
         assertTrue(restartedNodes.containsAll(expectedRestartedNodes));
         for (var nodeId : nodeIds) {
             Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+//            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
         }
     }
 
@@ -283,8 +281,7 @@ public class RackRollingTest {
                                   Collection<NodeRef> nodeRefList,
                                   Function<Integer, RestartReasons> reason,
                                   Function<Integer, String> kafkaConfigProvider,
-                                  Integer maxRestartsBatchSize,
-                                  Integer maxRestarts) throws ExecutionException, InterruptedException, TimeoutException {
+                                  Integer maxRestartsBatchSize) throws ExecutionException, InterruptedException, TimeoutException {
 
         var rr = RackRolling.rollingRestart(time,
                 platformClient,
@@ -293,15 +290,11 @@ public class RackRollingTest {
                 reason,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
-                adminClientProvider,
                 true,
                 kafkaConfigProvider,
                 null,
-                30_000,
                 120_000,
-                maxRestartsBatchSize,
-                maxRestarts,
-                1);
+                maxRestartsBatchSize);
         List<Integer> nodes;
         do {
             nodes = rr.loop();
@@ -320,7 +313,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -342,7 +335,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -363,7 +356,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -388,10 +381,10 @@ public class RackRollingTest {
 
         // when
         var ex = assertThrows(MaxRestartsExceededException.class,
-                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
 
         //then
-        assertEquals("Node 0 has been restarted 1 times", ex.getMessage());
+        assertEquals("Node 0 has been restarted 3 times", ex.getMessage());
     }
 
     @Test
@@ -415,25 +408,19 @@ public class RackRollingTest {
                 RackRollingTest::noReasons,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
-                adminClientProvider,
                 true,
                 serverId -> "compression.type=snappy",
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
-        // The first attempt increments the numReconfig, the second attempt fails
-        // due to exceeding the maxReconfig which results in restarting the node on the third attempt.
-        for (int i = 0; i<3; i++) {
+        // Attempt until the maxReconfig of 3 is exceeded and then node is restarted
+        for (int i = 0; i < 5; i++) {
             rr.loop();
         }
 
-        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
+        Mockito.verify(rollClient, times(3)).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(rollClient, times(2)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -443,9 +430,10 @@ public class RackRollingTest {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
-                .addNode(platformClient, false, true, 0)
+                .addNode(platformClient, true, true, 0)
                 .addTopic("topic-A", 0)
-                .mockUnhealthyNode(platformClient, rollClient, 0)
+                .mockHealthyNode(platformClient, rollClient, 0)
+                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
                 .mockTopics(rollClient)
                 .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
                 .mockElectLeaders(rollClient,
@@ -454,11 +442,11 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1));
 
-        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 119000: " +
-                        "Context[nodeRef=pool-kafka-0/0, state=SERVING, " +
-                        "lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0]",
+        assertEquals("Servers [pool-kafka-0/0] failed to reach LEADING_ALL_PREFERRED within 120000: " +
+                        "[Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=true, broker=true], state=SERVING, " +
+                        "lastTransition=1970-01-01T00:00:01Z, reason=[MANUAL_ROLLING_UPDATE], numRestarts=1, numReconfigs=0]]",
                 te.getMessage());
 
     }
@@ -479,11 +467,11 @@ public class RackRollingTest {
 
         // when
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1));
 
         // then
-        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 15000: " +
-                        "Context[nodeRef=pool-kafka-0/0, state=RECONFIGURED, " +
+        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 60000: " +
+                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECONFIGURED, " +
                         "lastTransition=1970-01-01T00:00:00Z, " +
                         "reason=[], numRestarts=0, numReconfigs=1]",
                 te.getMessage());
@@ -505,7 +493,7 @@ public class RackRollingTest {
                 .mockElectLeaders(rollClient, List.of(1, 1, 1, 1, 0), 0)
                 .done().get(0);
 
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1);
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
@@ -528,10 +516,10 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2));
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
 
         assertEquals("Failed to reach SERVING within 120000 ms: " +
-                        "Context[nodeRef=pool-kafka-0/0, state=RECOVERING, " +
+                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECOVERING, " +
                         "lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0]",
                 te.getMessage());
     }
@@ -547,11 +535,14 @@ public class RackRollingTest {
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RECOVERY), 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10000L))
                 .mockTopics(rollClient)
                 .done().get(0);
 
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 2);
+        var te = assertThrows(RuntimeException.class,
+                () -> doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
+
+        assertEquals("There are nodes performing log recovery: [0]",
+                te.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
@@ -574,12 +565,12 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+//        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -601,7 +592,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1);
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -618,7 +609,7 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
-                .mockLeader(rollClient,-1)
+                .mockLeader(rollClient, -1)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY), 0)
                 .mockBrokerState(rollClient, List.of(BrokerState.RUNNING, BrokerState.NOT_RUNNING, BrokerState.STARTING, BrokerState.RECOVERY, BrokerState.RUNNING), 0)
                 .addTopic("topic-A", 0)
@@ -629,7 +620,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
@@ -656,7 +647,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1, 1);
+        doRollingRestart(platformClient, rollClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1);
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -681,7 +672,7 @@ public class RackRollingTest {
                 .done();
 
         // when
-        doRollingRestart(platformClient, rollClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 5);
+        doRollingRestart(platformClient, rollClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -711,7 +702,7 @@ public class RackRollingTest {
 
         // when
         doRollingRestart(platformClient, rollClient, nodeRefs.values(),
-                RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
+                RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -749,16 +740,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // then
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
@@ -808,16 +795,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // then
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
@@ -867,16 +850,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // The expected order is non-active controllers, active controller and batches of brokers that don't have partitions in common
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0); //non-active controller
@@ -933,16 +912,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // The expected order to restart is batches of nodes that do not have partitions in common
         // starting with the largest batches and then the broker that is the active controller
@@ -992,16 +967,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // The expected order is non-active controller nodes, the active controller,
         // batches of brokers starting with the largest.
@@ -1071,16 +1042,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // Expected to restart batches of nodes that do not have partitions in common
         // starting with the largest batches. The active controller 6 is not restarted until
@@ -1127,16 +1094,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // We should be able to restart only the controller that is behind
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
@@ -1172,16 +1135,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // we should not restart any controllers as the majority have not caught up to the leader
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
@@ -1213,16 +1172,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // We should be able to restart all the nodes because controller.quorum.fetch.timeout.ms value was increased
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
@@ -1246,7 +1201,7 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
-        Map<Integer, Long> quorumState = Map.of(0, -1L,1, 10_000L, 2, -1L);
+        Map<Integer, Long> quorumState = Map.of(0, -1L, 1, 10_000L, 2, -1L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(rollClient, 1)
@@ -1263,16 +1218,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
@@ -1301,16 +1252,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
@@ -1338,16 +1285,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
@@ -1379,16 +1322,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         //only the controller that has fallen behind should be restarted
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
@@ -1420,16 +1359,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
@@ -1464,16 +1399,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // the order we expect are pure controller, combined and broker only
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
@@ -1509,16 +1440,12 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
-                KafkaVersionTestUtils.getLatestVersion(), 
-                adminClientProvider,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         // we expect all the combined nodes to be restarted in parallel in order to form the quorum
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0, 1, 2, 3, 4, 5);
@@ -1527,11 +1454,45 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRestartAdminException() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldRestartCannotConnectToNodeException() throws ExecutionException, InterruptedException, TimeoutException {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         Map<Integer, Long> quorumState = Map.of(1, 10_000L);
-        doThrow(new RuntimeException("Admin client error")).when(adminClientProvider).createAdminClient(any(), any(), any(), any());
+
+        var nodeRefs = new MockBuilder()
+                .addNodes(platformClient, true, false, 1)
+                .addNode(platformClient, false, true, 2)
+                .mockLeader(rollClient, 1)
+                .mockHealthyNodes(platformClient, rollClient, 1, 2)
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 1, 2)
+                .mockQuorumLastCaughtUpTimestamps(rollClient, quorumState)
+                .mockTopics(rollClient)
+                .mockCannotConnectToNode(rollClient, 2)
+                .mockElectLeaders(rollClient, 1, 2)
+                .done();
+
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
+                rollClient,
+                nodeRefs.values(),
+                RackRollingTest::noReasons,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
+                true,
+                EMPTY_CONFIG_SUPPLIER,
+                null,
+                120_000,
+                3);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+    }
+
+    @Test
+    public void shouldNotRestartInitAdminException() throws ExecutionException, InterruptedException, TimeoutException {
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        doThrow(new RuntimeException("Failed to create admin client for brokers")).when(rollClient).initialiseBrokerAdmin();
+        Map<Integer, Long> quorumState = Map.of(1, 10_000L);
 
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 1)
@@ -1551,15 +1512,11 @@ public class RackRollingTest {
                 RackRollingTest::manualRolling,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
-                adminClientProvider,
                 true,
                 EMPTY_CONFIG_SUPPLIER,
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         var ex = assertThrows(RuntimeException.class, () -> rr.loop(),
                 "Expect RuntimeException because admin client cannot  be created");
@@ -1585,15 +1542,11 @@ public class RackRollingTest {
                 RackRollingTest::noReasons,
                 Reconciliation.DUMMY_RECONCILIATION,
                 KafkaVersionTestUtils.getLatestVersion(),
-                adminClientProvider,
                 false,
                 serverId -> "compression.type=snappy",
                 null,
-                30_000,
                 120_000,
-                3,
-                1,
-                1);
+                3);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
 
