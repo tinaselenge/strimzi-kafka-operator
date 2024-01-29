@@ -14,7 +14,7 @@ import io.strimzi.operator.common.operator.resource.PodOperator;
 import java.util.Set;
 
 /**
- * Implementation of PlatformClient
+ *  Implementation of PlatformClient in terms of Kubernetes Pods
  */
 public class PlatformClientImpl implements PlatformClient {
 

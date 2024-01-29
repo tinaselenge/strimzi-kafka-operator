@@ -30,17 +30,19 @@ public interface PlatformClient {
 
     /**
      * @param nodeRef Node reference
-     * @return true if the pod for this node is not ready according to kubernetes */
+     * @return true if the pod for this node is not ready according to the platform */
     NodeState nodeState(NodeRef nodeRef);
 
     /**
-     * Delete the pod with the given name, thus causing the restart of the corresponding Kafka server.
+     * Initiate the restart of the corresponding Kafka server.
      * @param nodeRef The node.
      */
     void restartNode(NodeRef nodeRef);
 
     /**
      * @param nodeRef Node reference
-     * @return Kafka process roles for this node */
+     * @return Kafka process roles for this node according to the platform.
+     * This could differ from the roles that the running process actually has (for instance if the process needs to be restarted to pick up its current roles).
+     * */
     NodeRoles nodeRoles(NodeRef nodeRef);
 }

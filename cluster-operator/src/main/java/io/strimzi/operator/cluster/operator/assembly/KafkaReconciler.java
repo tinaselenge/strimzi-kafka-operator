@@ -10,6 +10,7 @@ import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.api.kafka.model.common.Condition;
@@ -246,7 +247,7 @@ public class KafkaReconciler {
      *
      * @return              Future which completes when the reconciliation completes
      */
-    public Future<Void> reconcile(KafkaStatus kafkaStatus, Clock clock)    {
+    public Future<Void> reconcile(KafkaStatus kafkaStatus, Clock clock) {
         return modelWarnings(kafkaStatus)
                 .compose(i -> brokerScaleDownCheck())
                 .compose(i -> manualPodCleaning())
@@ -358,7 +359,7 @@ public class KafkaReconciler {
                     nodes.addAll(result.resultAt(0));
                     nodes.addAll(result.resultAt(1));
 
-                    if (!nodes.isEmpty())   {
+                    if (!nodes.isEmpty()) {
                         return maybeRollKafka(
                                 nodes,
                                 pod -> {
@@ -387,7 +388,7 @@ public class KafkaReconciler {
      *
      * @return  List with node references to nodes which should be rolled
      */
-    private Future<List<NodeRef>> podsForManualRollingUpdateDiscoveredThroughPodSetAnnotation()   {
+    private Future<List<NodeRef>> podsForManualRollingUpdateDiscoveredThroughPodSetAnnotation() {
         return strimziPodSetOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels())
                 .map(podSets -> {
                     List<NodeRef> nodes = new ArrayList<>();
@@ -412,7 +413,7 @@ public class KafkaReconciler {
      *
      * @return  List with node references to nodes which should be rolled
      */
-    private Future<List<NodeRef>> podsForManualRollingUpdateDiscoveredThroughPodAnnotations()   {
+    private Future<List<NodeRef>> podsForManualRollingUpdateDiscoveredThroughPodAnnotations() {
         return podOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels())
                 .map(pods -> {
                     List<NodeRef> nodes = new ArrayList<>();
@@ -449,58 +450,75 @@ public class KafkaReconciler {
             Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
             boolean allowReconfiguration
     ) {
-        if (kafka.usesKRaft()) {
-            return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
-                    .compose(compositeFuture -> {
-                        var rr = RackRolling.rollingRestart(
-                                podOperator,
-                                nodes,
-                                // Remap the function from pod to RestartReasons to nodeId to RestartReasons
-                                nodeId -> podNeedsRestart.apply(podOperator.get(reconciliation.namespace(), nodes.stream().filter(nodeRef -> nodeRef.nodeId() == nodeId).collect(Collectors.toList()).get(0).podName())),
-                                compositeFuture.resultAt(0),
-                                compositeFuture.resultAt(1),
-                                adminClientProvider,
-                                reconciliation,
-                                kafka.getKafkaVersion(),
-                                allowReconfiguration,
-                                nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-                                logging,
-                                operationTimeoutMs,
-                                1,
-                                eventsPublisher);
+        Function<Integer, String> kafkaConfigProvider = nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts);
+        return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
+                .compose(compositeFuture -> {
+                    if (kafka.usesKRaft()) {
+                        return maybeRollKafkaKraft(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
+                    } else {
+                        return maybeRollKafkaZk(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
+                    }
+                });
+    }
 
-                        try {
-                            List<Integer> restartedNodes;
-                            do {
-                                restartedNodes = rr.loop();
-                            } while (!restartedNodes.isEmpty());
+    private Future<Void> maybeRollKafkaZk(Set<NodeRef> nodes,
+                                          Function<Pod, RestartReasons> podNeedsRestart,
+                                          Function<Integer, String> kafkaConfigProvider,
+                                          Secret clusterCaCertSecret,
+                                          Secret coKeySecret,
+                                          boolean allowReconfiguration) {
+        return new KafkaRoller(
+                reconciliation,
+                vertx,
+                podOperator,
+                1_000,
+                operationTimeoutMs,
+                () -> new BackOff(250, 2, 10),
+                nodes,
+                clusterCaCertSecret,
+                coKeySecret,
+                adminClientProvider,
+                kafkaConfigProvider,
+                logging,
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                eventsPublisher
+        ).rollingRestart(podNeedsRestart);
+    }
 
-                            return Future.succeededFuture();
+    private Future<Void> maybeRollKafkaKraft(Set<NodeRef> nodes,
+                                             Function<Pod, RestartReasons> podNeedsRestart,
+                                             Function<Integer, String> kafkaConfigProvider,
+                                             Secret clusterCaCertSecret,
+                                             Secret coKeySecret,
+                                             boolean allowReconfiguration) {
+        var rr = RackRolling.rollingRestart(
+                podOperator,
+                nodes,
+                // Remap the function from pod to RestartReasons to nodeId to RestartReasons
+                nodeId -> podNeedsRestart.apply(podOperator.get(reconciliation.namespace(), nodes.stream().filter(nodeRef -> nodeRef.nodeId() == nodeId).collect(Collectors.toList()).get(0).podName())),
+                clusterCaCertSecret,
+                coKeySecret,
+                adminClientProvider,
+                reconciliation,
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                kafkaConfigProvider,
+                logging,
+                operationTimeoutMs,
+                1,
+                eventsPublisher);
 
-                        } catch (Exception e) {
-                            return Future.failedFuture(e);
-                        }
-                    });
-        } else {
-            return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
-                    .compose(compositeFuture ->
-                            new KafkaRoller(
-                                    reconciliation,
-                                    vertx,
-                                    podOperator,
-                                    1_000,
-                                    operationTimeoutMs,
-                                    () -> new BackOff(250, 2, 10),
-                                    nodes,
-                                    compositeFuture.resultAt(0),
-                                    compositeFuture.resultAt(1),
-                                    adminClientProvider,
-                                    brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-                                    logging,
-                                    kafka.getKafkaVersion(),
-                                    allowReconfiguration,
-                                    eventsPublisher
-                            ).rollingRestart(podNeedsRestart));
+        try {
+            List<Integer> restartedNodes;
+            do {
+                restartedNodes = rr.loop();
+            } while (!restartedNodes.isEmpty());
+
+            return Future.succeededFuture();
+
+        } catch (Exception e) {
+            return Future.failedFuture(e);
         }
     }
 

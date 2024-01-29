@@ -151,7 +151,7 @@ public class RestartReasons implements Iterable<RestartReason> {
      * @param reason The reason to test.
      * @return true if these reasons are just the single given reason.
      */
-    public boolean singletonOf(RestartReason reason) {
+    public boolean isSingletonOf(RestartReason reason) {
         return reasons.size() == 1 && reasons.containsKey(reason);
     }
 }

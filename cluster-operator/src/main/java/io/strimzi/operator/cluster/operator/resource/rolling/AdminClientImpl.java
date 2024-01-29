@@ -9,7 +9,6 @@ import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.operator.cluster.model.DnsNameGenerator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.NodeRef;
-import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.common.AdminClientProvider;
@@ -17,6 +16,7 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.Util;
+import java.time.Duration;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigsOptions;
@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-class RollClientImpl implements RollClient {
+class AdminClientImpl implements AdminClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
     // TODO: set to the same value of the thread blocking limit for now but we need to decide whether we need a dedicated thread for RackRolling
@@ -59,8 +59,6 @@ class RollClientImpl implements RollClient {
     private Admin brokerAdmin = null;
 
     private Admin controllerAdmin = null;
-
-    private final KafkaAgentClient kafkaAgentClient;
 
     private final Secret coKeySecret;
 
@@ -71,8 +69,10 @@ class RollClientImpl implements RollClient {
     private final AdminClientProvider adminClientProvider;
     private int quorumLeader = -1;
 
-    RollClientImpl(Reconciliation reconciliation, Secret clusterCaCertSecret, Secret coKeySecret, AdminClientProvider adminClientProvider) {
-        this.kafkaAgentClient = new KafkaAgentClient(reconciliation, reconciliation.name(), reconciliation.namespace(), clusterCaCertSecret, coKeySecret);
+    AdminClientImpl(Reconciliation reconciliation,
+                    Secret clusterCaCertSecret,
+                    Secret coKeySecret,
+                    AdminClientProvider adminClientProvider) {
         this.coKeySecret = coKeySecret;
         this.clusterCaCertSecret = clusterCaCertSecret;
         this.reconciliation = reconciliation;
@@ -114,6 +114,20 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
+    public void closeControllerAdminClient() {
+        if (this.controllerAdmin != null) {
+            this.controllerAdmin.close(Duration.ofSeconds(30));
+        }
+    }
+
+    @Override
+    public void closeBrokerAdminClient() {
+        if (this.brokerAdmin != null) {
+            this.brokerAdmin.close(Duration.ofSeconds(30));
+        }
+    }
+
+    @Override
     public boolean cannotConnectToNode(NodeRef nodeRef, boolean controller) {
         String bootstrapHostnames;
         if (controller) {
@@ -125,11 +139,14 @@ class RollClientImpl implements RollClient {
             bootstrapHostnames = String.format("%s:%s", DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), nodeRef.podName()), KafkaCluster.REPLICATION_PORT);
         }
 
+        Admin admin = null;
         try {
-            createAdminClient(bootstrapHostnames);
+            admin = createAdminClient(bootstrapHostnames);
             return false;
         } catch (Exception e) {
             return true;
+        } finally {
+            if (admin != null) admin.close();
         }
     }
 
@@ -141,14 +158,8 @@ class RollClientImpl implements RollClient {
             // }
             return adminClientProvider.createAdminClient(bootstrapHostnames, clusterCaCertSecret, coKeySecret, "cluster-operator");
         } catch (RuntimeException e) {
-            throw new RuntimeException("Failed to create admin client for brokers", e.getCause());
+            throw new RuntimeException("Failed to create admin client", e.getCause());
         }
-    }
-
-    @Override
-    public BrokerState getBrokerState(NodeRef nodeRef) {
-        String podName = nodeRef.podName();
-        return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
     }
 
     @Override

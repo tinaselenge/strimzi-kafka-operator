@@ -5,7 +5,9 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 /**
- * Holds process roles for node
+ * Holds the current process roles for a node.
+ * This is different from the broker and controller information in NodeRef.
+ * NodeRef holds the desired roles for a node rather than the roles currently assigned to the node.
  * @param controller set to true if the node has controller role
  * @param broker set to true if the node has broker role
  */
