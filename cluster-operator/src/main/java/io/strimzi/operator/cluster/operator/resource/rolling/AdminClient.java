@@ -16,10 +16,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * An abstraction over both a Kafka Admin client, and a Kafka Agent client.
+ * An abstraction over a Kafka Admin client.
  */
-interface RollClient {
-
+interface AdminClient {
     /**
      * Sets admin client for brokers.
      **/
@@ -30,10 +29,17 @@ interface RollClient {
      **/
     void initialiseControllerAdmin();
 
-    boolean cannotConnectToNode(NodeRef nodeRef, boolean controller);
+    /**
+     * Closes controller admin client
+     **/
+    void closeControllerAdminClient();
 
-    /** @return The broker state, according to the Kafka Agent */
-    BrokerState getBrokerState(NodeRef nodeRef);
+    /**
+     * Closes broker admin client
+     **/
+    void closeBrokerAdminClient();
+
+    boolean cannotConnectToNode(NodeRef nodeRef, boolean controller);
 
     /**
      * @return All the topics in the cluster, including internal topics.
@@ -71,6 +77,8 @@ interface RollClient {
 
     /**
      * @return The id of the node that is the active controller of the cluster.
+     * If there is no active controller or failed to get quorum information,
+     * return -1 as the default value.
      * @throws io.strimzi.operator.common.UncheckedExecutionException
      * @throws io.strimzi.operator.common.UncheckedInterruptedException
      */
