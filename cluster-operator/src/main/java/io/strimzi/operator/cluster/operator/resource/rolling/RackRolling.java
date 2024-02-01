@@ -755,7 +755,7 @@ public class RackRolling {
                                              KubernetesRestartEventPublisher eventPublisher) {
         //TODO: Add EventPublisher to emit kube events when restarting nodes
 
-        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation);
+        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
         Time time = Time.SYSTEM_TIME;
         final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
 
