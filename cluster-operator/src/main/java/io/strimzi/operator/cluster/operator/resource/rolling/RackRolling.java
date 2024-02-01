@@ -520,7 +520,7 @@ public class RackRolling {
             throw new MaxRestartsExceededException("Node " + context.nodeId() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
-        platformClient.restartNode(context.nodeRef());
+        platformClient.restartNode(context.nodeRef(), context.reason());
         context.transitionTo(State.RESTARTED, time);
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context);
         // TODO kube create an Event with the context.reason
@@ -754,7 +754,6 @@ public class RackRolling {
                                              int maxRestartBatchSize,
                                              KubernetesRestartEventPublisher eventPublisher) {
         //TODO: Add EventPublisher to emit kube events when restarting nodes
-
         PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
         Time time = Time.SYSTEM_TIME;
         final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
