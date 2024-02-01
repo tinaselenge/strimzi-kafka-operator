@@ -40,6 +40,7 @@ import java.util.stream.Stream;
 /**
  * RackRolling
  */
+@SuppressWarnings({"ParameterNumber" })
 public class RackRolling {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
