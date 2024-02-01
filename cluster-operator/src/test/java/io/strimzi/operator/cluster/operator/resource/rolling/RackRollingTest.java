@@ -252,13 +252,9 @@ public class RackRollingTest {
                                              RackRolling rr,
                                              int... nodeIds) throws TimeoutException, InterruptedException, ExecutionException {
         for (var nodeId : nodeIds) {
-<<<<<<< HEAD
-            Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)));
-            Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
-=======
             Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(nodeId)), any());
-            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
->>>>>>> a6b008120 (Added changes)
+            Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+
         }
         List<Integer> restartedNodes = rr.loop();
         List<Integer> expectedRestartedNodes = IntStream.of(nodeIds).boxed().toList();
@@ -314,15 +310,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, never()).restartNode(any());
-        Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(any());
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, never()).restartNode(any(), any());
-        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(any());
     }
 
     @Test
@@ -343,15 +333,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -372,15 +356,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -441,13 +419,8 @@ public class RackRollingTest {
             rr.loop();
         }
 
-<<<<<<< HEAD
         Mockito.verify(adminClient, times(3)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, times(3)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef),any());
     }
 
     @Test
@@ -523,15 +496,9 @@ public class RackRollingTest {
 
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1);
 
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, times(5)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -580,13 +547,8 @@ public class RackRollingTest {
         assertEquals("There are nodes performing log recovery: [0]",
                 te.getMessage());
 
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRef), any());
->>>>>>> a6b008120 (Added changes)
     }
 
     @Test
@@ -610,13 +572,8 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
->>>>>>> a6b008120 (Added changes)
 //        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
@@ -643,16 +600,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
-
+        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -678,15 +628,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -712,15 +656,9 @@ public class RackRollingTest {
         doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1);
 
         // then
-<<<<<<< HEAD
         Mockito.verify(adminClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRef));
-        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRef), any());
-        Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
     }
 
     @Test
@@ -744,15 +682,9 @@ public class RackRollingTest {
 
         // then
         for (var nodeRef : nodeRefs.values()) {
-<<<<<<< HEAD
             Mockito.verify(adminClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(platformClient, never()).restartNode(any());
+            Mockito.verify(platformClient, never()).restartNode(any(), any());
             Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(any());
-=======
-            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(platformClient, never()).restartNode(any(),any());
-            Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
->>>>>>> a6b008120 (Added changes)
         }
     }
 
@@ -780,15 +712,9 @@ public class RackRollingTest {
 
         // then
         for (var nodeRef : nodeRefs.values()) {
-<<<<<<< HEAD
             Mockito.verify(adminClient, never()).reconfigureNode(eq(nodeRef), any(), any());
-            Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef));
-            Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
-=======
-            Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
             Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
-            Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
->>>>>>> a6b008120 (Added changes)
+            Mockito.verify(adminClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
         }
     }
 
@@ -1702,14 +1628,8 @@ public class RackRollingTest {
 
         assertNodesRestarted(platformClient, adminClient, nodeRefs, rr);
 
-<<<<<<< HEAD
         Mockito.verify(adminClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)));
-        Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
-=======
-        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
-        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
->>>>>>> a6b008120 (Added changes)
+        Mockito.verify(adminClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
     }
 }
