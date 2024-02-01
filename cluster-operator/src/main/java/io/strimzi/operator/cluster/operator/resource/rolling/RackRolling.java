@@ -821,18 +821,18 @@ public class RackRolling {
 
     /**
      * Constructor for RackRolling instance
-     *
-     * @param time                   initial time to set for context
-     * @param platformClient         client for platform calls
-     * @param rollClient             client for kafka cluster calls
-     * @param reconciliation         Reconciliation marker
-     * @param kafkaVersion           Kafka version
-     * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
-     * @param kafkaConfigProvider    Kafka configuration provider
-     * @param desiredLogging         Kafka logging configuration
-     * @param postOperationTimeoutMs The maximum time in milliseconds to wait after a restart or reconfigure.
-     * @param maxRestartBatchSize    The maximum number of nodes that might be restarted at once.* @param contextMap context map
-     * @param contextMap             Map of contexts for each node
+     * @param time                      initial time to set for context
+     * @param platformClient            client for platform calls
+     * @param adminClient               client for kafka cluster admin calls
+     * @param agentClient               client for kafka agent calls
+     * @param reconciliation            Reconciliation marker
+     * @param kafkaVersion              Kafka version
+     * @param allowReconfiguration      Flag indicting whether reconfiguration is allowed or not
+     * @param kafkaConfigProvider       Kafka configuration provider
+     * @param desiredLogging              Kafka logging configuration
+     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure.
+     * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once.* @param contextMap context map
+     * @param contextMap                Map of contexts for each node
      */
     public RackRolling(Time time,
                        PlatformClient platformClient,
