@@ -40,6 +40,7 @@ import java.util.stream.Stream;
 /**
  * RackRolling
  */
+@SuppressWarnings({"ParameterNumber" })
 public class RackRolling {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
@@ -519,7 +520,7 @@ public class RackRolling {
             throw new MaxRestartsExceededException("Node " + context.nodeId() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
-        platformClient.restartNode(context.nodeRef());
+        platformClient.restartNode(context.nodeRef(), context.reason());
         context.transitionTo(State.RESTARTED, time);
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context);
         // TODO kube create an Event with the context.reason
@@ -753,8 +754,7 @@ public class RackRolling {
                                              int maxRestartBatchSize,
                                              KubernetesRestartEventPublisher eventPublisher) {
         //TODO: Add EventPublisher to emit kube events when restarting nodes
-
-        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation);
+        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
         Time time = Time.SYSTEM_TIME;
         final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
 
@@ -770,7 +770,6 @@ public class RackRolling {
                 allowReconfiguration,
                 kafkaConfigProvider,
                 kafkaLogging,
-                eventPublisher,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
                 contextMap);
@@ -801,7 +800,6 @@ public class RackRolling {
                 allowReconfiguration,
                 kafkaConfigProvider,
                 desiredLogging,
-                null,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
                 contextMap);
@@ -816,7 +814,6 @@ public class RackRolling {
     private final boolean allowReconfiguration;
     private final Function<Integer, String> kafkaConfigProvider;
     private final String desiredLogging;
-    private final KubernetesRestartEventPublisher eventPublisher;
     private final long postOperationTimeoutMs;
     private final int maxRestartBatchSize;
     private final int maxRestarts = 3;
@@ -833,7 +830,6 @@ public class RackRolling {
      * @param allowReconfiguration      Flag indicting whether reconfiguration is allowed or not
      * @param kafkaConfigProvider       Kafka configuration provider
      * @param desiredLogging              Kafka logging configuration
-     * @param eventPublisher            Kubernetes Events publisher for publishing events about node restarts
      * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure.
      * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once.* @param contextMap context map
      * @param contextMap                Map of contexts for each node
@@ -847,7 +843,6 @@ public class RackRolling {
                        boolean allowReconfiguration,
                        Function<Integer, String> kafkaConfigProvider,
                        String desiredLogging,
-                       KubernetesRestartEventPublisher eventPublisher,
                        long postOperationTimeoutMs,
                        int maxRestartBatchSize,
                        Map<Integer, Context> contextMap) {
@@ -859,7 +854,6 @@ public class RackRolling {
         this.kafkaVersion = kafkaVersion;
         this.kafkaConfigProvider = kafkaConfigProvider;
         this.desiredLogging = desiredLogging;
-        this.eventPublisher = eventPublisher;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
         this.contextMap = contextMap;

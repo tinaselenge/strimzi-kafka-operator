@@ -7,6 +7,8 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.readiness.Readiness;
 import io.strimzi.operator.cluster.model.NodeRef;
+import io.strimzi.operator.cluster.model.RestartReasons;
+import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.PodOperator;
@@ -23,10 +25,13 @@ public class PlatformClientImpl implements PlatformClient {
 
     private final Reconciliation reconciliation;
 
-    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation) {
+    private final KubernetesRestartEventPublisher eventPublisher;
+
+    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation, KubernetesRestartEventPublisher eventPublisher) {
         this.podOps = podOps;
         this.namespace = namespace;
         this.reconciliation = reconciliation;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -68,9 +73,12 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     @Override
-    public void restartNode(NodeRef nodeRef) {
+    public void restartNode(NodeRef nodeRef, RestartReasons reason) {
         var pod = podOps.get(namespace, nodeRef.podName());
-        podOps.restart(reconciliation, pod, 60_000);
+        podOps.restart(reconciliation, pod, 60_000)
+                .onComplete(i ->
+                    eventPublisher.publishRestartEvents(pod, reason)
+                );
     }
 
     @Override

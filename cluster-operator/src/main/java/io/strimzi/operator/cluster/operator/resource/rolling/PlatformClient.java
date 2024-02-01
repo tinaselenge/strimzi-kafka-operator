@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.cluster.model.NodeRef;
+import io.strimzi.operator.cluster.model.RestartReasons;
 
 /**
  * Abstraction over the platform (i.e. kubernetes).
@@ -37,7 +38,7 @@ public interface PlatformClient {
      * Initiate the restart of the corresponding Kafka server.
      * @param nodeRef The node.
      */
-    void restartNode(NodeRef nodeRef);
+    void restartNode(NodeRef nodeRef, RestartReasons reasons);
 
     /**
      * @param nodeRef Node reference
