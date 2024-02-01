@@ -770,7 +770,6 @@ public class RackRolling {
                 allowReconfiguration,
                 kafkaConfigProvider,
                 kafkaLogging,
-                eventPublisher,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
                 contextMap);
@@ -801,7 +800,6 @@ public class RackRolling {
                 allowReconfiguration,
                 kafkaConfigProvider,
                 desiredLogging,
-                null,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
                 contextMap);
@@ -816,7 +814,6 @@ public class RackRolling {
     private final boolean allowReconfiguration;
     private final Function<Integer, String> kafkaConfigProvider;
     private final String desiredLogging;
-    private final KubernetesRestartEventPublisher eventPublisher;
     private final long postOperationTimeoutMs;
     private final int maxRestartBatchSize;
     private final int maxRestarts = 3;
@@ -824,19 +821,18 @@ public class RackRolling {
 
     /**
      * Constructor for RackRolling instance
-     * @param time                      initial time to set for context
-     * @param platformClient            client for platform calls
-     * @param adminClient               client for kafka cluster admin calls
-     * @param agentClient               client for kafka agent calls
-     * @param reconciliation            Reconciliation marker
-     * @param kafkaVersion              Kafka version
-     * @param allowReconfiguration      Flag indicting whether reconfiguration is allowed or not
-     * @param kafkaConfigProvider       Kafka configuration provider
-     * @param desiredLogging              Kafka logging configuration
-     * @param eventPublisher            Kubernetes Events publisher for publishing events about node restarts
-     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure.
-     * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once.* @param contextMap context map
-     * @param contextMap                Map of contexts for each node
+     *
+     * @param time                   initial time to set for context
+     * @param platformClient         client for platform calls
+     * @param rollClient             client for kafka cluster calls
+     * @param reconciliation         Reconciliation marker
+     * @param kafkaVersion           Kafka version
+     * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
+     * @param kafkaConfigProvider    Kafka configuration provider
+     * @param desiredLogging         Kafka logging configuration
+     * @param postOperationTimeoutMs The maximum time in milliseconds to wait after a restart or reconfigure.
+     * @param maxRestartBatchSize    The maximum number of nodes that might be restarted at once.* @param contextMap context map
+     * @param contextMap             Map of contexts for each node
      */
     public RackRolling(Time time,
                        PlatformClient platformClient,
@@ -847,7 +843,6 @@ public class RackRolling {
                        boolean allowReconfiguration,
                        Function<Integer, String> kafkaConfigProvider,
                        String desiredLogging,
-                       KubernetesRestartEventPublisher eventPublisher,
                        long postOperationTimeoutMs,
                        int maxRestartBatchSize,
                        Map<Integer, Context> contextMap) {
@@ -859,7 +854,6 @@ public class RackRolling {
         this.kafkaVersion = kafkaVersion;
         this.kafkaConfigProvider = kafkaConfigProvider;
         this.desiredLogging = desiredLogging;
-        this.eventPublisher = eventPublisher;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
         this.contextMap = contextMap;
