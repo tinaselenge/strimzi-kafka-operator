@@ -13,6 +13,9 @@ import io.strimzi.operator.common.Reconciliation;
 class AgentClientImpl implements AgentClient {
     private final KafkaAgentClient kafkaAgentClient;
 
+    private int remainingLogsToRecover;
+    private int remainingSegmentsToRecover;
+
     AgentClientImpl(Reconciliation reconciliation, Secret clusterCaCertSecret, Secret coKeySecret) {
         this.kafkaAgentClient = new KafkaAgentClient(reconciliation, reconciliation.name(), reconciliation.namespace(), clusterCaCertSecret, coKeySecret);
 
@@ -20,7 +23,10 @@ class AgentClientImpl implements AgentClient {
 
     @Override
     public BrokerState getBrokerState(NodeRef nodeRef) {
-        String podName = nodeRef.podName();
-        return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
+        var result = kafkaAgentClient.getBrokerState(nodeRef.podName());
+        BrokerState brokerState = BrokerState.fromValue((byte) result.code());
+        brokerState.setRemainingSegmentsToRecover(result.remainingSegmentsToRecover());
+        brokerState.setRemainingLogsToRecover(result.remainingLogsToRecover());
+        return brokerState;
     }
 }

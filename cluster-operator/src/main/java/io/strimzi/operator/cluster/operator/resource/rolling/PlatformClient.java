@@ -31,7 +31,7 @@ public interface PlatformClient {
 
     /**
      * @param nodeRef Node reference
-     * @return true if the pod for this node is not ready according to the platform */
+     * @return NodeState according to the platform */
     NodeState nodeState(NodeRef nodeRef);
 
     /**
