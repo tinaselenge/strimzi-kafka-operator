@@ -522,13 +522,16 @@ public class KafkaReconciler {
                 logging,
                 operationTimeoutMs,
                 1,
+                3,
+                3,
+                10,
                 eventsPublisher);
 
         try {
-            List<Integer> restartedNodes;
+            List<Integer> nodesToRestart;
             do {
-                restartedNodes = rr.loop();
-            } while (!restartedNodes.isEmpty());
+                nodesToRestart = rr.loop();
+            } while (!nodesToRestart.isEmpty());
 
             return Future.succeededFuture();
 

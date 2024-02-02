@@ -77,6 +77,8 @@ enum BrokerState {
     }
 
     private final byte value;
+    private int remainingLogsToRecover;
+    private int remainingSegmentsToRecover;
 
     BrokerState(byte value) {
         this.value = value;
@@ -92,5 +94,21 @@ enum BrokerState {
 
     public byte value() {
         return value;
+    }
+
+    void setRemainingLogsToRecover(int value) {
+        remainingLogsToRecover = value;
+    }
+
+    void setRemainingSegmentsToRecover(int value) {
+        remainingSegmentsToRecover = value;
+    }
+
+    int remainingLogsToRecover() {
+        return remainingLogsToRecover;
+    }
+
+    int remainingSegmentsToRecover() {
+        return remainingSegmentsToRecover;
     }
 }
