@@ -16,7 +16,6 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.Util;
-import java.time.Duration;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigsOptions;
@@ -37,6 +36,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-class AdminClientImpl implements AdminClient {
+class RollClientImpl implements RollClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
     // TODO: set to the same value of the thread blocking limit for now but we need to decide whether we need a dedicated thread for RackRolling
@@ -69,10 +69,10 @@ class AdminClientImpl implements AdminClient {
     private final AdminClientProvider adminClientProvider;
     private int quorumLeader = -1;
 
-    AdminClientImpl(Reconciliation reconciliation,
-                    Secret clusterCaCertSecret,
-                    Secret coKeySecret,
-                    AdminClientProvider adminClientProvider) {
+    RollClientImpl(Reconciliation reconciliation,
+                   Secret clusterCaCertSecret,
+                   Secret coKeySecret,
+                   AdminClientProvider adminClientProvider) {
         this.coKeySecret = coKeySecret;
         this.clusterCaCertSecret = clusterCaCertSecret;
         this.reconciliation = reconciliation;
