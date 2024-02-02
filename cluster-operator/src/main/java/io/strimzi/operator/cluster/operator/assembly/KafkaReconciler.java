@@ -499,6 +499,7 @@ public class KafkaReconciler {
                 nodes,
                 // Remap the function from pod to RestartReasons to nodeId to RestartReasons
                 nodeId -> podNeedsRestart.apply(podOperator.get(reconciliation.namespace(), nodes.stream().filter(nodeRef -> nodeRef.nodeId() == nodeId).collect(Collectors.toList()).get(0).podName())),
+                () -> new BackOff(250, 2, 10),
                 clusterCaCertSecret,
                 coKeySecret,
                 adminClientProvider,
@@ -512,10 +513,10 @@ public class KafkaReconciler {
                 eventsPublisher);
 
         try {
-            List<Integer> restartedNodes;
+            List<Integer> nodesToRestart;
             do {
-                restartedNodes = rr.loop();
-            } while (!restartedNodes.isEmpty());
+                nodesToRestart = rr.loop();
+            } while (!nodesToRestart.isEmpty());
 
             return Future.succeededFuture();
 
