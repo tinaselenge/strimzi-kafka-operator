@@ -5,7 +5,6 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.api.model.Secret;
-
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import io.strimzi.operator.common.Reconciliation;
@@ -20,7 +19,10 @@ class AgentClientImpl implements AgentClient {
 
     @Override
     public BrokerState getBrokerState(NodeRef nodeRef) {
-        String podName = nodeRef.podName();
-        return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
+        var result = kafkaAgentClient.getBrokerState(nodeRef.podName());
+        BrokerState brokerState = BrokerState.fromValue((byte) result.code());
+        brokerState.setRemainingSegmentsToRecover(result.remainingSegmentsToRecover());
+        brokerState.setRemainingLogsToRecover(result.remainingLogsToRecover());
+        return brokerState;
     }
 }
