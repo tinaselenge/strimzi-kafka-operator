@@ -13,11 +13,13 @@ import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDif
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.common.AdminClientProvider;
+import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.operator.resource.PodOperator;
+import java.util.function.Supplier;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
@@ -147,7 +149,11 @@ public class RackRolling {
                 return false;
             }
         } else {
-            return numOfCaughtUpControllers >= (controllerCount + 2) / 2;
+            boolean result =  numOfCaughtUpControllers >= (controllerCount + 2) / 2;
+            if (!result) {
+                LOGGER.debugCr(reconciliation, "Controller {} cannot be restarted without impacting quorum health", controllerNeedRestarting);
+            }
+            return result;
         }
     }
 
@@ -181,7 +187,7 @@ public class RackRolling {
             result.addAll(availBatches);
         }
         if (result.isEmpty() && !unavail.isEmpty()) {
-            throw new UnrestartableNodesException("Cannot restart nodes " + idsOf(unavail) + " without violating some topics' min.in.sync.replicas");
+            LOGGER.warnCr(reconciliation, "Cannot restart nodes {} without violating some topics' min.in.sync.replicas", idsOf(unavail));
         }
         return result;
     }
@@ -361,7 +367,6 @@ public class RackRolling {
 
         LOGGER.debugCr(reconciliation, "Partitioned nodes: {}", partitioned);
 
-
         if (activeControllerId >= 0) {
             var nodeConfigs = adminClient.describeControllerConfigs(List.of(contextMap.get(activeControllerId).nodeRef()));
             Configs configs = nodeConfigs.get(activeControllerId);
@@ -385,6 +390,10 @@ public class RackRolling {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
                     .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, controllerCount, quorumState) : true)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            if (nodesNeedingRestart.isEmpty()) {
+                LOGGER.warnCr(reconciliation, "The combined nodes {} cannot be restarted without impacting the quorum health", partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER));
+                return Set.of();
+            }
             return nextBatchBrokers(reconciliation, adminClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
 
         } else if (partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER) != null) {
@@ -392,13 +401,14 @@ public class RackRolling {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
             if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, controllerCount, quorumState).isEmpty()) {
+                LOGGER.warnCr(reconciliation, "The active controller cannot be restarted without impacting the quorum health", nodesNeedingRestart.keySet());
                 return Set.of();
             } else {
                 return nextBatchBrokers(reconciliation, adminClient, contextMap, nodesNeedingRestart, 1);
             }
 
         } else {
-            throw new RuntimeException();
+            throw new RuntimeException("Nodes did not get partitioned based on their process role: " + nodesNeedingRestart);
         }
     }
 
@@ -428,6 +438,7 @@ public class RackRolling {
         if (controllerToRestart != null) {
             return Set.of(controllerToRestart);
         } else {
+            LOGGER.warnCr(reconciliation, "Controllers {} cannot be restarted without impacting the quorum health", nodesNeedingRestart);
             return Set.of();
         }
     }
@@ -517,13 +528,12 @@ public class RackRolling {
                                     Context context,
                                     int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
-            throw new MaxRestartsExceededException("Node " + context.nodeId() + " has been restarted " + maxRestarts + " times");
+            throw new MaxRestartsExceededException("Node " + context.nodeRef() + " has been restarted " + maxRestarts + " times");
         }
-        LOGGER.debugCr(reconciliation, "Node {}: Restarting", context);
+        LOGGER.debugCr(reconciliation, "Node {}: Restarting", context.nodeRef());
         platformClient.restartNode(context.nodeRef(), context.reason());
         context.transitionTo(State.RESTARTED, time);
-        LOGGER.debugCr(reconciliation, "Node {}: Restarted", context);
-        // TODO kube create an Event with the context.reason
+        LOGGER.debugCr(reconciliation, "Node {}: Restarted", context.nodeRef());
     }
 
     private static void reconfigureNode(Reconciliation reconciliation,
@@ -535,10 +545,10 @@ public class RackRolling {
             context.reason().add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
             throw new RuntimeException("Too many reconfigs");
         }
-        LOGGER.debugCr(reconciliation, "Node {}: Reconfiguring", context);
+        LOGGER.debugCr(reconciliation, "Node {}: Reconfiguring", context.nodeRef());
         adminClient.reconfigureNode(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
         context.transitionTo(State.RECONFIGURED, time);
-        LOGGER.debugCr(reconciliation, "Node {}: Reconfigured", context);
+        LOGGER.debugCr(reconciliation, "Node {}: Reconfigured", context.nodeRef());
     }
 
 
@@ -690,6 +700,7 @@ public class RackRolling {
                     var bs = agentClient.getBrokerState(nodeRef);
                     LOGGER.debugCr(reconciliation, "Node {}: brokerState is {}", nodeRef, bs);
                     if (bs.value() == BrokerState.RECOVERY.value()) {
+                        LOGGER.warnCr(reconciliation, "Node {} is in log recovery. There {} logs and {} segments left to recover", bs.remainingLogsToRecover(), bs.remainingSegmentsToRecover());
                         state = State.RECOVERING;
                     } else {
                         state = State.NOT_READY;
@@ -729,6 +740,7 @@ public class RackRolling {
      * @param clusterCaCertSecret    Secret with the Cluster CA public key
      * @param coKeySecret            Secret with the Cluster CA private key
      * @param adminClientProvider    Kafka Admin client provider
+     * @param backOffSupplier
      * @param reconciliation         Reconciliation marker
      * @param kafkaVersion           Kafka version
      * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
@@ -742,6 +754,7 @@ public class RackRolling {
     public static RackRolling rollingRestart(PodOperator podOperator,
                                              Collection<NodeRef> nodes,
                                              Function<Integer, RestartReasons> predicate,
+                                             Supplier<BackOff> backOffSupplier,
                                              Secret clusterCaCertSecret,
                                              Secret coKeySecret,
                                              AdminClientProvider adminClientProvider,
@@ -756,7 +769,7 @@ public class RackRolling {
         //TODO: Add EventPublisher to emit kube events when restarting nodes
         PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
         Time time = Time.SYSTEM_TIME;
-        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
+        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
 
         AdminClient adminClient = new AdminClientImpl(reconciliation, clusterCaCertSecret, coKeySecret, adminClientProvider);
         AgentClient agentClient = new AgentClientImpl(reconciliation, clusterCaCertSecret, coKeySecret);
@@ -782,6 +795,7 @@ public class RackRolling {
                                                 AgentClient agentClient,
                                                 Collection<NodeRef> nodes,
                                                 Function<Integer, RestartReasons> predicate,
+                                                Supplier<BackOff> backOffSupplier,
                                                 Reconciliation reconciliation,
                                                 KafkaVersion kafkaVersion,
                                                 boolean allowReconfiguration,
@@ -789,7 +803,7 @@ public class RackRolling {
                                                 String desiredLogging,
                                                 long postOperationTimeoutMs,
                                                 int maxRestartBatchSize) {
-        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
+        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
 
         return new RackRolling(time,
                 platformClient,
@@ -909,9 +923,16 @@ public class RackRolling {
             LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
 
             if (!byPlan.getOrDefault(Plan.WAIT_FOR_LOG_RECOVERY, List.of()).isEmpty()) {
-                //TODO: should we sleep until operational timeout reached and then check broker state again? If not recovered still, throw RuntimeException or TimeoutException
-                // to fail the reconciliation.
-                throw new RuntimeException("There are nodes performing log recovery: " + byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY).stream().map(c -> c.nodeId()).toList());
+                byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY).stream().forEach(c -> {
+                    // call delayMs() to increment the number of attempts
+                    c.backOff().delayMs();
+                    // check if the maxAttempt for this node has been reached
+                    if (c.backOff().done()) {
+                        throw new RuntimeException("Node " +  c.nodeRef() + " is still performing log recovery. The max attempt (" + c.backOff().maxAttempts() + " retries) waiting for this node to finish log recovery has been reached.");
+                    }
+                });
+                time.sleep(postOperationTimeoutMs,0);
+                return byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY).stream().map(Context::nodeId).collect(Collectors.toList());
             }
 
             // Restart any initially unready nodes
@@ -959,17 +980,32 @@ public class RackRolling {
                 return List.of(context.nodeId());
             }
 
-            if (byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()) {
+            var nodesToRestart = byPlan.getOrDefault(Plan.RESTART, List.of());
+            if (nodesToRestart.isEmpty()) {
                 LOGGER.debugCr(reconciliation, "Terminate: No Kafka nodes left to reconcile");
                 return List.of();
             }
 
             // If we get this far then all remaining nodes require a restart
             // determine batches of nodes to be restarted together
-            var batch = nextBatch(reconciliation, adminClient, contextMap, byPlan.get(Plan.RESTART).stream().collect(Collectors.toMap(
+            var batch = nextBatch(reconciliation, adminClient, contextMap, nodesToRestart.stream().collect(Collectors.toMap(
                     Context::nodeId,
                     Context::nodeRoles
             )), controllerCount, maxRestartBatchSize);
+
+            if (batch.isEmpty()) {
+                nodesToRestart.stream().forEach(c -> {
+                    // call delayMs() to increment the number of attempts
+                    c.backOff().delayMs();
+                    // check if the maxAttempt for this node has reached
+                    if (c.backOff().done()) {
+                        throw new UnrestartableNodesException("Cannot restart nodes " + nodesToRestart.stream().map(Context::nodeRef).collect(Collectors.toList()) + " because some of them violating quorum health or some topics' min.in.sync.replicas. The max attempt to retry the nodes has been reached.");
+                    }
+                });
+                time.sleep(postOperationTimeoutMs,0);
+                return nodesToRestart.stream().map(Context::nodeId).collect(Collectors.toList());
+            }
+
             var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
             var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
             LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
@@ -1003,23 +1039,31 @@ public class RackRolling {
     }
 
     private List<Integer> restartUnReadyNodes(List<Context> contexts, int totalNumOfControllers) throws TimeoutException {
-        //TODO: should we NOT restart pods that don't have old revision? which is the current roller's behaviour
         Set<Context> pureControllerNodesToRestart = new HashSet<>();
         Set<Context> combinedNodesToRestart = new HashSet<>();
-        int numOfPendingCombinedNodes = 0;
-        for (var context : contexts.stream().filter(context -> context.nodeRoles().controller()).collect(Collectors.toList())) {
-            // restart pure controllers first and then combined nodes
-            if (!context.nodeRoles().broker()) {
+        for (var context : contexts) {
+            if (context.state().equals(State.NOT_RUNNING)) {
+               if (context.numRestarts() > 0) {
+                   // call delayMs() to increment the number of attempts
+                   context.backOff().delayMs();
+                   if (context.backOff().done()) {
+                       throw new UnrestartableNodesException("Cannot restart node " + context.nodeRef() + " because it has already been restarted. The max attempt waiting for it to start running has been reached.");
+                   } else {
+                       LOGGER.debugCr(reconciliation, "Cannot restart node {} because it has been previously restarted.", context.nodeRef());
+                       time.sleep(postOperationTimeoutMs, 0);
+                       return List.of(context.nodeId());
+                   }
+               }
+            }
+
+            if (context.nodeRoles().controller() && !context.nodeRoles().broker()) {
                 pureControllerNodesToRestart.add(context);
-            } else {
-                if (context.state().equals(State.NOT_RUNNING)) {
-                    numOfPendingCombinedNodes++;
-                }
+            } else if (context.nodeRoles().controller()) {
                 combinedNodesToRestart.add(context);
             }
         }
 
-        if (totalNumOfControllers > 1 && totalNumOfControllers == numOfPendingCombinedNodes) {
+        if (totalNumOfControllers > 1 && totalNumOfControllers == combinedNodesToRestart.stream().filter(context -> context.state().equals(State.NOT_RUNNING)).count()) {
             LOGGER.warnCr(reconciliation, "All controller nodes are combined and they are not running, therefore restarting them all now");
             // if all controller nodes (except a single node quorum) are combined and all of them are not running e.g. Pending, we need to restart them all at the same time to form the quorum.
             // This is because until the quorum has been formed and broker process can connect to it, the combined nodes do not become ready.
@@ -1027,6 +1071,7 @@ public class RackRolling {
             return combinedNodesToRestart.stream().map(Context::nodeId).toList();
         }
 
+        // restart in the following order: pure controllers, combined nodes and brokers
         Context nodeToRestart;
         if (pureControllerNodesToRestart.size() > 0) {
             nodeToRestart = pureControllerNodesToRestart.iterator().next();
@@ -1044,7 +1089,7 @@ public class RackRolling {
         return contexts.stream().collect(Collectors.groupingBy(context -> {
             if (context.state() == State.NOT_READY || context.state() == State.NOT_RUNNING) {
                 context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed health check");
-                LOGGER.debugCr(reconciliation, "{} is in {} state therefore will be restarted first", context.nodeRef(), context.state());
+                LOGGER.debugCr(reconciliation, "{} is in {} state therefore may get restarted first", context.nodeRef(), context.state());
                 return Plan.RESTART_FIRST;
 
             } else if (context.state() == State.RECOVERING) {

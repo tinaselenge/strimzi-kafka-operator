@@ -8,9 +8,11 @@ import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
+import io.strimzi.operator.common.BackOff;
 
 import java.time.Instant;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Per-server context information during a rolling restart/reconfigure
@@ -26,6 +28,7 @@ final class Context {
     private long lastTransition;
     /** The reasons this node needs to be restarted or reconfigured */
     private RestartReasons reason;
+    private BackOff backoff;
     /** The number of restarts attempted so far. */
     private int numRestarts;
     /** The number of reconfigurations attempted so far. */
@@ -35,18 +38,19 @@ final class Context {
     /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs) {
+    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, BackOff backOff, int numRestarts, int numReconfigs) {
         this.nodeRef = nodeRef;
         this.nodeRoles = nodeRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
+        this.backoff = backOff;
         this.numRestarts = numRestarts;
         this.numReconfigs = numReconfigs;
     }
 
-    static Context start(NodeRef nodeRef, NodeRoles nodeRoles, Function<Integer, RestartReasons> predicate, Time time) {
-        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0, 0);
+    static Context start(NodeRef nodeRef, NodeRoles nodeRoles, Function<Integer, RestartReasons> predicate, Supplier<BackOff> backOffSupplier, Time time) {
+        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), backOffSupplier.get(), 0, 0);
     }
 
     State transitionTo(State state, Time time) {
@@ -78,6 +82,10 @@ final class Context {
 
     public State state() {
         return state;
+    }
+
+    public BackOff backOff() {
+        return backoff;
     }
 
     public long lastTransition() {
