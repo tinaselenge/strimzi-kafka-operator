@@ -37,6 +37,7 @@ public interface PlatformClient {
     /**
      * Initiate the restart of the corresponding Kafka server.
      * @param nodeRef The node.
+     * @param reasons Reason for restarting the node to emit as an event
      */
     void restartNode(NodeRef nodeRef, RestartReasons reasons);
 
