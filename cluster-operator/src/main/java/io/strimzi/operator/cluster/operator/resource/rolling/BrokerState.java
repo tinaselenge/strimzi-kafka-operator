@@ -101,7 +101,7 @@ enum BrokerState {
     }
 
     void setRemainingSegmentsToRecover(int value) {
-        remainingLogsToRecover = value;
+        remainingSegmentsToRecover = value;
     }
 
     int remainingLogsToRecover() {

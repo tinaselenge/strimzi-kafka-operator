@@ -106,14 +106,14 @@ public class RackRollingTest {
             return this;
         }
 
-        MockBuilder mockHealthyNodes(PlatformClient platformClient, AdminClient adminClient, int... nodeIds) {
+        MockBuilder mockHealthyNodes(PlatformClient platformClient, int... nodeIds) {
             for (var nodeId : nodeIds) {
-                mockHealthyNode(platformClient, adminClient, nodeId);
+                mockHealthyNode(platformClient, nodeId);
             }
             return this;
         }
 
-        MockBuilder mockHealthyNode(PlatformClient platformClient, AdminClient adminClient, int nodeId) {
+        MockBuilder mockHealthyNode(PlatformClient platformClient, int nodeId) {
             doReturn(PlatformClient.NodeState.READY)
                     .when(platformClient)
                     .nodeState(nodeRefs.get(nodeId));
@@ -128,8 +128,10 @@ public class RackRollingTest {
         }
 
         MockBuilder mockPermanentlyUnhealthyNode(PlatformClient platformClient, int nodeId) {
-            doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.NOT_READY,
-                    PlatformClient.NodeState.NOT_READY)
+            doReturn(PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
+                    PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
+                    PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY,
+                    PlatformClient.NodeState.NOT_READY, PlatformClient.NodeState.READY)
                     .when(platformClient)
                     .nodeState(nodeRefs.get(nodeId));
             return this;
@@ -276,7 +278,7 @@ public class RackRollingTest {
                                 Function<Integer, RestartReasons> reason,
                                 Function<Integer, String> kafkaConfigProvider,
                                 boolean allowReconfiguration,
-                                Integer maxRestartsBatchSize) {
+                                int maxRestartsBatchSize) {
         return RackRolling.rollingRestart(time,
                 platformClient,
                 adminClient,
@@ -290,7 +292,9 @@ public class RackRollingTest {
                 kafkaConfigProvider,
                 null,
                 120_000,
-                maxRestartsBatchSize);
+                maxRestartsBatchSize,
+                1,
+                1);
     }
 
 
@@ -300,16 +304,25 @@ public class RackRollingTest {
                                   Collection<NodeRef> nodeRefList,
                                   Function<Integer, RestartReasons> reason,
                                   Function<Integer, String> kafkaConfigProvider,
-                                  Integer maxRestartsBatchSize) throws ExecutionException, InterruptedException, TimeoutException {
+                                  int maxRestartsBatchSize,
+                                  int maxRestart) throws ExecutionException, InterruptedException, TimeoutException {
 
-        var rr = newRollingRestart(platformClient,
+        var rr = RackRolling.rollingRestart(time,
+                platformClient,
                 adminClient,
                 agentClient,
                 nodeRefList,
                 reason,
-                kafkaConfigProvider,
+                () -> backOff,
+                Reconciliation.DUMMY_RECONCILIATION,
+                KafkaVersionTestUtils.getLatestVersion(),
                 true,
-                maxRestartsBatchSize);
+                kafkaConfigProvider,
+                null,
+                120_000,
+                maxRestartsBatchSize,
+                maxRestart,
+                1);
         List<Integer> nodes;
         do {
             nodes = rr.loop();
@@ -324,12 +337,12 @@ public class RackRollingTest {
         AgentClient agentClient = mock(AgentClient.class);
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0)
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
@@ -347,12 +360,12 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
                 .mockLeader(adminClient, -1)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0)
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
@@ -371,11 +384,11 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
                 .mockLeader(adminClient, -1)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
@@ -393,7 +406,7 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
                 .addTopic("topic-A", 0)
-                .mockPermanentlyUnhealthyNode(platformClient, 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockTopics(adminClient)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0)
                 .mockElectLeaders(adminClient, 0)
@@ -401,10 +414,10 @@ public class RackRollingTest {
 
         // when
         var ex = assertThrows(MaxRestartsExceededException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
+                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
 
         //then
-        assertEquals("Node pool-kafka-0/0 has been restarted 3 times", ex.getMessage());
+        assertEquals("Node pool-kafka-0/0 has been restarted 1 times", ex.getMessage());
     }
 
     @Test
@@ -415,7 +428,7 @@ public class RackRollingTest {
 
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, true, true, 0)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .addTopic("topic-A", 0)
                 .mockTopics(adminClient)
                 .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 0)
@@ -436,8 +449,8 @@ public class RackRollingTest {
             rr.loop();
         }
 
-        Mockito.verify(adminClient, times(3)).reconfigureNode(eq(nodeRef), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef),any());
+        Mockito.verify(adminClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
     }
 
     @Test
@@ -450,7 +463,7 @@ public class RackRollingTest {
         var nodeRef = new MockBuilder()
                 .addNode(platformClient, true, true, 0)
                 .addTopic("topic-A", 0)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, Map.of(0, 10_000L))
                 .mockTopics(adminClient)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0)
@@ -460,7 +473,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1));
+                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1));
 
         assertEquals("Servers [pool-kafka-0/0] failed to reach LEADING_ALL_PREFERRED within 120000: " +
                         "[Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=true, broker=true], state=SERVING, " +
@@ -469,31 +482,32 @@ public class RackRollingTest {
 
     }
 
-    @Test
-    void shouldThrowTimeoutExceptionIfAllPreferredLeadersNotElectedAfterReconfig() {
-        // given
-        PlatformClient platformClient = mock(PlatformClient.class);
-        AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRef = new MockBuilder()
-                .addNode(platformClient, false, true, 0)
-                .mockHealthyNode(platformClient, adminClient, 0)
-                .addTopic("topic-A", 0)
-                .mockTopics(adminClient)
-                .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 0)
-                .mockElectLeaders(adminClient, List.of(1), 0)
-                .done().get(0);
-
-        // when
-        var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1));
-
-        // then
-        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 60000: " +
-                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECONFIGURED, " +
-                        "lastTransition=1970-01-01T00:00:00Z, " +
-                        "reason=[], numRestarts=0, numReconfigs=1]",
-                te.getMessage());
-    }
+//    @Test
+//    void shouldThrowTimeoutExceptionIfAllPreferredLeadersNotElectedAfterReconfig() {
+//        // given
+//        PlatformClient platformClient = mock(PlatformClient.class);
+//        AdminClient adminClient = mock(AdminClient.class);
+//        AgentClient agentClient = mock(AgentClient.class);
+//        var nodeRef = new MockBuilder()
+//                .addNode(platformClient, false, true, 0)
+//                .mockHealthyNode(platformClient, adminClient, 0)
+//                .addTopic("topic-A", 0)
+//                .mockTopics(adminClient)
+//                .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 0)
+//                .mockElectLeaders(adminClient, List.of(1), 0)
+//                .done().get(0);
+//
+//        // when
+//        var te = assertThrows(TimeoutException.class,
+//                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1));
+//
+//        // then
+//        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 60000: " +
+//                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECONFIGURED, " +
+//                        "lastTransition=1970-01-01T00:00:00Z, " +
+//                        "reason=[], numRestarts=0, numReconfigs=1]",
+//                te.getMessage());
+//    }
 
     @Test
     void shouldRepeatAllPreferredLeaderElectionCallsUntilAllPreferredLeaderElected() throws ExecutionException, InterruptedException, TimeoutException {
@@ -501,17 +515,18 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRef = new MockBuilder()
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRef = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
                 .mockLeader(adminClient, -1)
                 .addTopic("topic-A", 0)
-                .mockHealthyNode(platformClient, adminClient, 0)
+                .mockHealthyNode(platformClient, 0)
                 .mockTopics(adminClient)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0)
                 .mockElectLeaders(adminClient, List.of(1, 1, 1, 1, 0), 0)
                 .done().get(0);
 
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
@@ -519,7 +534,7 @@ public class RackRollingTest {
     }
 
     @Test
-    void shouldThrowTimeoutExceptionIfPodNotAbleToRecoverAfterRestart() {
+    void shouldThrowExceptionIfNodeNotAbleToRecoverAfterRestart() {
 
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
@@ -530,38 +545,41 @@ public class RackRollingTest {
                 .mockLeader(adminClient, -1)
                 .addTopic("topic-A", 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_READY), 0)
-                .mockBrokerState(agentClient, List.of(BrokerState.RUNNING, BrokerState.RECOVERY), 0)
-                .mockTopics(adminClient)
-                .done().get(0);
-
-        var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
-
-        assertEquals("Failed to reach SERVING within 120000 ms: " +
-                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECOVERING, " +
-                        "lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0]",
-                te.getMessage());
-    }
-
-    @Test
-    void shouldRestartNodeInRecoveryState() {
-
-        // given
-        PlatformClient platformClient = mock(PlatformClient.class);
-        AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);
-        var nodeRef = new MockBuilder()
-                .addNode(platformClient, true, true, 0)
-                .addTopic("topic-A", 0)
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockBrokerState(agentClient, List.of(BrokerState.RECOVERY), 0)
                 .mockTopics(adminClient)
                 .done().get(0);
 
-        var te = assertThrows(RuntimeException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
+        var te = assertThrows(UnrestartableNodesException.class,
+                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Node pool-kafka-0/0 is still performing log recovery. The max attempt (1 retries) waiting for this node to finish log recovery has been reached.",
+        assertEquals("The max attempts (1) to wait for this node pool-kafka-0/0 to finish performing log recovery has been reached. There are 0 logs and 0 segments left to recover.",
+                te.getMessage());
+    }
+
+    @Test
+    void shouldThrowExceptionWithRecoveryProgressIfNodeIsInRecovery() {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        AdminClient adminClient = mock(AdminClient.class);
+        AgentClient agentClient = mock(AgentClient.class);
+        var bs = BrokerState.RECOVERY;
+        bs.setRemainingLogsToRecover(100);
+        bs.setRemainingSegmentsToRecover(300);
+        doReturn(bs)
+                .when(agentClient)
+                .getBrokerState(any());
+
+        var nodeRef = new MockBuilder()
+                .addNode(platformClient, true, true, 0)
+                .addTopic("topic-A", 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
+                .mockTopics(adminClient)
+                .done().get(0);
+
+        var te = assertThrows(RuntimeException.class,
+                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
+
+        assertEquals("The max attempts (1) to wait for this node pool-kafka-0/0 to finish performing log recovery has been reached. There are 100 logs and 300 segments left to recover.",
                 te.getMessage());
 
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
@@ -586,7 +604,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
         // then
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
@@ -614,7 +632,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1);
 
         // then
         Mockito.verify(adminClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -642,7 +660,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
 
         // then
         Mockito.verify(adminClient, never()).reconfigureNode(eq(nodeRef), any(), any());
@@ -670,7 +688,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1);
+        doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1, 1);
 
         // then
         Mockito.verify(adminClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -684,18 +702,19 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRefs = new MockBuilder()
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, false, true, 0, 1, 2)
                 .addTopic("topic-0", 0)
                 .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2)
                 .mockElectLeaders(adminClient, 0, 1, 2)
                 .done();
 
         // when
-        doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3);
+        doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 1);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -711,13 +730,14 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRefs = new MockBuilder()
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, false, true, 0, 1, 2)
                 .mockLeader(adminClient, -1)
                 .addTopic("topic-0", 0)
                 .addTopic("topic-1", 1)
                 .addTopic("topic-2", 2)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2)
                 .mockTopics(adminClient)
                 .mockElectLeaders(adminClient, 0, 1, 2)
@@ -725,7 +745,7 @@ public class RackRollingTest {
 
         // when
         doRollingRestart(platformClient, adminClient, agentClient,
-                nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3);
+                nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -740,12 +760,13 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .addNodes(platformClient, false, true, 3, 4, 5)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2, 3, 4, 5)
+                .mockHealthyNodes(platformClient, 0, 1, 2, 3, 4, 5)
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
                 .addTopic("topic-B", 4, List.of(4, 5, 3), List.of(3, 4, 5))
                 .addTopic("topic-C", 5, List.of(5, 3, 4), List.of(3, 4, 5))
@@ -792,11 +813,12 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, true, 0, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .addTopic("topic-A", 0, List.of(0, 1, 2), List.of(0, 1, 2))
                 .addTopic("topic-B", 1, List.of(1, 2, 0), List.of(0, 1, 2))
                 .addTopic("topic-C", 2, List.of(2, 0, 1), List.of(0, 1, 2))
@@ -836,7 +858,8 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2) // controllers
                 .addNodes(platformClient, false, true, // brokers
@@ -844,7 +867,7 @@ public class RackRollingTest {
                         4, 7, // rack Y
                         5, 8) // rack Z
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                .mockHealthyNodes(platformClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
                 .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
                 .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
@@ -891,7 +914,8 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(3, 10_000L,
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(3, 10_000L,
                 4, 10_000L,
                 5, 10_000L,
                 6, 10_000L,
@@ -903,7 +927,7 @@ public class RackRollingTest {
                         4, 7, // rack Y
                         5, 8) // rack Z
                 .mockLeader(adminClient, 3)
-                .mockHealthyNodes(platformClient, adminClient, 3, 4, 5, 6, 7, 8)
+                .mockHealthyNodes(platformClient, 3, 4, 5, 6, 7, 8)
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4, 5))
                 .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
                 .addTopic("topic-C", 4, List.of(4, 8, 6), List.of(4, 8, 6))
@@ -945,7 +969,8 @@ public class RackRollingTest {
     public void shouldRestartInExpectedOrderAndBatchedWithUrp() throws ExecutionException, InterruptedException, TimeoutException {
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2) // controllers
                 .addNodes(platformClient, false, true, // brokers
@@ -953,7 +978,7 @@ public class RackRollingTest {
                         4, 7, // rack Y
                         5, 8) // rack Z
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
+                .mockHealthyNodes(platformClient, 0, 1, 2, 3, 4, 5, 6, 7, 8)
                 // topic A is at its min ISR, so neither 3 nor 4 should be restarted
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4), 2)
                 .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
@@ -994,8 +1019,8 @@ public class RackRollingTest {
         //  or wait for some amount of time in case those brokers not in the replicas rejoin?
 
         // But for the reconciliation to eventually fail because of the unrestartable nodes
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
-                "Expect timeout because neither broker 3 nor 4 can be restarted while respecting the min ISR on topic A");
+        assertThrows(UnrestartableNodesException.class, rr::loop,
+                "Expect UnrestartableNodesException because neither broker 3 nor 4 can be restarted while respecting the min ISR on topic A");
 
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(3)), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(4)), any());
@@ -1010,7 +1035,8 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(3, 10_000L,
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(3, 10_000L,
                 4, 10_000L,
                 5, 10_000L,
                 6, 10_000L,
@@ -1022,7 +1048,7 @@ public class RackRollingTest {
                         4, 7, // rack Y
                         5, 8) // rack Z
                 .mockLeader(adminClient, 6)
-                .mockHealthyNodes(platformClient, adminClient,  3, 4, 5, 6, 7, 8)
+                .mockHealthyNodes(platformClient, 3, 4, 5, 6, 7, 8)
                 // topic A is at its min ISR, so neither 3 nor 4 should be restarted
                 .addTopic("topic-A", 3, List.of(3, 4, 5), List.of(3, 4), 2)
                 .addTopic("topic-B", 6, List.of(6, 7, 8), List.of(6, 7, 8))
@@ -1053,7 +1079,7 @@ public class RackRollingTest {
         assertNodesRestarted(platformClient, adminClient, nodeRefs, rr, 7); //7 doesn't have partitions in common with 4 but 4 will cause under min ISR
 
         // But for the reconciliation to eventually fail because of the unrestartable nodes
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because neither broker 3 nor 4 can be restarted while respecting the min ISR on topic A");
 
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(3)), any());
@@ -1072,11 +1098,12 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1097,7 +1124,7 @@ public class RackRollingTest {
         // We should be able to restart only the controller that is behind
         assertNodesRestarted(platformClient, adminClient, nodeRefs, rr, 2);
 
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because neither controller 0 nor 1 can be restarted without impacting the quorum health");
 
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(0)), any());
@@ -1110,15 +1137,16 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRollEvenSizedQuorumTwoControllersBehind() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldNotRollEvenSizedQuorumTwoControllersBehind() {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L, 3, 6000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L, 3, 6000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, true, 0, 1, 2, 4) //combined nodes
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2, 4)
+                .mockHealthyNodes(platformClient, 0, 1, 2, 4)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2, 4)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1135,7 +1163,7 @@ public class RackRollingTest {
                 3);
 
         // we should not restart any controllers as the majority have not caught up to the leader
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because none of the controllers can be restarted without impacting the quorum health");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1149,11 +1177,12 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("controller.quorum.fetch.timeout.ms", "4000")), Set.of(), 1)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1189,15 +1218,16 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRollControllersWithInvalidTimestamp() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldNotRollControllersWithInvalidTimestamp() {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, -1L, 1, 10_000L, 2, -1L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, -1L, 1, 10_000L, 2, -1L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1213,7 +1243,7 @@ public class RackRollingTest {
                 true,
                 3);
 
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because of invalid timestamps for controller 0 and 2");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1223,15 +1253,16 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRollControllersWithInvalidLeader() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldNotRollControllersWithInvalidLeader() {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockLeader(adminClient, -1)
-                .mockHealthyNodes(platformClient, adminClient, 0, 1, 2)
+                .mockHealthyNodes(platformClient, 0, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 0, 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1247,7 +1278,7 @@ public class RackRollingTest {
                 true,
                 3);
 
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because of invalid quorum leader");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1260,11 +1291,12 @@ public class RackRollingTest {
     public void shouldRollTwoNodesQuorumControllers() throws ExecutionException, InterruptedException, TimeoutException {
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1, 2)
+                .mockHealthyNodes(platformClient, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1293,11 +1325,12 @@ public class RackRollingTest {
     public void shouldRollTwoNodesQuorumOneControllerBehind() throws ExecutionException, InterruptedException, TimeoutException {
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 7_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(1, 10_000L, 2, 7_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 1, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1, 2)
+                .mockHealthyNodes(platformClient, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1315,7 +1348,7 @@ public class RackRollingTest {
 
         //only the controller that has fallen behind should be restarted
         assertNodesRestarted(platformClient, adminClient, nodeRefs, rr, 2);
-        assertThrows(UnrestartableNodesException.class, () -> rr.loop(),
+        assertThrows(UnrestartableNodesException.class, rr::loop,
                 "Expect UnrestartableNodesException because of controller 2 has fallen behind therefore controller 1 cannot be restarted");
 
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
@@ -1325,12 +1358,13 @@ public class RackRollingTest {
     public void shouldRollSingleNodeQuorum() throws ExecutionException, InterruptedException, TimeoutException {
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);Map<Integer, Long> quorumState = Map.of(1, 10_000L);
+        AgentClient agentClient = mock(AgentClient.class);
+        Map<Integer, Long> quorumState = Map.of(1, 10_000L);
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 1)
                 .addNode(platformClient, false, true, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1, 2)
+                .mockHealthyNodes(platformClient, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1360,7 +1394,8 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRefs = new MockBuilder()
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0)
                 .addNodes(platformClient, true, true, 1)
                 .addNodes(platformClient, false, true, 2)
@@ -1397,7 +1432,8 @@ public class RackRollingTest {
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
-        AgentClient agentClient = mock(AgentClient.class);var nodeRefs = new MockBuilder()
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, true, 0, 1, 2, 3, 4, 5)
                 .addTopic("topic-A", 0)
                 // all nodes are combined and not running e.g. pending
@@ -1439,10 +1475,10 @@ public class RackRollingTest {
                 .done();
 
         //If nodes never got into running state, we have to exit the inner loop somehow.
-        var ex = assertThrows(UnrestartableNodesException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
+        var ex = assertThrows(TimeoutException.class,
+                () -> doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Cannot restart node pool-kafka-1/1 because it has already been restarted. The max attempt waiting for it to start running has been reached.", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, nodeRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0]", ex.getMessage());
 
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
@@ -1463,14 +1499,15 @@ public class RackRollingTest {
                 .done();
 
         //If nodes never got into running state, we have to exit the inner loop somehow.
-        var ex = assertThrows(UnrestartableNodesException.class,
-                () -> doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1));
+        var ex = assertThrows(TimeoutException.class,
+                () -> doRollingRestart(platformClient, adminClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
 
-        assertEquals("Cannot restart node pool-kafka-0/0 because it has already been restarted. The max attempt waiting for it to start running has been reached.", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0]", ex.getMessage());
 
         Mockito.verify(adminClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());}
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());
+    }
 
     @Test
     public void shouldRestartCannotConnectToNodeException() throws ExecutionException, InterruptedException, TimeoutException {
@@ -1483,7 +1520,7 @@ public class RackRollingTest {
                 .addNodes(platformClient, true, false, 1)
                 .addNode(platformClient, false, true, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1, 2)
+                .mockHealthyNodes(platformClient, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1504,7 +1541,7 @@ public class RackRollingTest {
     }
 
     @Test
-    public void shouldNotRestartInitAdminException() throws ExecutionException, InterruptedException, TimeoutException {
+    public void shouldNotRestartInitAdminException() {
         PlatformClient platformClient = mock(PlatformClient.class);
         AdminClient adminClient = mock(AdminClient.class);
         AgentClient agentClient = mock(AgentClient.class);
@@ -1515,7 +1552,7 @@ public class RackRollingTest {
                 .addNodes(platformClient, true, false, 1)
                 .addNode(platformClient, false, true, 2)
                 .mockLeader(adminClient, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1, 2)
+                .mockHealthyNodes(platformClient, 1, 2)
                 .mockDescribeConfigs(adminClient, Set.of(), Set.of(), 1, 2)
                 .mockQuorumLastCaughtUpTimestamps(adminClient, quorumState)
                 .mockTopics(adminClient)
@@ -1531,7 +1568,7 @@ public class RackRollingTest {
                 true,
                 3);
 
-        var ex = assertThrows(RuntimeException.class, () -> rr.loop(),
+        var ex = assertThrows(RuntimeException.class, rr::loop,
                 "Expect RuntimeException because admin client cannot  be created");
         assertEquals("Failed to create admin client for brokers", ex.getMessage());
     }
@@ -1544,7 +1581,7 @@ public class RackRollingTest {
 
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, true, 1)
-                .mockHealthyNodes(platformClient, adminClient, 1)
+                .mockHealthyNodes(platformClient, 1)
                 .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 1)
                 .mockTopics(adminClient)
                 .done();

@@ -76,9 +76,7 @@ public class PlatformClientImpl implements PlatformClient {
     public void restartNode(NodeRef nodeRef, RestartReasons reason) {
         var pod = podOps.get(namespace, nodeRef.podName());
         podOps.restart(reconciliation, pod, 60_000)
-                .onComplete(i ->
-                    eventPublisher.publishRestartEvents(pod, reason)
-                );
+                .onComplete(i -> eventPublisher.publishRestartEvents(pod, reason));
     }
 
     @Override
