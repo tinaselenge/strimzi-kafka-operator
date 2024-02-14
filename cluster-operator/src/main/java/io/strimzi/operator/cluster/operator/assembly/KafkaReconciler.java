@@ -510,6 +510,8 @@ public class KafkaReconciler {
                 logging,
                 operationTimeoutMs,
                 1,
+                3,
+                3,
                 eventsPublisher);
 
         try {

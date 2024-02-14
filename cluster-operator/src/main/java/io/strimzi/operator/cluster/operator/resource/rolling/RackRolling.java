@@ -19,7 +19,6 @@ import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.operator.resource.PodOperator;
-import java.util.function.Supplier;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
@@ -36,6 +35,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -292,8 +292,7 @@ public class RackRolling {
             Set<Set<KafkaNode>> disjoint = partitionByHasAnyReplicasInCommon(reconciliation, rollable);
             // disjoint cannot be empty, because rollable isn't empty, and disjoint is a partitioning or rollable
             // We find the biggest set of brokers which can parallel-rolled
-            var sorted = disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
-            return sorted;
+            return disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
         }
     }
 
@@ -388,7 +387,7 @@ public class RackRolling {
 
         } else if (partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
-                    .filter(entry -> entry.getValue().controller() ? isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, controllerCount, quorumState) : true)
+                    .filter(entry -> !entry.getValue().controller() || isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, controllerCount, quorumState))
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             if (nodesNeedingRestart.isEmpty()) {
                 LOGGER.warnCr(reconciliation, "The combined nodes {} cannot be restarted without impacting the quorum health", partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER));
@@ -415,7 +414,7 @@ public class RackRolling {
     /**
      * @param reconciliation The roll client
      * @param nodesNeedingRestart The ids of the nodes which need to be restarted
-     * @param activeControllerId
+     * @param activeControllerId The active controller id
      * @param controllerCount The total number of controllers in this cluster
      * @param quorumState The maximum allowed size for a batch
      * @return The first one from the given list of nodes that can be restarted without impacting the quorum health.
@@ -481,9 +480,7 @@ public class RackRolling {
 
         // Add any servers which we know about but which were absent from any partition metadata
         // i.e. brokers without any assigned partitions
-        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> {
-            nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of()));
-        });
+        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of())));
 
         // TODO somewhere in here we need to take account of partition reassignments
         //      e.g. if a partition is being reassigned we expect its ISR to change
@@ -516,10 +513,6 @@ public class RackRolling {
         var bestBatch = pickBestBatchForRestart(batches);
         LOGGER.debugCr(reconciliation, "Best batch {}", idsOf(bestBatch));
         return bestBatch;
-    }
-
-    static String podName(NodeRef nodeRef) {
-        return nodeRef.podName();
     }
 
     private static void restartNode(Reconciliation reconciliation,
@@ -574,18 +567,23 @@ public class RackRolling {
                                        Time time,
                                        AdminClient adminClient,
                                        Context context,
-                                       long timeoutMs) throws TimeoutException {
+                                       long timeoutMs) {
         LOGGER.debugCr(reconciliation, "Node {}: Waiting for node to be leader of all its preferred replicas", context);
-        return Alarm.timer(time,
-                timeoutMs,
-                () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
-        .poll(1_000, () -> {
-            var remainingReplicas = adminClient.tryElectAllPreferredLeaders(context.nodeRef());
-            if (remainingReplicas == 0) {
-                context.transitionTo(State.LEADING_ALL_PREFERRED, time);
-            }
-            return remainingReplicas == 0;
-        });
+        try {
+            return Alarm.timer(time,
+                            timeoutMs,
+                            () -> "Failed to reach " + State.LEADING_ALL_PREFERRED + " within " + timeoutMs + ": " + context)
+                    .poll(1_000, () -> {
+                        var remainingReplicas = adminClient.tryElectAllPreferredLeaders(context.nodeRef());
+                        if (remainingReplicas == 0) {
+                            context.transitionTo(State.LEADING_ALL_PREFERRED, time);
+                        }
+                        return remainingReplicas == 0;
+                    });
+        } catch (TimeoutException e) {
+            LOGGER.warnCr(reconciliation, "Timed out waiting for node to be leader for all its preferred replicas");
+            return 0;
+        }
     }
 
     private static void restartInParallel(Reconciliation reconciliation,
@@ -601,7 +599,18 @@ public class RackRolling {
         }
         long remainingTimeoutMs = timeoutMs;
         for (Context context : batch) {
-            remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, context, State.SERVING, remainingTimeoutMs);
+            try {
+                remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, context, State.SERVING, remainingTimeoutMs);
+            } catch (TimeoutException e) {
+                LOGGER.warnCr(reconciliation, "Timed out waiting for node {} to become ready after a restart", context.nodeRef());
+                if (context.backOff().done()) {
+                    LOGGER.warnCr(reconciliation, "Reached the maximum attempt of waiting for node {} to become ready after a restart", context.nodeRef());
+                    throw e;
+                } else {
+                    context.backOff().delayMs();
+                    return;
+                }
+            }
         }
 
         var serverContextWrtIds = new HashMap<Integer, Context>();
@@ -699,8 +708,10 @@ public class RackRolling {
                 try {
                     var bs = agentClient.getBrokerState(nodeRef);
                     LOGGER.debugCr(reconciliation, "Node {}: brokerState is {}", nodeRef, bs);
-                    if (bs.value() == BrokerState.RECOVERY.value()) {
-                        LOGGER.warnCr(reconciliation, "Node {} is in log recovery. There {} logs and {} segments left to recover", bs.remainingLogsToRecover(), bs.remainingSegmentsToRecover());
+                    if (bs.value() >= BrokerState.RUNNING.value() && bs.value() != BrokerState.UNKNOWN.value()) {
+                        state = State.SERVING;
+                    } else if (bs.value() == BrokerState.RECOVERY.value()) {
+                        LOGGER.warnCr(reconciliation, "Node {} is in log recovery. There are {} logs and {} segments left to recover", nodeRef.nodeId(), bs.remainingLogsToRecover(), bs.remainingSegmentsToRecover());
                         state = State.RECOVERING;
                     } else {
                         state = State.NOT_READY;
@@ -740,7 +751,7 @@ public class RackRolling {
      * @param clusterCaCertSecret    Secret with the Cluster CA public key
      * @param coKeySecret            Secret with the Cluster CA private key
      * @param adminClientProvider    Kafka Admin client provider
-     * @param backOffSupplier
+     * @param backOffSupplier        Backoff supplier
      * @param reconciliation         Reconciliation marker
      * @param kafkaVersion           Kafka version
      * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
@@ -748,6 +759,8 @@ public class RackRolling {
      * @param kafkaLogging           Kafka logging configuration
      * @param postOperationTimeoutMs The maximum time in milliseconds to wait after a restart or reconfigure.
      * @param maxRestartBatchSize    The maximum number of nodes that might be restarted at once.
+     * @param maxRestarts               The maximum number of restart that can be done for a node
+     * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
      * @param eventPublisher         Kubernetes Events publisher for publishing events about node restarts
      * @return RackRolling instance
      */
@@ -765,11 +778,12 @@ public class RackRolling {
                                              String kafkaLogging,
                                              long postOperationTimeoutMs,
                                              int maxRestartBatchSize,
+                                             int maxRestarts,
+                                             int maxReconfigs,
                                              KubernetesRestartEventPublisher eventPublisher) {
-        //TODO: Add EventPublisher to emit kube events when restarting nodes
         PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
         Time time = Time.SYSTEM_TIME;
-        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
+        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
 
         AdminClient adminClient = new AdminClientImpl(reconciliation, clusterCaCertSecret, coKeySecret, adminClientProvider);
         AgentClient agentClient = new AgentClientImpl(reconciliation, clusterCaCertSecret, coKeySecret);
@@ -785,6 +799,8 @@ public class RackRolling {
                 kafkaLogging,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
+                maxRestarts,
+                maxReconfigs,
                 contextMap);
     }
 
@@ -802,8 +818,10 @@ public class RackRolling {
                                                 Function<Integer, String> kafkaConfigProvider,
                                                 String desiredLogging,
                                                 long postOperationTimeoutMs,
-                                                int maxRestartBatchSize) {
-        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(node -> node.nodeId(), node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
+                                                int maxRestartBatchSize,
+                                                int maxRestarts,
+                                                int maxReconfigs) {
+        final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, time)));
 
         return new RackRolling(time,
                 platformClient,
@@ -816,6 +834,8 @@ public class RackRolling {
                 desiredLogging,
                 postOperationTimeoutMs,
                 maxRestartBatchSize,
+                maxRestarts,
+                maxReconfigs,
                 contextMap);
     }
 
@@ -830,8 +850,8 @@ public class RackRolling {
     private final String desiredLogging;
     private final long postOperationTimeoutMs;
     private final int maxRestartBatchSize;
-    private final int maxRestarts = 3;
-    private final int maxReconfigs = 3;
+    private final int maxRestarts;
+    private final int maxReconfigs;
 
     /**
      * Constructor for RackRolling instance
@@ -846,6 +866,8 @@ public class RackRolling {
      * @param desiredLogging              Kafka logging configuration
      * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure.
      * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once.* @param contextMap context map
+     * @param maxRestarts               The maximum number of restart that can be done for a node
+     * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
      * @param contextMap                Map of contexts for each node
      */
     public RackRolling(Time time,
@@ -859,6 +881,8 @@ public class RackRolling {
                        String desiredLogging,
                        long postOperationTimeoutMs,
                        int maxRestartBatchSize,
+                       int maxRestarts,
+                       int maxReconfigs,
                        Map<Integer, Context> contextMap) {
         this.time = time;
         this.platformClient = platformClient;
@@ -870,6 +894,8 @@ public class RackRolling {
         this.desiredLogging = desiredLogging;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
+        this.maxRestarts = maxRestarts;
+        this.maxReconfigs = maxReconfigs;
         this.contextMap = contextMap;
         this.allowReconfiguration = allowReconfiguration;
     }
@@ -923,16 +949,7 @@ public class RackRolling {
             LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
 
             if (!byPlan.getOrDefault(Plan.WAIT_FOR_LOG_RECOVERY, List.of()).isEmpty()) {
-                byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY).stream().forEach(c -> {
-                    // call delayMs() to increment the number of attempts
-                    c.backOff().delayMs();
-                    // check if the maxAttempt for this node has been reached
-                    if (c.backOff().done()) {
-                        throw new RuntimeException("Node " +  c.nodeRef() + " is still performing log recovery. The max attempt (" + c.backOff().maxAttempts() + " retries) waiting for this node to finish log recovery has been reached.");
-                    }
-                });
-                time.sleep(postOperationTimeoutMs,0);
-                return byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY).stream().map(Context::nodeId).collect(Collectors.toList());
+                return waitForLogRecovery(byPlan.get(Plan.WAIT_FOR_LOG_RECOVERY));
             }
 
             // Restart any initially unready nodes
@@ -959,65 +976,22 @@ public class RackRolling {
             }
 
             // Reconfigure any reconfigurable nodes
-            for (var context : byPlan.getOrDefault(Plan.RECONFIGURE, List.of())) {
-                // TODO decide whether to support canary reconfiguration for cluster-scoped configs (nice to have)
-                try {
-                    reconfigureNode(reconciliation, time, adminClient, context, maxReconfigs);
-                } catch (RuntimeException e) {
-                    return List.of(context.nodeId());
-                }
-
-                time.sleep(postOperationTimeoutMs / 2, 0);
-                // TODO decide whether we need an explicit healthcheck here
-                //      or at least to know that the kube health check probe will have failed at the time
-                //      we break to OUTER (We need to test a scenario of breaking configuration change, does this sleep catch it?)
-                awaitPreferred(reconciliation, time, adminClient, context, postOperationTimeoutMs / 2);
-                // termination condition
-                if (contexts.stream().allMatch(context2 -> context2.state().equals(State.LEADING_ALL_PREFERRED))) {
-                    LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
-                    return List.of();
-                }
-                return List.of(context.nodeId());
+            if (!byPlan.getOrDefault(Plan.RECONFIGURE, List.of()).isEmpty()) {
+                return reconfigureNodes(byPlan.get(Plan.RECONFIGURE));
             }
 
-            var nodesToRestart = byPlan.getOrDefault(Plan.RESTART, List.of());
-            if (nodesToRestart.isEmpty()) {
+            if (byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()) {
                 LOGGER.debugCr(reconciliation, "Terminate: No Kafka nodes left to reconcile");
                 return List.of();
             }
 
             // If we get this far then all remaining nodes require a restart
-            // determine batches of nodes to be restarted together
-            var batch = nextBatch(reconciliation, adminClient, contextMap, nodesToRestart.stream().collect(Collectors.toMap(
-                    Context::nodeId,
-                    Context::nodeRoles
-            )), controllerCount, maxRestartBatchSize);
-
-            if (batch.isEmpty()) {
-                nodesToRestart.stream().forEach(c -> {
-                    // call delayMs() to increment the number of attempts
-                    c.backOff().delayMs();
-                    // check if the maxAttempt for this node has reached
-                    if (c.backOff().done()) {
-                        throw new UnrestartableNodesException("Cannot restart nodes " + nodesToRestart.stream().map(Context::nodeRef).collect(Collectors.toList()) + " because some of them violating quorum health or some topics' min.in.sync.replicas. The max attempt to retry the nodes has been reached.");
-                    }
-                });
-                time.sleep(postOperationTimeoutMs,0);
-                return nodesToRestart.stream().map(Context::nodeId).collect(Collectors.toList());
-            }
-
-            var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
-            var batchOfContexts = contexts.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
-            LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
-            // restart a batch
-            restartInParallel(reconciliation, time, platformClient, adminClient, agentClient, batchOfContexts, postOperationTimeoutMs, maxRestarts);
-
+            var restartedNodes = restartNodes(byPlan.get(Plan.RESTART), controllerCount);
             if (contexts.stream().allMatch(context -> context.state().equals(State.LEADING_ALL_PREFERRED))) {
                 LOGGER.debugCr(reconciliation, "Reconciliation completed successfully: All nodes leading preferred replicas after restart");
                 return List.of();
-            } else {
-                return batchOfIds.stream().toList();
             }
+            return restartedNodes;
 
         } catch (UncheckedInterruptedException e) {
             throw e.getCause();
@@ -1038,24 +1012,83 @@ public class RackRolling {
         }
     }
 
+    private List<Integer> restartNodes(List<Context> nodesToRestart, int controllerCount) throws TimeoutException {
+        // determine batches of nodes to be restarted together
+        var batch = nextBatch(reconciliation, adminClient, contextMap, nodesToRestart.stream().collect(Collectors.toMap(
+                Context::nodeId,
+                Context::nodeRoles
+        )), controllerCount, maxRestartBatchSize);
+
+        if (batch.isEmpty()) {
+            nodesToRestart.forEach(c -> {
+                // call delayMs() to increment the number of attempts
+                c.backOff().delayMs();
+                // check if the maxAttempt for this node has reached
+                if (c.backOff().done()) {
+                    throw new UnrestartableNodesException("Cannot restart nodes " + nodesToRestart.stream().map(Context::nodeRef).toList() +
+                            " because some of them violating quorum health or some topics' min.in.sync.replicas. " +
+                            "The max attempts (" + c.backOff().maxAttempts() + ") to retry the nodes has been reached.");
+                }
+            });
+            time.sleep(postOperationTimeoutMs, 0);
+            return nodesToRestart.stream().map(Context::nodeId).collect(Collectors.toList());
+        }
+
+        var batchOfIds = batch.stream().map(KafkaNode::id).collect(Collectors.toSet());
+        var batchOfContexts = nodesToRestart.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
+        LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
+        // restart a batch
+        restartInParallel(reconciliation, time, platformClient, adminClient, agentClient, batchOfContexts, postOperationTimeoutMs, maxRestarts);
+
+        return batchOfIds.stream().toList();
+    }
+
+    private List<Integer> reconfigureNodes(List<Context> contexts) {
+        List<Integer> reconfiguredNode = List.of();
+        for (var context : contexts) {
+            // TODO decide whether to support canary reconfiguration for cluster-scoped configs (nice to have)
+            try {
+                reconfigureNode(reconciliation, time, adminClient, context, maxReconfigs);
+            } catch (RuntimeException e) {
+                return List.of(context.nodeId());
+            }
+
+            time.sleep(postOperationTimeoutMs / 2, 0);
+            // TODO decide whether we need an explicit healthcheck here
+            //      or at least to know that the kube health check probe will have failed at the time
+            //      we break to OUTER (We need to test a scenario of breaking configuration change, does this sleep catch it?)
+            awaitPreferred(reconciliation, time, adminClient, context, postOperationTimeoutMs / 2);
+            // termination condition
+            if (contexts.stream().allMatch(context2 -> context2.state().equals(State.LEADING_ALL_PREFERRED))) {
+                LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
+                break;
+            }
+            reconfiguredNode = List.of(context.nodeId());
+        }
+        return reconfiguredNode;
+    }
+
+    private List<Integer> waitForLogRecovery(List<Context> contexts) {
+        contexts.forEach(c -> {
+            try {
+                awaitState(reconciliation, time, platformClient, agentClient, c, State.SERVING, postOperationTimeoutMs);
+            } catch (TimeoutException e) {
+                if (c.backOff().done()) {
+                    var brokerState = agentClient.getBrokerState(c.nodeRef());
+                    throw new UnrestartableNodesException("The max attempts (" + c.backOff().maxAttempts() + ") to wait for this node "  +  c.nodeRef() + " to finish performing log recovery has been reached. " +
+                            "There are " + brokerState.remainingLogsToRecover() + " logs and " + brokerState.remainingSegmentsToRecover() + " segments left to recover.");
+                } else {
+                    c.backOff().delayMs();
+                }
+            }
+        });
+        return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
+    }
+
     private List<Integer> restartUnReadyNodes(List<Context> contexts, int totalNumOfControllers) throws TimeoutException {
         Set<Context> pureControllerNodesToRestart = new HashSet<>();
         Set<Context> combinedNodesToRestart = new HashSet<>();
         for (var context : contexts) {
-            if (context.state().equals(State.NOT_RUNNING)) {
-               if (context.numRestarts() > 0) {
-                   // call delayMs() to increment the number of attempts
-                   context.backOff().delayMs();
-                   if (context.backOff().done()) {
-                       throw new UnrestartableNodesException("Cannot restart node " + context.nodeRef() + " because it has already been restarted. The max attempt waiting for it to start running has been reached.");
-                   } else {
-                       LOGGER.debugCr(reconciliation, "Cannot restart node {} because it has been previously restarted.", context.nodeRef());
-                       time.sleep(postOperationTimeoutMs, 0);
-                       return List.of(context.nodeId());
-                   }
-               }
-            }
-
             if (context.nodeRoles().controller() && !context.nodeRoles().broker()) {
                 pureControllerNodesToRestart.add(context);
             } else if (context.nodeRoles().controller()) {
@@ -1081,7 +1114,25 @@ public class RackRolling {
             nodeToRestart = contexts.get(0);
         }
 
-        restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
+        if (nodeToRestart.state() == State.NOT_RUNNING && nodeToRestart.numRestarts() > 0 && !nodeToRestart.reason().contains(RestartReason.POD_HAS_OLD_REVISION)) {
+            // If the node is not running (e.g. unschedulable) then restarting it, likely won't make any difference.
+            // Proceeding and deleting another node may result in it not running too. Avoid restarting it unless it has an old revision.
+            LOGGER.warnCr(reconciliation, "Node {} has been already restarted but still not running. Therefore will not restart it");
+        } else {
+            restartNode(reconciliation, time, platformClient, nodeToRestart, maxRestarts);
+        }
+
+        try {
+            awaitState(reconciliation, time, platformClient, agentClient, nodeToRestart, State.SERVING, postOperationTimeoutMs);
+        } catch (TimeoutException e) {
+            LOGGER.warnCr(reconciliation, "Timed out waiting for node {} to become ready after a restart", nodeToRestart.nodeRef());
+            if (nodeToRestart.backOff().done()) {
+                LOGGER.warnCr(reconciliation, "Reached the maximum attempt of waiting for node {} to become ready after a restart", nodeToRestart.nodeRef());
+                throw e;
+            } else {
+                nodeToRestart.backOff().delayMs();
+            }
+        }
         return List.of(nodeToRestart.nodeId());
     }
 
@@ -1118,7 +1169,6 @@ public class RackRolling {
                     // If a pure controller's configuration has changed, it should have non-empty reasons to restart.
                     return Plan.NOP;
                 } else {
-
                     if (context.numReconfigs() > 0
                             && (context.state() == State.LEADING_ALL_PREFERRED
                             || context.state() == State.RECONFIGURED)) {
@@ -1130,8 +1180,7 @@ public class RackRolling {
                     }
                 }
             }
-        }
-        ));
+        }));
     }
 
 }
