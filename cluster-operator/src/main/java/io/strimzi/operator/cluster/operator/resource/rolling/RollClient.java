@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * An abstraction over a Kafka Admin client.
  */
-interface AdminClient {
+interface RollClient {
     /**
      * Sets admin client for brokers.
      **/
@@ -39,6 +39,12 @@ interface AdminClient {
      **/
     void closeBrokerAdminClient();
 
+    /**
+     * Checks if node is responsive by connecting to it via Admin API
+     * @param nodeRef The node ref
+     * @param controller a boolean value informing if it's a controller node
+     * @return true if node is not responsive, otherwise false
+     */
     boolean cannotConnectToNode(NodeRef nodeRef, boolean controller);
 
     /**
