@@ -31,13 +31,14 @@ public interface PlatformClient {
 
     /**
      * @param nodeRef Node reference
-     * @return NodeState according to the platform */
+     * @return NodeState according to the platform
+     * */
     NodeState nodeState(NodeRef nodeRef);
 
     /**
      * Initiate the restart of the corresponding Kafka server.
      * @param nodeRef The node.
-     * @param reasons Reason for restarting the node to emit as an event
+     * @param reasons Reasons for restarting the node to emit as an event
      */
     void restartNode(NodeRef nodeRef, RestartReasons reasons);
 
@@ -45,6 +46,6 @@ public interface PlatformClient {
      * @param nodeRef Node reference
      * @return Kafka process roles for this node according to the platform.
      * This could differ from the roles that the running process actually has (for instance if the process needs to be restarted to pick up its current roles).
-     * */
+     */
     NodeRoles nodeRoles(NodeRef nodeRef);
 }

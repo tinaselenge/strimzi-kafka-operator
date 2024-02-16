@@ -28,29 +28,33 @@ final class Context {
     private long lastTransition;
     /** The reasons this node needs to be restarted or reconfigured */
     private RestartReasons reason;
-    private BackOff backoff;
-    /** The number of restarts attempted so far. */
+    /** The number of restarts done so far. */
     private int numRestarts;
-    /** The number of reconfigurations attempted so far. */
+    /** The number of reconfigurations done so far. */
     private int numReconfigs;
+    /** The number of operational attempts so far. */
+    private int numAttempts;
     /** The difference between the current logging config and the desired logging config */
     private KafkaBrokerLoggingConfigurationDiff loggingDiff;
     /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, BackOff backOff, int numRestarts, int numReconfigs) {
+    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs, int numAttempts) {
         this.nodeRef = nodeRef;
         this.nodeRoles = nodeRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
-        this.backoff = backOff;
         this.numRestarts = numRestarts;
         this.numReconfigs = numReconfigs;
+        this.numAttempts = numAttempts;
     }
 
-    static Context start(NodeRef nodeRef, NodeRoles nodeRoles, Function<Integer, RestartReasons> predicate, Supplier<BackOff> backOffSupplier, Time time) {
-        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), backOffSupplier.get(), 0, 0);
+    static Context start(NodeRef nodeRef,
+                         NodeRoles nodeRoles,
+                         Function<Integer, RestartReasons> predicate,
+                         Time time) {
+        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(nodeRef.nodeId()), 0, 0, 1);
     }
 
     State transitionTo(State state, Time time) {
@@ -84,10 +88,6 @@ final class Context {
         return state;
     }
 
-    public BackOff backOff() {
-        return backoff;
-    }
-
     public long lastTransition() {
         return lastTransition;
     }
@@ -104,6 +104,14 @@ final class Context {
         return numReconfigs;
     }
 
+    public int numAttempts() {
+        return numAttempts;
+    }
+
+    public void incrementNumAttempts() {
+        this.numAttempts++;
+    }
+
     @Override
     public String toString() {
 
@@ -114,7 +122,8 @@ final class Context {
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
                 "numRestarts=" + numRestarts + ", " +
-                "numReconfigs=" + numReconfigs + ']';
+                "numReconfigs=" + numReconfigs + ", " +
+                "numAttempts=" + numAttempts + ']';
     }
 
     public void brokerConfigDiff(KafkaBrokerConfigurationDiff diff) {
