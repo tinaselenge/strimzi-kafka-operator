@@ -8,11 +8,9 @@ import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
-import io.strimzi.operator.common.BackOff;
 
 import java.time.Instant;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
  * Per-server context information during a rolling restart/reconfigure
@@ -21,7 +19,7 @@ final class Context {
     /** The node this context refers to */
     private final NodeRef nodeRef;
     /** The process roles currently assigned to the node */
-    private final NodeRoles nodeRoles;
+    private final NodeRoles currentRoles;
     /** The state of the node the last time it was observed */
     private State state;
     /** The time of the last state transition */
@@ -39,9 +37,9 @@ final class Context {
     /** The difference between the current node config and the desired node config */
     private KafkaBrokerConfigurationDiff brokerConfigDiff;
 
-    private Context(NodeRef nodeRef, NodeRoles nodeRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs, int numAttempts) {
+    private Context(NodeRef nodeRef, NodeRoles currentRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs, int numAttempts) {
         this.nodeRef = nodeRef;
-        this.nodeRoles = nodeRoles;
+        this.currentRoles = currentRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
@@ -80,8 +78,8 @@ final class Context {
         return nodeRef;
     }
 
-    public NodeRoles nodeRoles() {
-        return nodeRoles;
+    public NodeRoles currentRoles() {
+        return currentRoles;
     }
 
     public State state() {
@@ -117,7 +115,7 @@ final class Context {
 
         return "Context[" +
                 "nodeRef=" + nodeRef + ", " +
-                "nodeRoles=" + nodeRoles + ", " +
+                "currentRoles=" + currentRoles + ", " +
                 "state=" + state + ", " +
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
