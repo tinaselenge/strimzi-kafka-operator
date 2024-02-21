@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -59,6 +60,10 @@ public class RackRollingTest {
 
     private static RestartReasons podUnresponsive(int serverId) {
         return RestartReasons.of(RestartReason.POD_UNRESPONSIVE);
+    }
+
+    private static RestartReasons podHasOldRevision(int serverId) {
+        return RestartReasons.of(RestartReason.POD_HAS_OLD_REVISION);
     }
 
     static class MockBuilder {
@@ -451,60 +456,68 @@ public class RackRollingTest {
     }
 
     @Test
-    void shouldThrowTimeoutExceptionIfAllPreferredLeaderNotElectedAfterRestart() {
+    void shouldNotThrowExceptionIfAllPreferredLeaderNotElectedAfterRestart() throws ExecutionException, InterruptedException, TimeoutException {
 
         // given
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         AgentClient agentClient = mock(AgentClient.class);
-        var nodeRef = new MockBuilder()
-                .addNode(platformClient, true, true, 0)
+        var nodeRefs = new MockBuilder()
+                .addNode(platformClient, false, true, 0)
+                .addNode(platformClient, true, false, 1)
+                .mockHealthyNodes(platformClient, 0, 1)
                 .addTopic("topic-A", 0)
-                .mockHealthyNode(platformClient, 0)
-                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(0, 10_000L))
+                .mockLeader(rollClient, 1)
+                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(1, 10_000L))
                 .mockTopics(rollClient)
-                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0)
+                .mockDescribeConfigs(rollClient, Set.of(), Set.of(), 0, 1)
                 .mockElectLeaders(rollClient,
                         List.of(2), // there's always 2 preferred partitions which broker 0 cannot be elected leader of
                         0)
-                .done().get(0);
+                .done();
 
-        var te = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1));
+        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
 
-        assertEquals("Servers [pool-kafka-0/0] failed to reach LEADING_ALL_PREFERRED within 120000: " +
-                        "[Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=true, broker=true], state=SERVING, " +
-                        "lastTransition=1970-01-01T00:00:01Z, reason=[MANUAL_ROLLING_UPDATE], numRestarts=1, numReconfigs=0, numAttempts=1]]",
-                te.getMessage());
+        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(0)), any(), any());
+        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
+
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
+
+        Mockito.verify(rollClient, atLeastOnce()).tryElectAllPreferredLeaders(eq(nodeRefs.get(0)));
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
 
     }
 
-//    @Test
-//    void shouldThrowTimeoutExceptionIfAllPreferredLeadersNotElectedAfterReconfig() {
-//        // given
-//        PlatformClient platformClient = mock(PlatformClient.class);
-//        AdminClient adminClient = mock(AdminClient.class);
-//        AgentClient agentClient = mock(AgentClient.class);
-//        var nodeRef = new MockBuilder()
-//                .addNode(platformClient, false, true, 0)
-//                .mockHealthyNode(platformClient, adminClient, 0)
-//                .addTopic("topic-A", 0)
-//                .mockTopics(adminClient)
-//                .mockDescribeConfigs(adminClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 0)
-//                .mockElectLeaders(adminClient, List.of(1), 0)
-//                .done().get(0);
-//
-//        // when
-//        var te = assertThrows(TimeoutException.class,
-//                () -> doRollingRestart(platformClient, adminClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1));
-//
-//        // then
-//        assertEquals("Failed to reach LEADING_ALL_PREFERRED within 60000: " +
-//                        "Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=RECONFIGURED, " +
-//                        "lastTransition=1970-01-01T00:00:00Z, " +
-//                        "reason=[], numRestarts=0, numReconfigs=1]",
-//                te.getMessage());
-//    }
+    @Test
+    void shouldNotThrowExceptionIfAllPreferredLeadersNotElectedAfterReconfig() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNode(platformClient, false, true, 0)
+                .addNode(platformClient, true, false, 1)
+                .mockHealthyNodes(platformClient, 0, 1)
+                .addTopic("topic-A", 0)
+                .mockLeader(rollClient, 1)
+                .mockQuorumLastCaughtUpTimestamps(rollClient, Map.of(1, 10_000L))
+                .mockTopics(rollClient)
+                .mockDescribeConfigs(rollClient, Set.of(new ConfigEntry("compression.type", "zstd")), Set.of(), 0, 1)
+                .mockElectLeaders(rollClient, List.of(1), 0)
+                .done();
+
+        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1);
+
+        Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRefs.get(0)), any(), any());
+        Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
+
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
+
+        Mockito.verify(rollClient, atLeastOnce()).tryElectAllPreferredLeaders(eq(nodeRefs.get(0)));
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
+    }
 
     @Test
     void shouldRepeatAllPreferredLeaderElectionCallsUntilAllPreferredLeaderElected() throws ExecutionException, InterruptedException, TimeoutException {
@@ -1362,7 +1375,7 @@ public class RackRollingTest {
                 rollClient,
                 agentClient,
                 nodeRefs.values(),
-                RackRollingTest::manualRolling,
+                RackRollingTest::podHasOldRevision,
                 EMPTY_CONFIG_SUPPLIER,
                 true,
                 3);
@@ -1428,7 +1441,7 @@ public class RackRollingTest {
         var ex = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, nodeRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
@@ -1443,8 +1456,8 @@ public class RackRollingTest {
         var nodeRefs = new MockBuilder()
                 .addNode(platformClient, false, true, 0)
                 .addNode(platformClient, true, false, 1)
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING), 0)
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_RUNNING), 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.READY, PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 1)
                 .mockTopics(rollClient)
                 .done();
 
@@ -1452,7 +1465,7 @@ public class RackRollingTest {
         var ex = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, nodeRoles=NodeRoles[controller=false, broker=true], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:03Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:05Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
