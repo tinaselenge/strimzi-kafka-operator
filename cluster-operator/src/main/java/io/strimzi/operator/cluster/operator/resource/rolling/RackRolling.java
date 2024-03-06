@@ -18,6 +18,7 @@ import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.operator.resource.PodOperator;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -882,6 +883,29 @@ public class RackRolling {
 
     private final ScheduledExecutorService singleExecutor = Executors.newSingleThreadScheduledExecutor(
             runnable -> new Thread(runnable, "kafka-roller"));
+
+    /**  Runs the roller via single thread Executor
+     *
+     * @return a future based on the rolling outcome.
+     */
+    public Future<Void> executeRolling() {
+        Promise<Void> result = Promise.promise();
+        singleExecutor.submit(() -> {
+            List<Integer> nodesToRestart;
+            try {
+                do {
+                    nodesToRestart = loop();
+                } while (!nodesToRestart.isEmpty());
+                result.complete();
+            } catch (Exception e) {
+                LOGGER.debugCr(reconciliation, "Something went wrong when trying to do a rolling restart", e);
+                singleExecutor.shutdown();
+                result.fail(e);
+            }
+        });
+
+        return result.future();
+    }
 
     /**
      * Process each context to determine which nodes need restarting.
