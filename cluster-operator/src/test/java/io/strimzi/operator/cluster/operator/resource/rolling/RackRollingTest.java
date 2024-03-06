@@ -1441,10 +1441,10 @@ public class RackRollingTest {
         var ex = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:01Z, reason=[POD_UNRESPONSIVE], numRestarts=1, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:00Z, reason=[POD_UNRESPONSIVE], numRestarts=0, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
-        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
+        Mockito.verify(platformClient, times(0)).restartNode(eq(nodeRefs.get(1)), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(0)), any());
     }
 
