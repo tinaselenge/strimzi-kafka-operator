@@ -514,17 +514,7 @@ public class KafkaReconciler {
                 10,
                 eventsPublisher);
 
-        try {
-            List<Integer> nodesToRestart;
-            do {
-                nodesToRestart = rr.loop();
-            } while (!nodesToRestart.isEmpty());
-
-            return Future.succeededFuture();
-
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
+        return rr.executeRolling();
     }
 
     /**
