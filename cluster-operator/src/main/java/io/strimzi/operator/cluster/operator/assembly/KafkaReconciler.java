@@ -512,7 +512,7 @@ public class KafkaReconciler {
                 10,
                 eventsPublisher);
 
-        return rr.executeRolling();
+        return rr.executeRollingAsync(vertx);
     }
 
     /**
