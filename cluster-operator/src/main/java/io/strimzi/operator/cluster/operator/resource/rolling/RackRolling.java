@@ -23,18 +23,13 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import org.apache.kafka.clients.admin.ConfigEntry;
-import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
@@ -53,47 +48,6 @@ public class RackRolling {
     private static final long CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT = 2000L;
     private final Map<Integer, Context> contextMap;
     private static long controllerQuorumFetchTimeout = CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
-
-    private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
-        final boolean wouldByUnderReplicated;
-        if (minIsr == null) {
-            // if topic doesn't have minISR then it's fine
-            wouldByUnderReplicated = false;
-        } else {
-            // else topic has minISR
-            // compute spare = size(ISR) - minISR
-            int sizeIsr = replica.isrSize();
-            int spare = sizeIsr - minIsr;
-            if (spare > 0) {
-                // if (spare > 0) then we can restart the broker hosting this replica
-                // without the topic being under-replicated
-                wouldByUnderReplicated = false;
-            } else if (spare == 0) {
-                // if we restart this broker this replica would be under-replicated if it's currently in the ISR
-                // if it's not in the ISR then restarting the server won't make a difference
-                wouldByUnderReplicated = replica.isInIsr();
-            } else {
-                // this partition is already under-replicated
-                // if it's not in the ISR then restarting the server won't make a difference
-                // but in this case since it's already under-replicated let's
-                // not possible prolong the time to this server rejoining the ISR
-                wouldByUnderReplicated = true;
-            }
-        }
-        return wouldByUnderReplicated;
-    }
-
-    private static boolean affectsAvailability(KafkaNode kafkaNode,
-                                               Map<String, Integer> minIsrByTopic) {
-        for (var replica : kafkaNode.replicas()) {
-            var topicName = replica.topicName();
-            Integer minIsr = minIsrByTopic.get(topicName);
-            if (wouldBeUnderReplicated(minIsr, replica)) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     /**
      * Returns true if the majority of the controllers' lastCaughtUpTimestamps are within
@@ -160,158 +114,6 @@ public class RackRolling {
         }
     }
 
-    /**
-     * Split the given cells into batches,
-     * taking account of {@code acks=all} availability and the given maxBatchSize
-     */
-    static List<Set<KafkaNode>> batchCells(Reconciliation reconciliation,
-                                           List<Set<KafkaNode>> cells,
-                                           Map<String, Integer> minIsrByTopic,
-                                           int maxBatchSize) {
-        List<Set<KafkaNode>> result = new ArrayList<>();
-        Set<KafkaNode> unavail = new HashSet<>();
-        for (var cell : cells) {
-            List<Set<KafkaNode>> availBatches = new ArrayList<>();
-            for (var kafkaNode : cell) {
-                if (affectsAvailability(kafkaNode, minIsrByTopic)) {
-                    LOGGER.debugCr(reconciliation, "No replicas of node {} will be unavailable => add to batch",
-                            kafkaNode.id());
-                    var currentBatch = availBatches.isEmpty() ? null : availBatches.get(availBatches.size() - 1);
-                    if (currentBatch == null || currentBatch.size() >= maxBatchSize) {
-                        currentBatch = new HashSet<>();
-                        availBatches.add(currentBatch);
-                    }
-                    currentBatch.add(kafkaNode);
-                } else {
-                    LOGGER.debugCr(reconciliation, "Some replicas of node {} will be unavailable => do not add to batch", kafkaNode.id());
-                    unavail.add(kafkaNode);
-                }
-            }
-            result.addAll(availBatches);
-        }
-        if (result.isEmpty() && !unavail.isEmpty()) {
-            LOGGER.warnCr(reconciliation, "Cannot restart nodes {} without violating some topics' min.in.sync.replicas", idsOf(unavail));
-        }
-        return result;
-    }
-
-    static <T> T elementInIntersection(Set<T> set, Set<T> set2) {
-        for (T t : set) {
-            if (set2.contains(t)) {
-                return t;
-            }
-        }
-        return null;
-    }
-
-    static boolean containsAny(Reconciliation reconciliation,
-                               KafkaNode node,
-                               Set<Replica> nodeReplicas,
-                               Set<KafkaNode> cell) {
-        for (var b : cell) {
-            var commonReplica = elementInIntersection(b.replicas(), nodeReplicas);
-            if (commonReplica != null) {
-                LOGGER.debugCr(reconciliation, "Nodes {} and {} have at least {} in common",
-                        node.id(), b.id(), commonReplica);
-                return true;
-            }
-        }
-        LOGGER.debugCr(reconciliation, "Node {} has no replicas in common with any of the nodes in {}",
-                node.id(), idsOf(cell));
-        return false;
-    }
-
-    private static String idsOf(Collection<KafkaNode> cell) {
-        return cell.stream()
-                .map(kafkaNode -> Integer.toString(kafkaNode.id()))
-                .collect(Collectors.joining(",", "{", "}"));
-    }
-
-    /** Returns a new set that is the union of each of the sets in the given {@code merge}. I.e. flatten without duplicates. */
-    private static <T> Set<T> union(Set<Set<T>> merge) {
-        HashSet<T> result = new HashSet<>();
-        for (var x : merge) {
-            result.addAll(x);
-        }
-        return result;
-    }
-
-    private static Set<Set<KafkaNode>> partitionByHasAnyReplicasInCommon(Reconciliation reconciliation, Set<KafkaNode> rollable) {
-        Set<Set<KafkaNode>> disjoint = new HashSet<>();
-        for (var node : rollable) {
-            var nodeReplicas = node.replicas();
-            Set<Set<KafkaNode>> merge = new HashSet<>();
-            for (Set<KafkaNode> cell : disjoint) {
-                if (!containsAny(reconciliation, node, nodeReplicas, cell)) {
-                    LOGGER.debugCr(reconciliation, "Add {} to {{}}", node.id(), idsOf(cell));
-                    merge.add(cell);
-                    merge.add(Set.of(node));
-                    // problem is here, we're iterating over all cells (ones which we've decided should be disjoint)
-                    // and we merged them in violation of that
-                    // we could break here at the end of the if block (which would be correct)
-                    // but it might not be optimal (in the sense of forming large cells)
-                    break;
-                }
-            }
-            if (merge.isEmpty()) {
-                LOGGER.debugCr(reconciliation, "New cell: {{}}", node.id());
-                disjoint.add(Set.of(node));
-            } else {
-                LOGGER.debugCr(reconciliation, "Merge {}", idsOf2(merge));
-                for (Set<KafkaNode> r : merge) {
-                    LOGGER.debugCr(reconciliation, "Remove cell: {}", idsOf(r));
-                    disjoint.remove(r);
-                }
-                Set<KafkaNode> newCell = union(merge);
-                LOGGER.debugCr(reconciliation, "New cell: {{}}", idsOf(newCell));
-                disjoint.add(newCell);
-            }
-            LOGGER.debugCr(reconciliation, "Disjoint cells now: {}", idsOf2(disjoint));
-        }
-        return disjoint;
-    }
-
-    private static String idsOf2(Collection<? extends Collection<KafkaNode>> merge) {
-        return merge.stream()
-                .map(RackRolling::idsOf)
-                .collect(Collectors.joining(",", "{", "}"));
-    }
-
-    /**
-     * Partition the given {@code brokers}
-     * into cells that can be rolled in parallel because they
-     * contain no replicas in common.
-     */
-    static List<Set<KafkaNode>> cells(Reconciliation reconciliation,
-                                      Collection<KafkaNode> brokers) {
-
-        // find brokers that are individually rollable
-        var rollable = brokers.stream().collect(Collectors.toCollection(() ->
-                new TreeSet<>(Comparator.comparing(KafkaNode::id))));
-        if (rollable.size() < 2) {
-            return List.of(rollable);
-        } else {
-            // partition the set under the equivalence relation "shares a partition with"
-            Set<Set<KafkaNode>> disjoint = partitionByHasAnyReplicasInCommon(reconciliation, rollable);
-            // disjoint cannot be empty, because rollable isn't empty, and disjoint is a partitioning or rollable
-            // We find the biggest set of brokers which can parallel-rolled
-            return disjoint.stream().sorted(Comparator.<Set<?>>comparingInt(Set::size).reversed()).toList();
-        }
-    }
-
-
-    /**
-     * Pick the "best" batch to be restarted.
-     * This is the largest batch of available servers
-     * @return the "best" batch to be restarted
-     */
-    static Set<KafkaNode> pickBestBatchForRestart(List<Set<KafkaNode>> batches) {
-        var sorted = batches.stream().sorted(Comparator.comparing(Set::size)).toList();
-        if (sorted.size() == 0) {
-            return Set.of();
-        }
-        return sorted.get(sorted.size() - 1);
-    }
 
     /**
      * Figures out a batch of nodes that can be restarted together.
@@ -339,9 +141,10 @@ public class RackRolling {
         enum NodeFlavour {
             NON_ACTIVE_PURE_CONTROLLER, // A pure KRaft controller node that is not the active controller
             ACTIVE_PURE_CONTROLLER, // A pure KRaft controllers node that is the active controller
-            BROKER_AND_NOT_ACTIVE_CONTROLLER, // A node that is at least a broker and might be a
+            COMBINED_AND_NOT_ACTIVE_CONTROLLER, // A combined node that is at least a broker and might be a
             // controller (combined node) but that is not the active controller
-            BROKER_AND_ACTIVE_CONTROLLER // A node that is a broker and also the active controller
+            COMBINED_AND_ACTIVE_CONTROLLER, // A combined node that is a broker and also the active controller
+            BROKER // A node that is pure Broker
         }
 
         Map<Integer, Long> quorumState = rollClient.quorumLastCaughtUpTimestamps();
@@ -352,6 +155,7 @@ public class RackRolling {
             NodeRoles nodeRoles = entry.getValue();
             boolean isActiveController = entry.getKey() == activeControllerId;
             boolean isPureController = nodeRoles.controller() && !nodeRoles.broker();
+            boolean isPureBroker = !nodeRoles.controller() && nodeRoles.broker();
             if (isPureController) {
                 if (isActiveController) {
                     return NodeFlavour.ACTIVE_PURE_CONTROLLER;
@@ -360,9 +164,12 @@ public class RackRolling {
                 }
             } else { //combined, or pure broker
                 if (isActiveController) {
-                    return NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER;
-                } else {
-                    return NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER;
+                    return NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER;
+                } else if (isPureBroker){
+                    return NodeFlavour.BROKER;
+                }
+                else {
+                    return NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER;
                 }
             }
         }));
@@ -377,7 +184,6 @@ public class RackRolling {
                 controllerQuorumFetchTimeout = controllerQuorumFetchTimeoutConfig != null ? Long.parseLong(controllerQuorumFetchTimeoutConfig.value()) : CONTROLLER_QUORUM_FETCH_TIMEOUT_MS_CONFIG_DEFAULT;
             }
         }
-
         if (partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.NON_ACTIVE_PURE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -388,26 +194,24 @@ public class RackRolling {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
-        } else if (partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER) != null) {
-            nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER).stream()
-                    .filter(entry -> !entry.getValue().controller() || isQuorumHealthyWithoutNode(reconciliation, entry.getKey(), activeControllerId, totalNumOfControllerNodes, quorumState))
+        } else if (partitioned.get(NodeFlavour.BROKER) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             if (nodesNeedingRestart.isEmpty()) {
-                LOGGER.warnCr(reconciliation, "The combined nodes {} cannot be restarted without impacting the quorum health", partitioned.get(NodeFlavour.BROKER_AND_NOT_ACTIVE_CONTROLLER));
+                LOGGER.warnCr(reconciliation, "The combined nodes {} cannot be restarted without impacting the quorum health", partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER));
                 return Set.of();
             }
-            return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
+            return Batching.nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
 
-        } else if (partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER) != null) {
-            nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER_AND_ACTIVE_CONTROLLER).stream()
+        } else if (partitioned.get(NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            return nextNode(reconciliation, rollClient, contextMap, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
-            if (nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState).isEmpty()) {
-                LOGGER.warnCr(reconciliation, "The active controller cannot be restarted without impacting the quorum health", nodesNeedingRestart.keySet());
-                return Set.of();
-            } else {
-                return nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, 1);
-            }
+        } else if (partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER).stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            return nextNode(reconciliation, rollClient, contextMap, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
         } else {
             throw new RuntimeException("Nodes did not get partitioned based on their process role: " + nodesNeedingRestart);
@@ -445,77 +249,26 @@ public class RackRolling {
         }
     }
 
-    /**
-     * Returns a batch of broker nodes that have no topic partitions in common and have no impact on cluster availability if restarted.
-     */
-    private static Set<KafkaNode> nextBatchBrokers(Reconciliation reconciliation,
-                                                              RollClient rollClient,
-                                                              Map<Integer, Context> contextMap,
-                                                              Map<Integer, NodeRoles> nodesNeedingRestart,
-                                                              int maxRestartBatchSize) {
-        Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
+    private static Set<KafkaNode> nextNode(Reconciliation reconciliation, RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart, int activeControllerId, int controllerCount, Map<Integer, Long> quorumState) {
+        KafkaNode brokerToRestart = null;
+        Map<Integer, KafkaNode> nodeIdToKafkaNode = Batching.nodeIdToKafkaNode(rollClient, contextMap, nodesNeedingRestart);
 
-        // Get all the topics in the cluster
-        Collection<TopicListing> topicListings = rollClient.listTopics();
+        var minIsrByTopic = rollClient.describeTopicMinIsrs(rollClient.listTopics().stream().map(TopicListing::name).toList());
 
-        // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
-        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
-
-        // Convert the TopicDescriptions to the Server and Replicas model
-        List<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
-
-        topicDescriptions.forEach(topicDescription -> {
-            topicDescription.partitions().forEach(partition -> {
-                partition.replicas().forEach(replicatingBroker -> {
-                    var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
-                            ig -> {
-                                NodeRoles nodeRoles = contextMap.get(replicatingBroker.id()).currentRoles();
-                                return new KafkaNode(replicatingBroker.id(), nodeRoles.controller(), nodeRoles.broker(), new HashSet<>());
-                            });
-                    kafkaNode.replicas().add(new Replica(
-                            replicatingBroker,
-                            topicDescription.name(),
-                            partition.partition(),
-                            partition.isr()));
-                });
-            });
-        });
-
-        // Add any servers which we know about but which were absent from any partition metadata
-        // i.e. brokers without any assigned partitions
-        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of())));
-
-        // TODO somewhere in here we need to take account of partition reassignments
-        //      e.g. if a partition is being reassigned we expect its ISR to change
-        //      (see https://cwiki.apache.org/confluence/display/KAFKA/KIP-455%3A+Create+an+Administrative+API+for+Replica+Reassignment#KIP455:CreateanAdministrativeAPIforReplicaReassignment-Algorithm
-        //      which guarantees that addingReplicas are honoured before removingReplicas)
-        //      If there are any removingReplicas our availability calculation won't account for the fact
-        //      that the controller may shrink the ISR during the reassignment.
-
-        // Split the set of all brokers into subsets of brokers that can be rolled in parallel
-        var cells = cells(reconciliation, nodeIdToKafkaNode.values());
-        int cellNum = 0;
-        for (var cell: cells) {
-            LOGGER.debugCr(reconciliation, "Cell {}: {}", ++cellNum, cell);
+        for (KafkaNode kafkaNode : nodeIdToKafkaNode.values()) {
+            if (isQuorumHealthyWithoutNode(reconciliation, kafkaNode.id(), activeControllerId, controllerCount, quorumState)
+            && Batching.affectsAvailability(kafkaNode,minIsrByTopic)) {
+                brokerToRestart = kafkaNode;
+                break;
+            }
         }
 
-        // filter each cell by brokers that actually need to be restarted
-        cells = cells.stream()
-                .map(cell -> cell.stream()
-                        .filter(kafkaNode -> nodesNeedingRestart.containsKey(kafkaNode.id())).collect(Collectors.toSet()))
-                .toList();
-        cellNum = 0;
-        for (var cell: cells) {
-            LOGGER.debugCr(reconciliation, "Restart-eligible cell {}: {}", ++cellNum, cell);
+        if (brokerToRestart != null) {
+            return Set.of(brokerToRestart);
+        } else {
+            LOGGER.warnCr(reconciliation, "Combined node {} cannot be restarted without impacting the quorum health", nodesNeedingRestart);
+            return Set.of();
         }
-
-        var minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
-        var batches = batchCells(reconciliation, cells, minIsrByTopic, maxRestartBatchSize);
-        LOGGER.debugCr(reconciliation, "Batches {}", idsOf2(batches));
-
-        var bestBatch = pickBestBatchForRestart(batches);
-        LOGGER.debugCr(reconciliation, "Best batch {}", idsOf(bestBatch));
-        return bestBatch;
     }
 
     private static void restartNode(Reconciliation reconciliation,
