@@ -588,12 +588,12 @@ public class ResourceUtils {
             }
 
             @Override
-            public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
-                return createAdminClient(controllerBootstrapHostnames, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+            public Admin createControllerAdminClient(String controllerBootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity) {
+                return createAdminClient(controllerBootstrapHostnames, kafkaCaTrustSet, authIdentity, new Properties());
             }
 
             @Override
-            public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
+            public Admin createAdminClient(String bootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity, Properties config) {
                 return mockAdminClient;
             }
         };

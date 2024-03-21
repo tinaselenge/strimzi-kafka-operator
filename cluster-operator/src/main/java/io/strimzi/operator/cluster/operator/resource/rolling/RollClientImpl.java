@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.operator.cluster.model.DnsNameGenerator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
@@ -16,6 +15,9 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.auth.PemAuthIdentity;
+import io.strimzi.operator.common.auth.PemTrustSet;
+import io.strimzi.operator.common.auth.TlsPemIdentity;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigsOptions;
@@ -60,9 +62,9 @@ class RollClientImpl implements RollClient {
 
     private Admin controllerAdmin = null;
 
-    private final Secret coKeySecret;
+    private final PemAuthIdentity pemAuthIdentity;
 
-    private final Secret clusterCaCertSecret;
+    private final PemTrustSet pemTrustSet;
 
     private final Reconciliation reconciliation;
 
@@ -70,11 +72,10 @@ class RollClientImpl implements RollClient {
     private int quorumLeader = -1;
 
     RollClientImpl(Reconciliation reconciliation,
-                   Secret clusterCaCertSecret,
-                   Secret coKeySecret,
+                   TlsPemIdentity coTlsPemIdentity,
                    AdminClientProvider adminClientProvider) {
-        this.coKeySecret = coKeySecret;
-        this.clusterCaCertSecret = clusterCaCertSecret;
+        this.pemTrustSet = coTlsPemIdentity.pemTrustSet();
+        this.pemAuthIdentity = coTlsPemIdentity.pemAuthIdentity();
         this.reconciliation = reconciliation;
         this.adminClientProvider = adminClientProvider;
     }
@@ -152,11 +153,11 @@ class RollClientImpl implements RollClient {
 
     private Admin createAdminClient(String bootstrapHostnames) {
         try {
-            //TODO: create admin client for controllers
-            // if (controller) {
-            //      return adminClientProvider.createControllerAdminClient(bootstrapHostnames, clusterCaCertSecret, coKeySecret, "cluster-operator");
-            // }
-            return adminClientProvider.createAdminClient(bootstrapHostnames, clusterCaCertSecret, coKeySecret, "cluster-operator");
+//            TODO: create admin client for controllers
+//             if (controller) {
+//                  return adminClientProvider.createControllerAdminClient(bootstrapHostnames, pemTrustSet, pemAuthIdentity);
+//             }
+            return adminClientProvider.createAdminClient(bootstrapHostnames, pemTrustSet, pemAuthIdentity);
         } catch (RuntimeException e) {
             throw new RuntimeException("Failed to create admin client", e.getCause());
         }

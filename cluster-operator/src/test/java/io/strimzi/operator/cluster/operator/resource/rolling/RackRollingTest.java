@@ -1140,12 +1140,14 @@ public class RackRollingTest {
                 true,
                 3);
 
-        // Expected to restart batches of nodes that do not have partitions in common
-        // starting with the largest batches. The active controller 6 is not restarted until
-        // 3 and 4 are restarted, but they impact the cluster availability if restarted.
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        // Expected to restart one node at a time since they are also controllers.
+        // 3 and 4 can be restarted because they impact topic availability if restarted.
+        // The active controller 6 is not restarted until 3 and 4 can be restarted.
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5);
 
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 7); //7 doesn't have partitions in common with 4 but 4 will cause under min ISR
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 8);
 
         // But for the reconciliation to eventually fail because of the unrestartable nodes
         assertThrows(UnrestartableNodesException.class, rr::loop,
