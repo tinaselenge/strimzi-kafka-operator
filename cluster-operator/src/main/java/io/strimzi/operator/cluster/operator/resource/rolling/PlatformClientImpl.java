@@ -5,7 +5,6 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.client.readiness.Readiness;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
@@ -14,6 +13,10 @@ import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.PodOperator;
 
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  *  Implementation of PlatformClient in terms of Kubernetes Pods
@@ -25,12 +28,14 @@ public class PlatformClientImpl implements PlatformClient {
 
     private final Reconciliation reconciliation;
 
+    private final long operationTimeoutMs;
     private final KubernetesRestartEventPublisher eventPublisher;
 
-    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation, KubernetesRestartEventPublisher eventPublisher) {
+    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation, long operationTimeoutMs, KubernetesRestartEventPublisher eventPublisher) {
         this.podOps = podOps;
         this.namespace = namespace;
         this.reconciliation = reconciliation;
+        this.operationTimeoutMs = operationTimeoutMs;
         this.eventPublisher = eventPublisher;
     }
 
@@ -40,7 +45,7 @@ public class PlatformClientImpl implements PlatformClient {
         if (pod == null || pod.getStatus() == null) {
             return NodeState.NOT_RUNNING;
         } else {
-            if (Readiness.isPodReady(pod)) {
+            if (podOps.isReady(namespace, nodeRef.podName())) {
                 return NodeState.READY;
             } else {
                 if (pendingAndUnschedulable(pod)) {
@@ -75,8 +80,18 @@ public class PlatformClientImpl implements PlatformClient {
     @Override
     public void restartNode(NodeRef nodeRef, RestartReasons reasons) {
         var pod = podOps.get(namespace, nodeRef.podName());
-        podOps.restart(reconciliation, pod, 60_000)
-                .onComplete(i -> eventPublisher.publishRestartEvents(pod, reasons));
+        CompletableFuture<Boolean> cf = new CompletableFuture<>();
+        podOps.restart(reconciliation, pod, operationTimeoutMs)
+                .onComplete(i -> {
+                    eventPublisher.publishRestartEvents(pod, reasons);
+                    cf.complete(true);
+                });
+
+        try {
+            cf.get(operationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
