@@ -22,9 +22,9 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
     }
 
     @Override
-    public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+    public Admin createControllerAdminClient(String controllerBootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity) {
         //TODO when 3.7 is supported, this should set config.setProperty(AdminClientConfig.BOOTSTRAP_CONTROLLER_CONFIG, controllerBootstrapHostnames);
-        return createAdminClient(controllerBootstrapHostnames, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+        return createAdminClient(controllerBootstrapHostnames, kafkaCaTrustSet, authIdentity, new Properties());
     }
 
     /**
