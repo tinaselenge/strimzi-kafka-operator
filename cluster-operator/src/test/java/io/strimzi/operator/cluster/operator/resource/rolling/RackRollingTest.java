@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -288,6 +289,7 @@ public class RackRollingTest {
                 nodeRefList,
                 reason,
                 Reconciliation.DUMMY_RECONCILIATION,
+                nodeRefList.stream().filter(NodeRef::controller).collect(Collectors.toList()).size(),
                 KafkaVersionTestUtils.getLatestVersion(),
                 allowReconfiguration,
                 kafkaConfigProvider,
@@ -316,6 +318,7 @@ public class RackRollingTest {
                 nodeRefList,
                 reason,
                 Reconciliation.DUMMY_RECONCILIATION,
+                nodeRefList.stream().filter(NodeRef::controller).collect(Collectors.toList()).size(),
                 KafkaVersionTestUtils.getLatestVersion(),
                 true,
                 kafkaConfigProvider,
