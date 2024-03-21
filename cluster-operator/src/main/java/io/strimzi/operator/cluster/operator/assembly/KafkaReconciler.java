@@ -9,7 +9,6 @@ import io.fabric8.kubernetes.api.model.LocalObjectReference;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.api.kafka.model.common.Condition;
@@ -66,6 +65,7 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceAccountOp
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.StorageClassOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.StrimziPodSetOperator;
+import io.strimzi.operator.cluster.operator.resource.rolling.RackRolling;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.BackOff;
@@ -465,21 +465,16 @@ public class KafkaReconciler {
             boolean allowReconfiguration
     ) {
         Function<Integer, String> kafkaConfigProvider = nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts);
-        return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
-                .compose(compositeFuture -> {
-                    if (kafka.kafkaMetadataConfigState.isKRaft()) {
-                        return maybeRollKafkaKraft(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
-                    } else {
-                        return maybeRollKafkaZk(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
-                    }
-                });
+        if (kafka.kafkaMetadataConfigState.isKRaft()) {
+            return maybeRollKafkaKraft(nodes, podNeedsRestart, kafkaConfigProvider, allowReconfiguration);
+        } else {
+            return maybeRollKafkaZk(nodes, podNeedsRestart, kafkaConfigProvider, allowReconfiguration);
+        }
     }
 
     private Future<Void> maybeRollKafkaZk(Set<NodeRef> nodes,
                                           Function<Pod, RestartReasons> podNeedsRestart,
                                           Function<Integer, String> kafkaConfigProvider,
-                                          Secret clusterCaCertSecret,
-                                          Secret coKeySecret,
                                           boolean allowReconfiguration) {
         return new KafkaRoller(
                 reconciliation,
@@ -489,8 +484,7 @@ public class KafkaReconciler {
                 operationTimeoutMs,
                 () -> new BackOff(250, 2, 10),
                 nodes,
-                clusterCaCertSecret,
-                coKeySecret,
+                this.coTlsPemIdentity,
                 adminClientProvider,
                 kafkaAgentClientProvider,
                 kafkaConfigProvider,
@@ -504,8 +498,6 @@ public class KafkaReconciler {
     private Future<Void> maybeRollKafkaKraft(Set<NodeRef> nodes,
                                              Function<Pod, RestartReasons> podNeedsRestart,
                                              Function<Integer, String> kafkaConfigProvider,
-                                             Secret clusterCaCertSecret,
-                                             Secret coKeySecret,
                                              boolean allowReconfiguration) {
         var rr = RackRolling.rollingRestart(
                 podOperator,
@@ -513,8 +505,7 @@ public class KafkaReconciler {
                 reconciliation,
                 // Remap the function from pod to RestartReasons to nodeId to RestartReasons
                 nodeId -> podNeedsRestart.apply(podOperator.get(reconciliation.namespace(), nodes.stream().filter(nodeRef -> nodeRef.nodeId() == nodeId).collect(Collectors.toList()).get(0).podName())),
-                clusterCaCertSecret,
-                coKeySecret,
+                this.coTlsPemIdentity,
                 adminClientProvider,
                 kafkaAgentClientProvider,
                 kafkaConfigProvider,
