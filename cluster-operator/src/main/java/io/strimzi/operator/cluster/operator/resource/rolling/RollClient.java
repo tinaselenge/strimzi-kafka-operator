@@ -43,9 +43,9 @@ interface RollClient {
      * Checks if node is responsive by connecting to it via Admin API
      * @param nodeRef The node ref
      * @param controller a boolean value informing if it's a controller node
-     * @return true if node is not responsive, otherwise false
+     * @return true if node is responsive, otherwise false
      */
-    boolean cannotConnectToNode(NodeRef nodeRef, boolean controller);
+    boolean canConnectToNode(NodeRef nodeRef, boolean controller);
 
     /**
      * @return All the topics in the cluster, including internal topics.

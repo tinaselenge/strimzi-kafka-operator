@@ -128,13 +128,13 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public boolean cannotConnectToNode(NodeRef nodeRef, boolean controller) {
+    public boolean canConnectToNode(NodeRef nodeRef, boolean controller) {
         String bootstrapHostnames;
         if (controller) {
             //TODO: create controller admin using the correct service and port
             // String.format("%s:%s", DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), nodeRef.podName()), KafkaCluster.REPLICATION_PORT);
             // we cannot create admin against controller, always return false for now.
-            return false;
+            return true;
         } else {
             bootstrapHostnames = String.format("%s:%s", DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), nodeRef.podName()), KafkaCluster.REPLICATION_PORT);
         }
@@ -142,9 +142,9 @@ class RollClientImpl implements RollClient {
         Admin admin = null;
         try {
             admin = createAdminClient(bootstrapHostnames);
-            return false;
-        } catch (Exception e) {
             return true;
+        } catch (Exception e) {
+            return false;
         } finally {
             if (admin != null) admin.close();
         }
