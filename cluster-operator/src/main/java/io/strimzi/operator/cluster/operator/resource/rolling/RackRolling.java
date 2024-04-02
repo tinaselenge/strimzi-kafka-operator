@@ -970,6 +970,14 @@ public class RackRolling {
                 context.transitionTo(observe(reconciliation, platformClient, agentClient, context.nodeRef()), time);
             }
 
+            var unreadyNodes = contexts.stream().filter(context -> context.state().equals(State.NOT_READY)).collect(Collectors.toList());
+            if (!unreadyNodes.isEmpty()) {
+                // We want to give nodes chance to get ready before we try to connect to the or consider them for rolling.
+                // This is important especially for nodes which were just started.
+                LOGGER.debugCr(reconciliation, "Waiting for nodes {} to become ready before initialising plan in case they just started", unreadyNodes);
+                waitForUnreadyNodes(unreadyNodes, true);
+            }
+
             var byPlan = initialPlan(contexts, rollClient);
             LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan);
 
@@ -1006,8 +1014,17 @@ public class RackRolling {
             }
 
             if (byPlan.getOrDefault(Plan.RESTART, List.of()).isEmpty()) {
-                LOGGER.debugCr(reconciliation, "Terminate: No Kafka nodes left to reconcile");
-                return List.of();
+                unreadyNodes = contexts.stream().filter(context -> context.state().equals(State.NOT_READY)).collect(Collectors.toList());
+                if (unreadyNodes.isEmpty()) {
+                    LOGGER.debugCr(reconciliation, "Terminate: No Kafka nodes left to reconcile");
+                    return List.of();
+                } else {
+                    // By checking nodes which don't need to be restarted for readiness we prevent successive reconciliations
+                    // from taking out a node each time (due, e.g. to a configuration error).
+                    LOGGER.debugCr(reconciliation, "Nodes {} do not need to be restarted", unreadyNodes);
+                    LOGGER.debugCr(reconciliation, "Waiting for non-restarted nodes {} to become ready", unreadyNodes);
+                    return waitForUnreadyNodes(unreadyNodes, false);
+                }
             }
 
             // If we get this far then all remaining nodes require a restart
@@ -1093,9 +1110,10 @@ public class RackRolling {
     }
 
     private List<Integer> waitForLogRecovery(List<Context> contexts) {
-        contexts.forEach(c -> {
+        long remainingTimeoutMs = postOperationTimeoutMs;
+        for (Context c : contexts) {
             try {
-                awaitState(reconciliation, time, platformClient, agentClient, c, State.SERVING, postOperationTimeoutMs);
+                remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, c, State.SERVING, remainingTimeoutMs);
             } catch (TimeoutException e) {
                 if (c.numAttempts() >= maxAttempts) {
                     var brokerState = agentClient.getBrokerState(c.nodeRef());
@@ -1104,22 +1122,45 @@ public class RackRolling {
                 }
                 c.incrementNumAttempts();
             }
-        });
+        }
+        return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
+    }
+
+    private List<Integer> waitForUnreadyNodes(List<Context> contexts, boolean ignoreTimeout) {
+        long remainingTimeoutMs = postOperationTimeoutMs;
+        for (Context context : contexts) {
+            try {
+                remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, context, State.SERVING, remainingTimeoutMs);
+            } catch (TimeoutException e) {
+                if (ignoreTimeout) {
+                    return List.of();
+                } else if (context.numAttempts() >= maxAttempts) {
+                    throw new RuntimeException(e);
+                } else {
+                    context.incrementNumAttempts();
+                }
+            }
+        }
         return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
     }
 
     private List<Integer> restartUnReadyNodes(List<Context> contexts, int totalNumOfControllers) throws TimeoutException {
         Set<Context> pureControllerNodesToRestart = new HashSet<>();
         Set<Context> combinedNodesToRestart = new HashSet<>();
+        var notRunningCombinedNodes = 0;
+
         for (var context : contexts) {
             if (context.currentRoles().controller() && !context.currentRoles().broker()) {
                 pureControllerNodesToRestart.add(context);
-            } else if (context.currentRoles().controller()) {
+            } else if (context.currentRoles().controller() && context.currentRoles().broker()) {
                 combinedNodesToRestart.add(context);
+                if (context.state().equals(State.NOT_RUNNING)) {
+                    notRunningCombinedNodes++;
+                }
             }
         }
 
-        if (totalNumOfControllers > 1 && totalNumOfControllers == combinedNodesToRestart.stream().filter(context -> context.state().equals(State.NOT_RUNNING)).count()) {
+        if (totalNumOfControllers > 1 && totalNumOfControllers == notRunningCombinedNodes) {
             LOGGER.warnCr(reconciliation, "All controller nodes are combined and they are not running, therefore restarting them all now");
             // if all controller nodes (except a single node quorum) are combined and all of them are not running e.g. Pending, we need to restart them all at the same time to form the quorum.
             // This is because until the quorum has been formed and broker process can connect to it, the combined nodes do not become ready.
@@ -1160,17 +1201,18 @@ public class RackRolling {
 
     private Map<Plan, List<Context>> initialPlan(List<Context> contexts, RollClient rollClient) {
         return contexts.stream().collect(Collectors.groupingBy(context -> {
-            if (context.state() == State.NOT_READY || context.state() == State.NOT_RUNNING) {
-                context.reason().add(RestartReason.POD_UNRESPONSIVE, "Failed health check");
+            if (context.state() == State.NOT_RUNNING) {
                 LOGGER.debugCr(reconciliation, "{} is in {} state therefore may get restarted first", context.nodeRef(), context.state());
+                context.reason().add(RestartReason.POD_STUCK);
                 return Plan.RESTART_FIRST;
 
             } else if (context.state() == State.RECOVERING) {
                 LOGGER.debugCr(reconciliation, "{} is in log recovery therefore will not be restarted", context.nodeRef());
                 return Plan.WAIT_FOR_LOG_RECOVERY;
 
-            } else if (rollClient.cannotConnectToNode(context.nodeRef(), context.currentRoles().controller())) {
-                LOGGER.debugCr(reconciliation, "Connection attempt to {} failed therefore will be restarted first", context.nodeRef());
+            } else if (!rollClient.canConnectToNode(context.nodeRef(), context.currentRoles().controller())) {
+                LOGGER.debugCr(reconciliation, "{} will be restarted because it does not seem to responding to connection attempt", context.nodeRef());
+                context.reason().add(RestartReason.POD_UNRESPONSIVE);
                 return Plan.RESTART_FIRST;
 
             } else {
@@ -1186,7 +1228,7 @@ public class RackRolling {
                         LOGGER.debugCr(reconciliation, "{} will be restarted because of {}", context.nodeRef(), reasons);
                         return Plan.RESTART;
                     }
-                } else if (context.currentRoles().controller() && !context.currentRoles().broker()) {
+                } else if (context.currentRoles().controller() && !context.currentRoles().broker() && context.state() == State.SERVING) {
                     // The roller does not attempt to reconfigure pure controller.
                     // If a pure controller's configuration has changed, it should have non-empty reasons to restart.
                     return Plan.NOP;
