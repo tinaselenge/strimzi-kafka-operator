@@ -194,25 +194,23 @@ public class RackRolling {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextController(reconciliation, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
-        } else if (partitioned.get(NodeFlavour.BROKER) != null) {
-            nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER).stream()
+        } else if (partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            if (nodesNeedingRestart.isEmpty()) {
-                LOGGER.warnCr(reconciliation, "The combined nodes {} cannot be restarted without impacting the quorum health", partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER));
-                return Set.of();
-            }
-            return Batching.nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
+            return nextNode(reconciliation, rollClient, contextMap, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
         } else if (partitioned.get(NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
             return nextNode(reconciliation, rollClient, contextMap, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
 
-        } else if (partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER) != null) {
-            nodesNeedingRestart = partitioned.get(NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER).stream()
+        } else if (partitioned.get(NodeFlavour.BROKER) != null) {
+            nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            return nextNode(reconciliation, rollClient, contextMap, nodesNeedingRestart, activeControllerId, totalNumOfControllerNodes, quorumState);
-
+            if (nodesNeedingRestart.isEmpty()) {
+                return Set.of();
+            }
+            return Batching.nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
         } else {
             throw new RuntimeException("Nodes did not get partitioned based on their process role: " + nodesNeedingRestart);
         }
@@ -257,7 +255,7 @@ public class RackRolling {
 
         for (KafkaNode kafkaNode : nodeIdToKafkaNode.values()) {
             if (isQuorumHealthyWithoutNode(reconciliation, kafkaNode.id(), activeControllerId, controllerCount, quorumState)
-            && Batching.affectsAvailability(kafkaNode,minIsrByTopic)) {
+            && !Availability.anyReplicaWouldBeUnderReplicated(kafkaNode,minIsrByTopic)) {
                 brokerToRestart = kafkaNode;
                 break;
             }
