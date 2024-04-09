@@ -527,7 +527,11 @@ public class RackRolling {
             throw new MaxRestartsExceededException("Node " + context.nodeRef() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context.nodeRef());
-        platformClient.restartNode(context.nodeRef(), context.reason());
+        try {
+            platformClient.restartNode(context.nodeRef(), context.reason());
+        } catch (RuntimeException e) {
+            LOGGER.warnCr(reconciliation, "An exception thrown during the restart of the node {}", context.nodeRef(), e);
+        }
         context.transitionTo(State.RESTARTED, time);
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context.nodeRef());
     }
@@ -761,7 +765,7 @@ public class RackRolling {
                                              int maxReconfigs,
                                              int maxAttempts,
                                              KubernetesRestartEventPublisher eventPublisher) {
-        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, eventPublisher);
+        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, postOperationTimeoutMs, eventPublisher);
         Time time = Time.SYSTEM_TIME;
         final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
 
@@ -1187,7 +1191,10 @@ public class RackRolling {
         }
 
         try {
-            awaitState(reconciliation, time, platformClient, agentClient, nodeToRestart, State.SERVING, postOperationTimeoutMs);
+            long remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, nodeToRestart, State.SERVING, postOperationTimeoutMs);
+            if (nodeToRestart.currentRoles().broker()) {
+                awaitPreferred(reconciliation, time, rollClient, nodeToRestart, remainingTimeoutMs);
+            }
         } catch (TimeoutException e) {
             LOGGER.warnCr(reconciliation, "Timed out waiting for node {} to become ready after a restart", nodeToRestart.nodeRef());
             if (nodeToRestart.numAttempts() >= maxAttempts) {
