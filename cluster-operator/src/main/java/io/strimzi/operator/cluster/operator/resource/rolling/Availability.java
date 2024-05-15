@@ -1,9 +1,52 @@
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.admin.TopicListing;
 
 public class Availability {
 
+    public static Map<Integer, KafkaNode> nodeIdToKafkaNode(RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart) {
+
+        Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
+
+        // Get all the topics in the cluster
+        Collection<TopicListing> topicListings = rollClient.listTopics();
+
+        // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
+        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
+
+        // Convert the TopicDescriptions to the Server and Replicas model
+        List<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
+
+        topicDescriptions.forEach(topicDescription -> {
+            topicDescription.partitions().forEach(partition -> {
+                partition.replicas().forEach(replicatingBroker -> {
+                    var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
+                            ig -> {
+                                NodeRoles nodeRoles = contextMap.get(replicatingBroker.id()).currentRoles();
+                                return new KafkaNode(replicatingBroker.id(), nodeRoles.controller(), nodeRoles.broker(), new HashSet<>());
+                            });
+                    kafkaNode.replicas().add(new Replica(
+                            replicatingBroker,
+                            topicDescription.name(),
+                            partition.partition(),
+                            partition.isr()));
+                });
+            });
+        });
+
+        // Add any servers which we know about but which were absent from any partition metadata
+        // i.e. brokers without any assigned partitions
+        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of())));
+
+        return nodeIdToKafkaNode;
+    }
 
     protected static boolean anyReplicaWouldBeUnderReplicated(KafkaNode kafkaNode,
                                                               Map<String, Integer> minIsrByTopic) {
