@@ -2,13 +2,11 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
-import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -20,43 +18,6 @@ public class Batching {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(Batching.class);
 
-    public static Map<Integer, KafkaNode> nodeIdToKafkaNode(RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart) {
-
-        Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
-
-        // Get all the topics in the cluster
-        Collection<TopicListing> topicListings = rollClient.listTopics();
-
-        // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
-        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
-
-        // Convert the TopicDescriptions to the Server and Replicas model
-        List<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
-
-        topicDescriptions.forEach(topicDescription -> {
-            topicDescription.partitions().forEach(partition -> {
-                partition.replicas().forEach(replicatingBroker -> {
-                    var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
-                            ig -> {
-                                NodeRoles nodeRoles = contextMap.get(replicatingBroker.id()).currentRoles();
-                                return new KafkaNode(replicatingBroker.id(), nodeRoles.controller(), nodeRoles.broker(), new HashSet<>());
-                            });
-                    kafkaNode.replicas().add(new Replica(
-                            replicatingBroker,
-                            topicDescription.name(),
-                            partition.partition(),
-                            partition.isr()));
-                });
-            });
-        });
-
-        // Add any servers which we know about but which were absent from any partition metadata
-        // i.e. brokers without any assigned partitions
-        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of())));
-
-        return nodeIdToKafkaNode;
-    }
-
     /**
      * Returns a batch of broker nodes that have no topic partitions in common and have no impact on cluster availability if restarted.
      */
@@ -66,7 +27,7 @@ public class Batching {
                                                    Map<Integer, NodeRoles> nodesNeedingRestart,
                                                    int maxRestartBatchSize) {
 
-        Map<Integer, KafkaNode> nodeIdToKafkaNode = nodeIdToKafkaNode(rollClient, contextMap, nodesNeedingRestart);
+        Map<Integer, KafkaNode> nodeIdToKafkaNode = Availability.nodeIdToKafkaNode(rollClient, contextMap, nodesNeedingRestart);
 
         // TODO somewhere in here we need to take account of partition reassignments
         //      e.g. if a partition is being reassigned we expect its ISR to change

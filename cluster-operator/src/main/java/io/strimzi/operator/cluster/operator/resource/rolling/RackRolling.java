@@ -207,9 +207,6 @@ public class RackRolling {
         } else if (partitioned.get(NodeFlavour.BROKER) != null) {
             nodesNeedingRestart = partitioned.get(NodeFlavour.BROKER).stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-            if (nodesNeedingRestart.isEmpty()) {
-                return Set.of();
-            }
             return Batching.nextBatchBrokers(reconciliation, rollClient, contextMap, nodesNeedingRestart, maxRestartBatchSize);
         } else {
             throw new RuntimeException("Nodes did not get partitioned based on their process role: " + nodesNeedingRestart);
@@ -249,12 +246,13 @@ public class RackRolling {
 
     private static Set<KafkaNode> nextNode(Reconciliation reconciliation, RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart, int activeControllerId, int controllerCount, Map<Integer, Long> quorumState) {
         KafkaNode brokerToRestart = null;
-        Map<Integer, KafkaNode> nodeIdToKafkaNode = Batching.nodeIdToKafkaNode(rollClient, contextMap, nodesNeedingRestart);
+        Map<Integer, KafkaNode> nodeIdToKafkaNode = Availability.nodeIdToKafkaNode(rollClient, contextMap, nodesNeedingRestart);
 
         var minIsrByTopic = rollClient.describeTopicMinIsrs(rollClient.listTopics().stream().map(TopicListing::name).toList());
 
-        for (KafkaNode kafkaNode : nodeIdToKafkaNode.values()) {
-            if (isQuorumHealthyWithoutNode(reconciliation, kafkaNode.id(), activeControllerId, controllerCount, quorumState)
+        for (Integer node : nodesNeedingRestart.keySet()) {
+            KafkaNode kafkaNode = nodeIdToKafkaNode.get(node);
+            if (isQuorumHealthyWithoutNode(reconciliation, node, activeControllerId, controllerCount, quorumState)
             && !Availability.anyReplicaWouldBeUnderReplicated(kafkaNode,minIsrByTopic)) {
                 brokerToRestart = kafkaNode;
                 break;
