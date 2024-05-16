@@ -908,9 +908,9 @@ public class RackRollingTest {
                 3);
 
         // then
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
-
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
 
@@ -1021,11 +1021,15 @@ public class RackRollingTest {
 
         // The expected order to restart is batches of nodes that do not have partitions in common
         // starting with the largest batches and then the broker that is the active controller
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5, 8);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4);
 
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4, 7);
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5);
 
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 6); // the smallest batch
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 6);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 7);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 8);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 3); // the active controller
 
