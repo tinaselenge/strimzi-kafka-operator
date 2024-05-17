@@ -1019,8 +1019,7 @@ public class RackRollingTest {
                 true,
                 3);
 
-        // The expected order to restart is batches of nodes that do not have partitions in common
-        // starting with the largest batches and then the broker that is the active controller
+        // The expected order to restart nodes individually based on the availability and quorum health and then the broker that is the active controller will be started at last
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 4);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 5);
