@@ -1,3 +1,7 @@
+/*
+ * Copyright Strimzi authors.
+ * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
+ */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
 import io.strimzi.operator.common.Reconciliation;
@@ -19,9 +23,9 @@ public class BatchingTest {
     public void testCellCreation() {
 
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic",0,1,0)),
-                        addKafkaNode(1, false, true , Set.of()),
-                        addKafkaNode(2, false, true , addReplicas(2, "my-topic",0, 1,2))));
+                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
+                        addKafkaNode(1, false, true, Set.of()),
+                        addKafkaNode(2, false, true, addReplicas(2, "my-topic", 0, 1, 2))));
 
         assertEquals(cells.size(), 2);
         assertEquals(cells.get(0).toString(), "[KafkaNode[id=1, controller=false, broker=true, replicas=[]], KafkaNode[id=0, controller=true, broker=false, replicas=[my-topic-0]]]");
@@ -32,9 +36,9 @@ public class BatchingTest {
     public void testBatchCreationWithSingleTopic() {
 
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic",0,1,0)),
-                        addKafkaNode(1, false, true , Set.of()),
-                        addKafkaNode(2, false, true , addReplicas(2, "my-topic",0, 1,2))));
+                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
+                        addKafkaNode(1, false, true, Set.of()),
+                        addKafkaNode(2, false, true, addReplicas(2, "my-topic", 0, 1, 2))));
 
         Map<String, Integer> topicAndMinIsrs = new HashMap<>();
 
@@ -53,10 +57,10 @@ public class BatchingTest {
         Map<String, Integer> topicAndMinIsrs = new HashMap<>();
 
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic",0,1,0)),
-                        addKafkaNode(1, true, true , addReplicas(1,"my-topic",1,1,0)),
-                        addKafkaNode(2, false, true , addReplicas(2, "my-topic-1",0, 1,2)),
-                        addKafkaNode(3, false, true , addReplicas(3, "my-topic-1",0, 1,3))));
+                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
+                        addKafkaNode(1, true, true, addReplicas(1, "my-topic", 1, 1, 0)),
+                        addKafkaNode(2, false, true, addReplicas(2, "my-topic-1", 0, 1, 2)),
+                        addKafkaNode(3, false, true, addReplicas(3, "my-topic-1", 0, 1, 3))));
 
         topicAndMinIsrs.put("my-topic", 2);
         topicAndMinIsrs.put("my-topic-1", 2);
@@ -74,10 +78,10 @@ public class BatchingTest {
         Map<String, Integer> topicAndMinIsrs = new HashMap<>();
 
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic",0,1,0)),
-                        addKafkaNode(1, true, true , addReplicas(1,"my-topic-1",1,1,3)),
-                        addKafkaNode(2, false, true , addReplicas(2, "my-topic-1",1, 0,2)),
-                        addKafkaNode(3, false, true , addReplicas(3, "my-topic-2",1, 1,0))));
+                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
+                        addKafkaNode(1, true, true, addReplicas(1, "my-topic-1", 1, 1, 3)),
+                        addKafkaNode(2, false, true, addReplicas(2, "my-topic-1", 1, 0, 2)),
+                        addKafkaNode(3, false, true, addReplicas(3, "my-topic-2", 1, 1, 0))));
 
         topicAndMinIsrs.put("my-topic", 2);
         topicAndMinIsrs.put("my-topic-1", 2);

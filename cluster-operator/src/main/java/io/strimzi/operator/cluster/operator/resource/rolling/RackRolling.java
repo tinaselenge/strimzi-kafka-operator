@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -13,12 +12,13 @@ import io.strimzi.operator.cluster.operator.resource.KafkaAgentClientProvider;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
+import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
-import io.strimzi.operator.common.operator.resource.PodOperator;
+import io.strimzi.operator.common.auth.TlsPemIdentity;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -165,10 +165,9 @@ public class RackRolling {
             } else { //combined, or pure broker
                 if (isActiveController) {
                     return NodeFlavour.COMBINED_AND_ACTIVE_CONTROLLER;
-                } else if (isPureBroker){
+                } else if (isPureBroker) {
                     return NodeFlavour.BROKER;
-                }
-                else {
+                } else {
                     return NodeFlavour.COMBINED_AND_NOT_ACTIVE_CONTROLLER;
                 }
             }
@@ -253,7 +252,7 @@ public class RackRolling {
         for (Integer node : nodesNeedingRestart.keySet()) {
             KafkaNode kafkaNode = nodeIdToKafkaNode.get(node);
             if (isQuorumHealthyWithoutNode(reconciliation, node, activeControllerId, controllerCount, quorumState)
-            && !Availability.anyReplicaWouldBeUnderReplicated(kafkaNode,minIsrByTopic)) {
+                    && !Availability.anyReplicaWouldBeUnderReplicated(kafkaNode, minIsrByTopic)) {
                 brokerToRestart = kafkaNode;
                 break;
             }
@@ -500,7 +499,7 @@ public class RackRolling {
                                              Collection<NodeRef> nodes,
                                              Reconciliation reconciliation,
                                              Function<Integer, RestartReasons> predicate,
-                                             Secret clusterCaCertSecret, Secret coKeySecret,
+                                             TlsPemIdentity coTlsPemIdentity,
                                              AdminClientProvider adminClientProvider,
                                              KafkaAgentClientProvider kafkaAgentClientProvider,
                                              Function<Integer, String> kafkaConfigProvider,
@@ -518,8 +517,8 @@ public class RackRolling {
         Time time = Time.SYSTEM_TIME;
         final var contextMap = nodes.stream().collect(Collectors.toUnmodifiableMap(NodeRef::nodeId, node -> Context.start(node, platformClient.nodeRoles(node), predicate, time)));
 
-        RollClient rollClient = new RollClientImpl(reconciliation, clusterCaCertSecret, coKeySecret, adminClientProvider);
-        AgentClient agentClient = new AgentClientImpl(kafkaAgentClientProvider.createKafkaAgentClient(reconciliation, clusterCaCertSecret, coKeySecret));
+        RollClient rollClient = new RollClientImpl(reconciliation, coTlsPemIdentity, adminClientProvider);
+        AgentClient agentClient = new AgentClientImpl(kafkaAgentClientProvider.createKafkaAgentClient(reconciliation, coTlsPemIdentity));
 
         return new RackRolling(time,
                 platformClient,
