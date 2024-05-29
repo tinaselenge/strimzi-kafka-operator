@@ -4,7 +4,7 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-public class UnrestartableNodesException extends RuntimeException {
+class UnrestartableNodesException extends RuntimeException {
     public UnrestartableNodesException(String message) {
         super(message);
     }

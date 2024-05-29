@@ -4,18 +4,25 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.api.model.Secret;
+import io.strimzi.api.kafka.model.kafka.KafkaResources;
+import io.strimzi.operator.cluster.model.DnsNameGenerator;
+import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClient;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
+import io.strimzi.operator.common.AdminClientProvider;
+import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.Util;
-import java.util.HashMap;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterConfigsOptions;
 import org.apache.kafka.clients.admin.AlterConfigsResult;
 import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.QuorumInfo;
@@ -32,6 +39,7 @@ import org.apache.kafka.common.config.TopicConfig;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,21 +47,36 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 class RollClientImpl implements RollClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
+    // TODO: set to the same value of the thread blocking limit for now but we need to decide whether we need a dedicated thread for RackRolling
+    private final static long ADMIN_CALL_TIMEOUT = 2000L;
     private Admin brokerAdmin = null;
 
     private Admin controllerAdmin = null;
 
     private final KafkaAgentClient kafkaAgentClient;
 
+    private final Secret coKeySecret;
+
+    private final Secret clusterCaCertSecret;
+
+    private final Reconciliation reconciliation;
+
+    private final AdminClientProvider adminClientProvider;
     private int quorumLeader = -1;
 
-    RollClientImpl(KafkaAgentClient kafkaAgentClient) {
-        this.kafkaAgentClient = kafkaAgentClient;
+    RollClientImpl(Reconciliation reconciliation, Secret clusterCaCertSecret, Secret coKeySecret, AdminClientProvider adminClientProvider) {
+        this.kafkaAgentClient = new KafkaAgentClient(reconciliation, reconciliation.name(), reconciliation.namespace(), clusterCaCertSecret, coKeySecret);
+        this.coKeySecret = coKeySecret;
+        this.clusterCaCertSecret = clusterCaCertSecret;
+        this.reconciliation = reconciliation;
+        this.adminClientProvider = adminClientProvider;
     }
 
     /** Return a future that completes when all the given futures complete */
@@ -78,13 +101,48 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public void setBrokerAdmin(Admin admin) {
-        brokerAdmin = admin;
+    public void initialiseBrokerAdmin() {
+        this.brokerAdmin = createAdminClient(String.format("%s:%s", DnsNameGenerator.of(reconciliation.namespace(),
+                KafkaResources.bootstrapServiceName(reconciliation.name())).serviceDnsName(), KafkaCluster.REPLICATION_PORT));
     }
 
     @Override
-    public void setControllerAdmin(Admin admin) {
-        controllerAdmin = admin;
+    public void initialiseControllerAdmin() {
+        // TODO: update with correct service and port for controller
+        this.controllerAdmin = createAdminClient(String.format("%s:%s", DnsNameGenerator.of(reconciliation.namespace(),
+                KafkaResources.bootstrapServiceName(reconciliation.name())).serviceDnsName(), KafkaCluster.REPLICATION_PORT));
+    }
+
+    @Override
+    public boolean cannotConnectToNode(NodeRef nodeRef, boolean controller) {
+        String bootstrapHostnames;
+        if (controller) {
+            //TODO: create controller admin using the correct service and port
+            // String.format("%s:%s", DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), nodeRef.podName()), KafkaCluster.REPLICATION_PORT);
+            // we cannot create admin against controller, always return false for now.
+            return false;
+        } else {
+            bootstrapHostnames = String.format("%s:%s", DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), nodeRef.podName()), KafkaCluster.REPLICATION_PORT);
+        }
+
+        try {
+            createAdminClient(bootstrapHostnames);
+            return false;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private Admin createAdminClient(String bootstrapHostnames) {
+        try {
+            //TODO: create admin client for controllers
+            // if (controller) {
+            //      return adminClientProvider.createControllerAdminClient(bootstrapHostnames, clusterCaCertSecret, coKeySecret, "cluster-operator");
+            // }
+            return adminClientProvider.createAdminClient(bootstrapHostnames, clusterCaCertSecret, coKeySecret, "cluster-operator");
+        } catch (RuntimeException e) {
+            throw new RuntimeException("Failed to create admin client for brokers", e.getCause());
+        }
     }
 
     @Override
@@ -93,15 +151,16 @@ class RollClientImpl implements RollClient {
         return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
     }
 
-
     @Override
     public Collection<TopicListing> listTopics() {
         try {
-            return brokerAdmin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get();
+            return brokerAdmin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -114,7 +173,7 @@ class RollClientImpl implements RollClient {
                 var mapKafkaFuture = brokerAdmin.describeTopics(TopicCollection.ofTopicIds(topicIdBatch)).allTopicIds().toCompletionStage().toCompletableFuture();
                 futures.add(mapKafkaFuture);
             }
-            allOf(futures).get();
+            allOf(futures).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
             var topicDescriptions = futures.stream().flatMap(cf -> {
                 try {
                     return cf.get().values().stream();
@@ -129,14 +188,16 @@ class RollClientImpl implements RollClient {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
     @Override
     public Map<Integer, Long> quorumLastCaughtUpTimestamps() {
-        DescribeMetadataQuorumResult dmqr = controllerAdmin.describeMetadataQuorum();
+        DescribeMetadataQuorumResult dmqr = controllerAdmin.describeMetadataQuorum(new DescribeMetadataQuorumOptions());
         try {
-            quorumLeader = dmqr.quorumInfo().get().leaderId();
+            quorumLeader = dmqr.quorumInfo().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS).leaderId();
             return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
                     QuorumInfo.ReplicaState::replicaId,
                     state -> state.lastCaughtUpTimestamp().orElse(-1)));
@@ -144,6 +205,8 @@ class RollClientImpl implements RollClient {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -171,7 +234,7 @@ class RollClientImpl implements RollClient {
                 var mapKafkaFuture = brokerAdmin.describeConfigs(topicIdBatch.stream().map(name -> new ConfigResource(ConfigResource.Type.TOPIC, name)).collect(Collectors.toSet())).all().toCompletionStage().toCompletableFuture();
                 futures.add(mapKafkaFuture);
             }
-            allOf(futures).get();
+            allOf(futures).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
             var topicDescriptions = futures.stream().flatMap(cf -> {
                 try {
                     return cf.get().entrySet().stream();
@@ -188,6 +251,8 @@ class RollClientImpl implements RollClient {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -197,7 +262,7 @@ class RollClientImpl implements RollClient {
         updatedConfig.put(Util.getBrokersConfig(nodeRef.nodeId()), kafkaBrokerConfigurationDiff.getConfigDiff());
         updatedConfig.put(Util.getBrokersLogging(nodeRef.nodeId()), kafkaBrokerLoggingConfigurationDiff.getLoggingDiff());
 
-        AlterConfigsResult alterConfigResult = brokerAdmin.incrementalAlterConfigs(updatedConfig);
+        AlterConfigsResult alterConfigResult = brokerAdmin.incrementalAlterConfigs(updatedConfig, new AlterConfigsOptions().timeoutMs(2000));
         KafkaFuture<Void> brokerConfigFuture = alterConfigResult.values().get(Util.getBrokersConfig(nodeRef.nodeId()));
         KafkaFuture<Void> brokerLoggingConfigFuture = alterConfigResult.values().get(Util.getBrokersLogging(nodeRef.nodeId()));
 
@@ -218,12 +283,12 @@ class RollClientImpl implements RollClient {
             // we could do listTopics then describe all the topics, but that would scale poorly with number of topics
             // using describe log dirs should be more efficient
             var topicsOnNode = brokerAdmin.describeLogDirs(List.of(nodeRef.nodeId())).allDescriptions().get()
-                    .get(nodeRef).values().stream()
+                    .getOrDefault(nodeRef, Map.of()).values().stream()
                     .flatMap(x -> x.replicaInfos().keySet().stream())
                     .map(TopicPartition::topic)
                     .collect(Collectors.toSet());
 
-            var topicDescriptionsOnNode = brokerAdmin.describeTopics(topicsOnNode).allTopicNames().get().values();
+            var topicDescriptionsOnNode = brokerAdmin.describeTopics(topicsOnNode).allTopicNames().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS).values();
             var toElect = new HashSet<TopicPartition>();
             for (TopicDescription td : topicDescriptionsOnNode) {
                 for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
@@ -245,6 +310,8 @@ class RollClientImpl implements RollClient {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -261,17 +328,18 @@ class RollClientImpl implements RollClient {
     private Map<Integer, Configs> describeNodeConfigs(Admin admin, List<NodeRef> toList) {
         try {
             var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
-            var result = dc.all().get();
+            var result = dc.all().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
 
             return toList.stream().collect(Collectors.toMap(NodeRef::nodeId,
-                    nodeRef -> new Configs(result.get(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef))),
-                            result.get(new ConfigResource(ConfigResource.Type.BROKER_LOGGER, String.valueOf(nodeRef)))
+                    nodeRef -> new Configs(result.get(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))),
+                            result.get(new ConfigResource(ConfigResource.Type.BROKER_LOGGER, String.valueOf(nodeRef.nodeId())))
                             )));
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
-
 }
