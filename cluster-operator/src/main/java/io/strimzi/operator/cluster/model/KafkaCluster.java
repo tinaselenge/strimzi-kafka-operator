@@ -226,7 +226,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
     private LoggingModel logging;
     private QuotasPlugin quotas;
     /* test */ KafkaConfiguration configuration;
-    private KafkaMetadataConfigurationState kafkaMetadataConfigState;
+    public KafkaMetadataConfigurationState kafkaMetadataConfigState;
 
     /**
      * Warning conditions generated from the Custom Resource
