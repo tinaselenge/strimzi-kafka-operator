@@ -101,6 +101,7 @@ final class Context {
 
         return "Context[" +
                 "nodeRef=" + nodeRef + ", " +
+                "nodeRoles=" + nodeRoles + ", " +
                 "state=" + state + ", " +
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
