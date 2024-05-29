@@ -21,6 +21,12 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
         return createAdminClient(bootstrapHostnames, kafkaCaTrustSet, authIdentity, new Properties());
     }
 
+    @Override
+    public Admin createControllerAdminClient(String controllerBootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+        //TODO when 3.7 is supported, this should set config.setProperty(AdminClientConfig.BOOTSTRAP_CONTROLLER_CONFIG, controllerBootstrapHostnames);
+        return createAdminClient(controllerBootstrapHostnames, clusterCaCertSecret, keyCertSecret, keyCertName, new Properties());
+    }
+
     /**
      * Create a Kafka Admin interface instance handling the following different scenarios:
      *

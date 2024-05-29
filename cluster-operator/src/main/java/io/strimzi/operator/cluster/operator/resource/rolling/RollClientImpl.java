@@ -10,16 +10,19 @@ import io.strimzi.operator.cluster.operator.resource.KafkaBrokerConfigurationDif
 import io.strimzi.operator.cluster.operator.resource.KafkaBrokerLoggingConfigurationDiff;
 import io.strimzi.operator.common.UncheckedExecutionException;
 import io.strimzi.operator.common.UncheckedInterruptedException;
+import io.strimzi.operator.common.Util;
+import java.util.HashMap;
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterConfigsResult;
 import org.apache.kafka.clients.admin.Config;
-import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.ElectionType;
-import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicCollection;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
@@ -41,14 +44,15 @@ import java.util.stream.Collectors;
 class RollClientImpl implements RollClient {
 
     private final static int ADMIN_BATCH_SIZE = 200;
-    private final Admin admin;
+    private Admin brokerAdmin = null;
+
+    private Admin controllerAdmin = null;
 
     private final KafkaAgentClient kafkaAgentClient;
 
     private int quorumLeader = -1;
 
-    RollClientImpl(Admin admin, KafkaAgentClient kafkaAgentClient) {
-        this.admin = admin;
+    RollClientImpl(KafkaAgentClient kafkaAgentClient) {
         this.kafkaAgentClient = kafkaAgentClient;
     }
 
@@ -74,6 +78,16 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
+    public void setBrokerAdmin(Admin admin) {
+        brokerAdmin = admin;
+    }
+
+    @Override
+    public void setControllerAdmin(Admin admin) {
+        controllerAdmin = admin;
+    }
+
+    @Override
     public BrokerState getBrokerState(NodeRef nodeRef) {
         String podName = nodeRef.podName();
         return BrokerState.fromValue((byte) kafkaAgentClient.getBrokerState(podName).code());
@@ -83,7 +97,7 @@ class RollClientImpl implements RollClient {
     @Override
     public Collection<TopicListing> listTopics() {
         try {
-            return admin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get();
+            return brokerAdmin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get();
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
@@ -97,7 +111,7 @@ class RollClientImpl implements RollClient {
             var topicIdBatches = batch(topicIds, ADMIN_BATCH_SIZE);
             var futures = new ArrayList<CompletableFuture<Map<Uuid, TopicDescription>>>();
             for (var topicIdBatch : topicIdBatches) {
-                var mapKafkaFuture = admin.describeTopics(TopicCollection.ofTopicIds(topicIdBatch)).allTopicIds().toCompletionStage().toCompletableFuture();
+                var mapKafkaFuture = brokerAdmin.describeTopics(TopicCollection.ofTopicIds(topicIdBatch)).allTopicIds().toCompletionStage().toCompletableFuture();
                 futures.add(mapKafkaFuture);
             }
             allOf(futures).get();
@@ -120,7 +134,7 @@ class RollClientImpl implements RollClient {
 
     @Override
     public Map<Integer, Long> quorumLastCaughtUpTimestamps() {
-        DescribeMetadataQuorumResult dmqr = admin.describeMetadataQuorum();
+        DescribeMetadataQuorumResult dmqr = controllerAdmin.describeMetadataQuorum();
         try {
             quorumLeader = dmqr.quorumInfo().get().leaderId();
             return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
@@ -140,7 +154,7 @@ class RollClientImpl implements RollClient {
         }
 
         try {
-            return admin.describeMetadataQuorum().quorumInfo().get().leaderId();
+            return controllerAdmin.describeMetadataQuorum().quorumInfo().get().leaderId();
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         } catch (InterruptedException e) {
@@ -154,7 +168,7 @@ class RollClientImpl implements RollClient {
             var topicIdBatches = batch(topicNames, ADMIN_BATCH_SIZE);
             var futures = new ArrayList<CompletableFuture<Map<ConfigResource, Config>>>();
             for (var topicIdBatch : topicIdBatches) {
-                var mapKafkaFuture = admin.describeConfigs(topicIdBatch.stream().map(name -> new ConfigResource(ConfigResource.Type.TOPIC, name)).collect(Collectors.toSet())).all().toCompletionStage().toCompletableFuture();
+                var mapKafkaFuture = brokerAdmin.describeConfigs(topicIdBatch.stream().map(name -> new ConfigResource(ConfigResource.Type.TOPIC, name)).collect(Collectors.toSet())).all().toCompletionStage().toCompletableFuture();
                 futures.add(mapKafkaFuture);
             }
             allOf(futures).get();
@@ -179,7 +193,22 @@ class RollClientImpl implements RollClient {
 
     @Override
     public void reconfigureNode(NodeRef nodeRef, KafkaBrokerConfigurationDiff kafkaBrokerConfigurationDiff, KafkaBrokerLoggingConfigurationDiff kafkaBrokerLoggingConfigurationDiff) {
-        throw new UnsupportedOperationException("TODO");
+        Map<ConfigResource, Collection<AlterConfigOp>> updatedConfig = new HashMap<>(2);
+        updatedConfig.put(Util.getBrokersConfig(nodeRef.nodeId()), kafkaBrokerConfigurationDiff.getConfigDiff());
+        updatedConfig.put(Util.getBrokersLogging(nodeRef.nodeId()), kafkaBrokerLoggingConfigurationDiff.getLoggingDiff());
+
+        AlterConfigsResult alterConfigResult = brokerAdmin.incrementalAlterConfigs(updatedConfig);
+        KafkaFuture<Void> brokerConfigFuture = alterConfigResult.values().get(Util.getBrokersConfig(nodeRef.nodeId()));
+        KafkaFuture<Void> brokerLoggingConfigFuture = alterConfigResult.values().get(Util.getBrokersLogging(nodeRef.nodeId()));
+
+        try {
+            brokerConfigFuture.get();
+            brokerLoggingConfigFuture.get();
+        } catch (InterruptedException e) {
+            throw new UncheckedInterruptedException(e);
+        } catch (ExecutionException e) {
+            throw new UncheckedExecutionException(e);
+        }
     }
 
     @Override
@@ -188,13 +217,13 @@ class RollClientImpl implements RollClient {
             // find all partitions where the node is the preferred leader
             // we could do listTopics then describe all the topics, but that would scale poorly with number of topics
             // using describe log dirs should be more efficient
-            var topicsOnNode = admin.describeLogDirs(List.of(nodeRef.nodeId())).allDescriptions().get()
+            var topicsOnNode = brokerAdmin.describeLogDirs(List.of(nodeRef.nodeId())).allDescriptions().get()
                     .get(nodeRef).values().stream()
                     .flatMap(x -> x.replicaInfos().keySet().stream())
                     .map(TopicPartition::topic)
                     .collect(Collectors.toSet());
 
-            var topicDescriptionsOnNode = admin.describeTopics(topicsOnNode).allTopicNames().get().values();
+            var topicDescriptionsOnNode = brokerAdmin.describeTopics(topicsOnNode).allTopicNames().get().values();
             var toElect = new HashSet<TopicPartition>();
             for (TopicDescription td : topicDescriptionsOnNode) {
                 for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
@@ -206,7 +235,7 @@ class RollClientImpl implements RollClient {
                 }
             }
 
-            var electionResults = admin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
+            var electionResults = brokerAdmin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
 
             long count = electionResults.values().stream()
                     .filter(Optional::isPresent)
@@ -220,7 +249,16 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Configs> describeNodeConfigs(List<NodeRef> toList) {
+    public Map<Integer, Configs> describeBrokerConfigs(List<NodeRef> toList) {
+        return describeNodeConfigs(brokerAdmin, toList);
+    }
+
+    @Override
+    public Map<Integer, Configs> describeControllerConfigs(List<NodeRef> toList) {
+        return describeNodeConfigs(controllerAdmin, toList);
+    }
+
+    private Map<Integer, Configs> describeNodeConfigs(Admin admin, List<NodeRef> toList) {
         try {
             var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
             var result = dc.all().get();
