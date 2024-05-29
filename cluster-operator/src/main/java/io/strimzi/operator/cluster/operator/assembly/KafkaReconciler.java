@@ -464,23 +464,77 @@ public class KafkaReconciler {
             Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
             boolean allowReconfiguration
     ) {
+        Function<Integer, String> kafkaConfigProvider = nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts);
+        return ReconcilerUtils.clientSecrets(reconciliation, secretOperator)
+                .compose(compositeFuture -> {
+                    if (kafka.kafkaMetadataConfigState.isKRaft()) {
+                        return maybeRollKafkaKraft(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
+                    } else {
+                        return maybeRollKafkaZk(nodes, podNeedsRestart, kafkaConfigProvider, compositeFuture.resultAt(0), compositeFuture.resultAt(1), allowReconfiguration);
+                    }
+                });
+    }
+
+    private Future<Void> maybeRollKafkaZk(Set<NodeRef> nodes,
+                                          Function<Pod, RestartReasons> podNeedsRestart,
+                                          Function<Integer, String> kafkaConfigProvider,
+                                          Secret clusterCaCertSecret,
+                                          Secret coKeySecret,
+                                          boolean allowReconfiguration) {
         return new KafkaRoller(
-                    reconciliation,
-                    vertx,
-                    podOperator,
-                    1_000,
-                    operationTimeoutMs,
-                    () -> new BackOff(250, 2, 10),
-                    nodes,
-                    this.coTlsPemIdentity,
-                    adminClientProvider,
-                    kafkaAgentClientProvider,
-                    brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-                    logging,
-                    kafka.getKafkaVersion(),
-                    allowReconfiguration,
-                    eventsPublisher
-            ).rollingRestart(podNeedsRestart);
+                reconciliation,
+                vertx,
+                podOperator,
+                1_000,
+                operationTimeoutMs,
+                () -> new BackOff(250, 2, 10),
+                nodes,
+                clusterCaCertSecret,
+                coKeySecret,
+                adminClientProvider,
+                kafkaAgentClientProvider,
+                kafkaConfigProvider,
+                logging,
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                eventsPublisher
+        ).rollingRestart(podNeedsRestart);
+    }
+
+    private Future<Void> maybeRollKafkaKraft(Set<NodeRef> nodes,
+                                             Function<Pod, RestartReasons> podNeedsRestart,
+                                             Function<Integer, String> kafkaConfigProvider,
+                                             Secret clusterCaCertSecret,
+                                             Secret coKeySecret,
+                                             boolean allowReconfiguration) {
+        var rr = RackRolling.rollingRestart(
+                podOperator,
+                nodes,
+                // Remap the function from pod to RestartReasons to nodeId to RestartReasons
+                nodeId -> podNeedsRestart.apply(podOperator.get(reconciliation.namespace(), nodes.stream().filter(nodeRef -> nodeRef.nodeId() == nodeId).collect(Collectors.toList()).get(0).podName())),
+                clusterCaCertSecret,
+                coKeySecret,
+                adminClientProvider,
+                reconciliation,
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                kafkaConfigProvider,
+                logging,
+                operationTimeoutMs,
+                1,
+                eventsPublisher);
+
+        try {
+            List<Integer> restartedNodes;
+            do {
+                restartedNodes = rr.loop();
+            } while (!restartedNodes.isEmpty());
+
+            return Future.succeededFuture();
+
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
     }
 
     /**
