@@ -18,6 +18,9 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 
+/**
+ * Deal with the batching mechanism for the new Kafka roller
+ */
 public class Batching {
 
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(Batching.class);
@@ -25,7 +28,7 @@ public class Batching {
     /**
      * Returns a batch of broker nodes that have no topic partitions in common and have no impact on cluster availability if restarted.
      */
-    public static Set<KafkaNode> nextBatchBrokers(Reconciliation reconciliation,
+    protected static Set<KafkaNode> nextBatchBrokers(Reconciliation reconciliation,
                                                    RollClient rollClient,
                                                    Map<Integer, Context> contextMap,
                                                    Map<Integer, NodeRoles> nodesNeedingRestart,

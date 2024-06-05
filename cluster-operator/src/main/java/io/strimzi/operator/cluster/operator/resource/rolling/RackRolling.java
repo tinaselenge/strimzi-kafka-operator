@@ -478,8 +478,7 @@ public class RackRolling {
      * @param nodes                     The nodes (not all of which may need restarting).
      * @param reconciliation            Reconciliation marker
      * @param predicate                 The predicate used to determine whether to restart a particular node
-     * @param clusterCaCertSecret       Secret with the Cluster CA public key
-     * @param coKeySecret               Secret with the Cluster CA private key
+     * @param coTlsPemIdentity          Cluster operator PEM identity
      * @param adminClientProvider       Kafka Admin client provider
      * @param kafkaAgentClientProvider  Kafka Agent client provider
      * @param kafkaVersion              Kafka version

@@ -14,9 +14,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Determines whether the given broker can be rolled without affecting
+ * producers with acks=all publishing to topics with a {@code min.in.sync.replicas}.
+ */
 public class Availability {
 
-    public static Map<Integer, KafkaNode> nodeIdToKafkaNode(RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart) {
+    protected static Map<Integer, KafkaNode> nodeIdToKafkaNode(RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart) {
 
         Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
 
