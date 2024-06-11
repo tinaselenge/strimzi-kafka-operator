@@ -113,6 +113,7 @@ public class KafkaReconciler {
 
     // Various settings
     private final long operationTimeoutMs;
+    private final int maxRestartBatchSize;
     private final boolean isNetworkPolicyGeneration;
     private final boolean isKafkaNodePoolsEnabled;
     private final List<String> maintenanceWindows;
@@ -197,6 +198,7 @@ public class KafkaReconciler {
         this.reconciliation = reconciliation;
         this.vertx = vertx;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
+        this.maxRestartBatchSize = config.getMaxRestartBatchSize();
         this.kafkaNodePoolCrs = nodePools;
         this.kafka = kafka;
         this.kafkaMetadataStateManager = kafkaMetadataStateManager;
