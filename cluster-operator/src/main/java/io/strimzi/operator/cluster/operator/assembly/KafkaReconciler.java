@@ -505,6 +505,7 @@ public class KafkaReconciler {
                 kafka.getKafkaVersion(),
                 logging,
                 operationTimeoutMs,
+                10000L,
                 1,
                 3,
                 3,

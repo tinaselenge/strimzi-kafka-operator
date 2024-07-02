@@ -306,18 +306,21 @@ class RollClientImpl implements RollClient {
                 for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
                     if (!topicPartitionInfo.replicas().isEmpty()
                             && topicPartitionInfo.replicas().get(0).id() == nodeRef.nodeId() // this node is preferred leader
-                            && topicPartitionInfo.leader().id() != nodeRef.nodeId()) { // this onde is not current leader
+                            && topicPartitionInfo.leader().id() != nodeRef.nodeId()) { // this node is not current leader
                         toElect.add(new TopicPartition(td.name(), topicPartitionInfo.partition()));
                     }
                 }
             }
+            if (toElect.size() > 0) {
+                var electionResults = brokerAdmin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
 
-            var electionResults = brokerAdmin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
-
-            long count = electionResults.values().stream()
-                    .filter(Optional::isPresent)
-                    .count();
-            return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
+                long count = electionResults.values().stream()
+                        .filter(Optional::isPresent)
+                        .count();
+                return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
+            } else {
+                return 0;
+            }
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
