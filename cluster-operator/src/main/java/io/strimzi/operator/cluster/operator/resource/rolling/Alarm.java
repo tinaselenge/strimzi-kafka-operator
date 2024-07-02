@@ -44,7 +44,7 @@ public class Alarm {
     }
 
     /**
-     * Creates an Alerm
+     * Creates an Alarm
      * @param time The source of time
      * @param timeoutMs The timeout for this alarm.
      * @param timeoutMessageSupplier The exception message

@@ -348,6 +348,7 @@ public class RackRolling {
                                           AgentClient agentClient,
                                           Set<Context> batch,
                                           long timeoutMs,
+                                          long waitBetweenRestartAndPreferredLeaderElection,
                                           int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
             restartNode(reconciliation, time, platformClient, context, maxRestarts);
@@ -357,6 +358,7 @@ public class RackRolling {
             try {
                 remainingTimeoutMs = awaitState(reconciliation, time, platformClient, agentClient, context, State.SERVING, remainingTimeoutMs);
                 if (context.currentRoles().broker()) {
+                    time.sleep(waitBetweenRestartAndPreferredLeaderElection, 0);
                     awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
                 }
             } catch (TimeoutException e) {
@@ -507,6 +509,7 @@ public class RackRolling {
                                              KafkaVersion kafkaVersion,
                                              String kafkaLogging,
                                              long postOperationTimeoutMs,
+                                             long waitBetweenRestartAndPreferredLeaderElection,
                                              int maxRestartBatchSize,
                                              int maxRestarts,
                                              int maxReconfigs,
@@ -530,6 +533,7 @@ public class RackRolling {
                 kafkaConfigProvider,
                 kafkaLogging,
                 postOperationTimeoutMs,
+                waitBetweenRestartAndPreferredLeaderElection,
                 maxRestartBatchSize,
                 maxRestarts,
                 maxReconfigs,
@@ -551,6 +555,7 @@ public class RackRolling {
                                                 Function<Integer, String> kafkaConfigProvider,
                                                 String desiredLogging,
                                                 long postOperationTimeoutMs,
+                                                long waitBetweenRestartAndPreferredLeaderElection,
                                                 int maxRestartBatchSize,
                                                 int maxRestarts,
                                                 int maxReconfigs,
@@ -568,6 +573,7 @@ public class RackRolling {
                 kafkaConfigProvider,
                 desiredLogging,
                 postOperationTimeoutMs,
+                waitBetweenRestartAndPreferredLeaderElection,
                 maxRestartBatchSize,
                 maxRestarts,
                 maxReconfigs,
@@ -590,6 +596,7 @@ public class RackRolling {
     private final Function<Integer, String> kafkaConfigProvider;
     private final String desiredLogging;
     private final long postOperationTimeoutMs;
+    private final long waitBetweenRestartAndPreferredLeaderElectionMs;
     private final int maxRestartBatchSize;
     private final int maxRestarts;
     private final int maxReconfigs;
@@ -625,6 +632,7 @@ public class RackRolling {
                        Function<Integer, String> kafkaConfigProvider,
                        String desiredLogging,
                        long postOperationTimeoutMs,
+                       long waitBetweenRestartAndPreferredLeaderElection,
                        int maxRestartBatchSize,
                        int maxRestarts,
                        int maxReconfigs,
@@ -640,6 +648,7 @@ public class RackRolling {
         this.kafkaConfigProvider = kafkaConfigProvider;
         this.desiredLogging = desiredLogging;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
+        this.waitBetweenRestartAndPreferredLeaderElectionMs = waitBetweenRestartAndPreferredLeaderElection;
         this.maxRestartBatchSize = maxRestartBatchSize;
         this.maxRestarts = maxRestarts;
         this.maxReconfigs = maxReconfigs;
@@ -726,7 +735,7 @@ public class RackRolling {
                 // We want to give nodes chance to get ready before we try to connect to the or consider them for rolling.
                 // This is important especially for nodes which were just started.
                 LOGGER.debugCr(reconciliation, "Waiting for nodes {} to become ready before initialising plan in case they just started", unreadyNodes);
-                waitForUnreadyNodes(unreadyNodes, true);
+                awaitReadiness(unreadyNodes, true);
             }
 
             var byPlan = initialPlan(contexts, rollClient);
@@ -774,7 +783,7 @@ public class RackRolling {
                     // from taking out a node each time (due, e.g. to a configuration error).
                     LOGGER.debugCr(reconciliation, "Nodes {} do not need to be restarted", unreadyNodes);
                     LOGGER.debugCr(reconciliation, "Waiting for non-restarted nodes {} to become ready", unreadyNodes);
-                    return waitForUnreadyNodes(unreadyNodes, false);
+                    return awaitReadiness(unreadyNodes, false);
                 }
             }
 
@@ -830,34 +839,22 @@ public class RackRolling {
         var batchOfContexts = nodesToRestart.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
         LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
         // restart a batch
-        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batchOfContexts, postOperationTimeoutMs, maxRestarts);
+        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batchOfContexts, postOperationTimeoutMs, waitBetweenRestartAndPreferredLeaderElectionMs, maxRestarts);
 
         return batchOfIds.stream().toList();
     }
 
     private List<Integer> reconfigureNodes(List<Context> contexts) {
-        List<Integer> reconfiguredNode = List.of();
         for (var context : contexts) {
-            // TODO decide whether to support canary reconfiguration for cluster-scoped configs (nice to have)
             try {
                 reconfigureNode(reconciliation, time, rollClient, context, maxReconfigs);
             } catch (RuntimeException e) {
                 return List.of(context.nodeId());
             }
-
             time.sleep(postOperationTimeoutMs / 2, 0);
-            // TODO decide whether we need an explicit healthcheck here
-            //      or at least to know that the kube health check probe will have failed at the time
-            //      we break to OUTER (We need to test a scenario of breaking configuration change, does this sleep catch it?)
-            awaitPreferred(reconciliation, time, rollClient, context, postOperationTimeoutMs / 2);
-            // termination condition
-            if (contexts.stream().allMatch(context2 -> context2.state().equals(State.LEADING_ALL_PREFERRED))) {
-                LOGGER.debugCr(reconciliation, "Terminate: All nodes leading preferred replicas after reconfigure");
-                break;
-            }
-            reconfiguredNode = List.of(context.nodeId());
         }
-        return reconfiguredNode;
+        awaitReadiness(contexts, false);
+        return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
     }
 
     private List<Integer> waitForLogRecovery(List<Context> contexts) {
@@ -877,7 +874,7 @@ public class RackRolling {
         return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
     }
 
-    private List<Integer> waitForUnreadyNodes(List<Context> contexts, boolean ignoreTimeout) {
+    private List<Integer> awaitReadiness(List<Context> contexts, boolean ignoreTimeout) {
         long remainingTimeoutMs = postOperationTimeoutMs;
         for (Context context : contexts) {
             try {
@@ -915,7 +912,7 @@ public class RackRolling {
             LOGGER.warnCr(reconciliation, "All controller nodes are combined and they are not running, therefore restarting them all now");
             // if all controller nodes (except a single node quorum) are combined and all of them are not running e.g. Pending, we need to restart them all at the same time to form the quorum.
             // This is because until the quorum has been formed and broker process can connect to it, the combined nodes do not become ready.
-            restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, combinedNodesToRestart, postOperationTimeoutMs, maxRestarts);
+            restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, combinedNodesToRestart, postOperationTimeoutMs, waitBetweenRestartAndPreferredLeaderElectionMs, maxRestarts);
             return combinedNodesToRestart.stream().map(Context::nodeId).toList();
         }
 
@@ -987,14 +984,8 @@ public class RackRolling {
                     // If a pure controller's configuration has changed, it should have non-empty reasons to restart.
                     return Plan.NOP;
                 } else {
-                    if (context.numReconfigs() > 0
-                            && context.state() == State.LEADING_ALL_PREFERRED) {
-                        LOGGER.debugCr(reconciliation, "{} has already been reconfigured", context.nodeRef());
-                        return Plan.NOP;
-                    } else {
-                        LOGGER.debugCr(reconciliation, "{} may need to be reconfigured", context.nodeRef());
-                        return Plan.MAYBE_RECONFIGURE;
-                    }
+                    LOGGER.debugCr(reconciliation, "{} may need to be reconfigured", context.nodeRef());
+                    return Plan.MAYBE_RECONFIGURE;
                 }
             }
         }));
