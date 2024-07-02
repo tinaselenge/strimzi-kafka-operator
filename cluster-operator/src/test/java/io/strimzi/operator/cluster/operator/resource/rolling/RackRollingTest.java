@@ -1457,12 +1457,40 @@ public class RackRollingTest {
                 true,
                 3);
 
-        // the order we expect are pure controller, combined and broker only
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
-
-        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 1);
+        // we expect the controller nodes to be restarted together as none of the controllers are running
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0, 1);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 2);
+
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
+    }
+
+    @Test
+    public void shouldRollNodeIfNotRunningAndHasOldRevision() throws ExecutionException, InterruptedException, TimeoutException {
+        // given
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        AgentClient agentClient = mock(AgentClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(platformClient, true, true, 0)
+                .mockLeader(rollClient, 0)
+                .addTopic("topic-A", 0)
+                .mockCanConnectToNodes(rollClient, true, 0)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING, PlatformClient.NodeState.READY), 0)
+                .mockTopics(rollClient)
+                .done();
+
+        var rr = newRollingRestart(platformClient,
+                rollClient,
+                agentClient,
+                nodeRefs.values(),
+                RackRollingTest::podHasOldRevision,
+                EMPTY_CONFIG_SUPPLIER,
+                true,
+                3);
+
+        // we expect the controller nodes to be restarted together as none of the controllers are running
+        assertNodesRestarted(platformClient, rollClient, nodeRefs, rr, 0);
 
         assertNodesRestarted(platformClient, rollClient, nodeRefs, rr);
     }
@@ -1508,17 +1536,15 @@ public class RackRollingTest {
         RollClient rollClient = mock(RollClient.class);
         AgentClient agentClient = mock(AgentClient.class);
         var nodeRefs = new MockBuilder()
-                .addNode(platformClient, false, true, 0)
                 .addNode(platformClient, true, false, 1)
-                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING), 0)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING), 1)
                 .mockTopics(rollClient)
                 .done();
 
-        var ex = assertThrows(TimeoutException.class,
+        var ex = assertThrows(RuntimeException.class,
                 () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:00Z, reason=[POD_STUCK], numRestarts=0, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("java.util.concurrent.TimeoutException: Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:00Z, reason=[POD_STUCK], numRestarts=0, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(0)).restartNode(eq(nodeRefs.get(1)), any());
@@ -1543,7 +1569,7 @@ public class RackRollingTest {
         var ex = assertThrows(TimeoutException.class,
                 () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 3));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_READY, lastTransition=1970-01-01T00:10:19Z, reason=[POD_STUCK], numRestarts=2, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_READY, lastTransition=1970-01-01T00:10:17Z, reason=[POD_STUCK], numRestarts=2, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());
