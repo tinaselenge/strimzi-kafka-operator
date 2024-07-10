@@ -305,6 +305,7 @@ public class RackRollingTest {
                 kafkaConfigProvider,
                 null,
                 120_000,
+                0,
                 maxRestartsBatchSize,
                 1,
                 1,
@@ -318,6 +319,7 @@ public class RackRollingTest {
                                   Collection<NodeRef> nodeRefList,
                                   Function<Integer, RestartReasons> reason,
                                   Function<Integer, String> kafkaConfigProvider,
+                                  long postRestartDelayMs,
                                   int maxRestartsBatchSize,
                                   int maxRestart) throws ExecutionException, InterruptedException, TimeoutException {
 
@@ -334,6 +336,7 @@ public class RackRollingTest {
                 kafkaConfigProvider,
                 null,
                 120_000,
+                postRestartDelayMs,
                 maxRestartsBatchSize,
                 maxRestart,
                 1,
@@ -358,7 +361,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 10000L, 1, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -382,7 +385,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -406,7 +409,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L, 1, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
@@ -432,7 +435,7 @@ public class RackRollingTest {
 
         // when
         var ex = assertThrows(MaxRestartsExceededException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 1));
 
         //then
         assertEquals("Node pool-kafka-0/0 has been restarted 1 times", ex.getMessage());
@@ -494,7 +497,7 @@ public class RackRollingTest {
                         0)
                 .done();
 
-        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L, 1, 1);
 
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(0)), any(), any());
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
@@ -526,7 +529,7 @@ public class RackRollingTest {
                 .mockElectLeaders(rollClient, List.of(1), 0)
                 .done();
 
-        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 10000L,  1, 1);
 
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRefs.get(0)), any(), any());
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRefs.get(1)), any(), any());
@@ -556,7 +559,7 @@ public class RackRollingTest {
                 .mockElectLeaders(rollClient, List.of(1, 1, 1, 1, 0), 0)
                 .done().get(0);
 
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 1);
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
@@ -580,7 +583,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(UnrestartableNodesException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 3));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 3));
 
         assertEquals("The max attempts (2) to wait for this node pool-kafka-0/0 to finish performing log recovery has been reached. There are 0 logs and 0 segments left to recover.",
                 te.getMessage());
@@ -607,7 +610,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(RuntimeException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::podUnresponsive, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 1));
 
         assertEquals("The max attempts (2) to wait for this node pool-kafka-0/0 to finish performing log recovery has been reached. There are 100 logs and 300 segments left to recover.",
                 te.getMessage());
@@ -633,7 +636,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         var te = assertThrows(RuntimeException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 1));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 10000L,  1, 1));
 
         assertEquals("java.util.concurrent.TimeoutException: Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_READY, lastTransition=1970-01-01T00:00:00Z, reason=[], numRestarts=0, numReconfigs=0, numAttempts=2]",
                 te.getMessage());
@@ -695,7 +698,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "compression.type=snappy", 10000L,  1, 1);
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -724,7 +727,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "auto.leader.rebalance.enable=false", 10000L, 1, 1);
 
         // then
         Mockito.verify(rollClient, never()).reconfigureNode(eq(nodeRef), any(), any());
@@ -753,7 +756,7 @@ public class RackRollingTest {
                 .done().get(0);
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 1, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, List.of(nodeRef), RackRollingTest::noReasons, serverId -> "log.retention.ms=1000", 10000L,  1, 1);
 
         // then
         Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), any());
@@ -780,7 +783,7 @@ public class RackRollingTest {
                 .done();
 
         // when
-        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 3, 1);
+        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 10000L,  3, 1);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -812,7 +815,7 @@ public class RackRollingTest {
 
         // when
         doRollingRestart(platformClient, rollClient, agentClient,
-                nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1);
+                nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER,  10000L, 3, 1);
 
         // then
         for (var nodeRef : nodeRefs.values()) {
@@ -1186,7 +1189,7 @@ public class RackRollingTest {
                 .done();
 
         assertThrows(UnrestartableNodesException.class, () ->
-                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L,  3, 1),
                 "Expect UnrestartableNodesException because neither controller 0 nor 1 can be restarted without impacting the quorum health");
 
         // We should be able to restart only the controller that is behind
@@ -1221,7 +1224,7 @@ public class RackRollingTest {
 
         // we should not restart any controllers as the majority have not caught up to the leader
         assertThrows(UnrestartableNodesException.class, () ->
-                doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L,  3, 1),
                 "Expect UnrestartableNodesException because none of the controllers can be restarted without impacting the quorum health");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1295,7 +1298,7 @@ public class RackRollingTest {
                 .done();
 
         assertThrows(UnrestartableNodesException.class, () ->
-                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 10000L,  3, 1),
                 "Expect UnrestartableNodesException because of invalid timestamps for controller 0 and 2");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1323,7 +1326,7 @@ public class RackRollingTest {
                 .done();
 
         assertThrows(UnrestartableNodesException.class, () ->
-                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER,  10000L,  3, 1),
                 "Expect UnrestartableNodesException because of invalid quorum leader");
 
         for (var nodeRef : nodeRefs.values()) {
@@ -1385,7 +1388,7 @@ public class RackRollingTest {
                 .done();
 
         assertThrows(UnrestartableNodesException.class, () ->
-                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER,  10000L, 3, 1),
                 "Expect UnrestartableNodesException because of controller 2 has fallen behind therefore controller 1 cannot be restarted");
         //only the controller that has fallen behind should be restarted
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(2)), any());
@@ -1516,7 +1519,7 @@ public class RackRollingTest {
                 .done();
 
         var ex = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 3));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER,  10000L, 1, 3));
 
         assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-1/1, currentRoles=NodeRoles[controller=true, broker=false], state=NOT_RUNNING, lastTransition=1970-01-01T00:00:00Z, reason=[POD_STUCK], numRestarts=0, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
@@ -1541,9 +1544,9 @@ public class RackRollingTest {
 
         //If nodes never got into running state, we have to exit the inner loop somehow.
         var ex = assertThrows(TimeoutException.class,
-                () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 1, 3));
+                () -> doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::noReasons, EMPTY_CONFIG_SUPPLIER, 10000L, 1, 3));
 
-        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_READY, lastTransition=1970-01-01T00:10:19Z, reason=[POD_STUCK], numRestarts=2, numReconfigs=0, numAttempts=2]", ex.getMessage());
+        assertEquals("Failed to reach SERVING within 120000 ms: Context[nodeRef=pool-kafka-0/0, currentRoles=NodeRoles[controller=false, broker=true], state=NOT_READY, lastTransition=1970-01-01T00:10:29Z, reason=[POD_STUCK], numRestarts=2, numReconfigs=0, numAttempts=2]", ex.getMessage());
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), any());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(1)), any());

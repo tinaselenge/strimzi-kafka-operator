@@ -348,6 +348,7 @@ public class RackRolling {
                                           AgentClient agentClient,
                                           Set<Context> batch,
                                           long timeoutMs,
+                                          long postRestartDelayMs,
                                           int maxRestarts) throws TimeoutException {
         for (Context context : batch) {
             restartNode(reconciliation, time, platformClient, context, maxRestarts);
@@ -370,6 +371,8 @@ public class RackRolling {
                 }
             }
         }
+        //added delay between batch restarts which is configurable
+        time.sleep(postRestartDelayMs, 0);
     }
 
     private static Map<Plan, List<Context>> refinePlanForReconfigurability(Reconciliation reconciliation,
@@ -486,7 +489,8 @@ public class RackRolling {
      * @param kafkaConfigProvider       Kafka configuration provider
      * @param totalNumOfControllerNodes The total number of controller nodes
      * @param kafkaLogging              Kafka logging configuration
-     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure
+     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigur
+     * @param postRestartDelayMs        Cooldown delay for next rolling restart
      * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once
      * @param maxRestarts               The maximum number of restart that can be done for a node
      * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
@@ -507,6 +511,7 @@ public class RackRolling {
                                              KafkaVersion kafkaVersion,
                                              String kafkaLogging,
                                              long postOperationTimeoutMs,
+                                             long postRestartDelayMs,
                                              int maxRestartBatchSize,
                                              int maxRestarts,
                                              int maxReconfigs,
@@ -530,6 +535,7 @@ public class RackRolling {
                 kafkaConfigProvider,
                 kafkaLogging,
                 postOperationTimeoutMs,
+                postRestartDelayMs,
                 maxRestartBatchSize,
                 maxRestarts,
                 maxReconfigs,
@@ -551,6 +557,7 @@ public class RackRolling {
                                                 Function<Integer, String> kafkaConfigProvider,
                                                 String desiredLogging,
                                                 long postOperationTimeoutMs,
+                                                long postRestartDelayMs,
                                                 int maxRestartBatchSize,
                                                 int maxRestarts,
                                                 int maxReconfigs,
@@ -568,6 +575,7 @@ public class RackRolling {
                 kafkaConfigProvider,
                 desiredLogging,
                 postOperationTimeoutMs,
+                postRestartDelayMs,
                 maxRestartBatchSize,
                 maxRestarts,
                 maxReconfigs,
@@ -590,6 +598,7 @@ public class RackRolling {
     private final Function<Integer, String> kafkaConfigProvider;
     private final String desiredLogging;
     private final long postOperationTimeoutMs;
+    private final long postRestartDelayMs;
     private final int maxRestartBatchSize;
     private final int maxRestarts;
     private final int maxReconfigs;
@@ -608,6 +617,7 @@ public class RackRolling {
      * @param kafkaConfigProvider       Kafka configuration provider
      * @param desiredLogging            Kafka logging configuration
      * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure
+     * @param postRestartDelayMs        Cooldown delay for next rolling restart
      * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once
      * @param maxRestarts               The maximum number of restart that can be done for a node
      * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
@@ -625,6 +635,7 @@ public class RackRolling {
                        Function<Integer, String> kafkaConfigProvider,
                        String desiredLogging,
                        long postOperationTimeoutMs,
+                       long postRestartDelayMs,
                        int maxRestartBatchSize,
                        int maxRestarts,
                        int maxReconfigs,
@@ -640,6 +651,7 @@ public class RackRolling {
         this.kafkaConfigProvider = kafkaConfigProvider;
         this.desiredLogging = desiredLogging;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
+        this.postRestartDelayMs = postRestartDelayMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
         this.maxRestarts = maxRestarts;
         this.maxReconfigs = maxReconfigs;
@@ -830,7 +842,7 @@ public class RackRolling {
         var batchOfContexts = nodesToRestart.stream().filter(context -> batchOfIds.contains(context.nodeId())).collect(Collectors.toSet());
         LOGGER.debugCr(reconciliation, "Restart batch: {}", batchOfContexts);
         // restart a batch
-        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batchOfContexts, postOperationTimeoutMs, maxRestarts);
+        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batchOfContexts, postOperationTimeoutMs, postRestartDelayMs, maxRestarts);
 
         return batchOfIds.stream().toList();
     }
@@ -915,7 +927,7 @@ public class RackRolling {
             LOGGER.warnCr(reconciliation, "All controller nodes are combined and they are not running, therefore restarting them all now");
             // if all controller nodes (except a single node quorum) are combined and all of them are not running e.g. Pending, we need to restart them all at the same time to form the quorum.
             // This is because until the quorum has been formed and broker process can connect to it, the combined nodes do not become ready.
-            restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, combinedNodesToRestart, postOperationTimeoutMs, maxRestarts);
+            restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, combinedNodesToRestart, postOperationTimeoutMs, postRestartDelayMs, maxRestarts);
             return combinedNodesToRestart.stream().map(Context::nodeId).toList();
         }
 
