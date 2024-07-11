@@ -60,12 +60,6 @@ final class Context {
             return state;
         }
         this.state = state;
-        if (state == State.RESTARTED) {
-            this.numRestarts++;
-        }
-        if (state == State.RECONFIGURED) {
-            this.numReconfigs++;
-        }
         this.lastTransition = time.systemTimeMillis();
         return state;
     }
@@ -104,6 +98,14 @@ final class Context {
 
     public int numAttempts() {
         return numAttempts;
+    }
+
+    public void incrementNumRestarts() {
+        this.numRestarts++;
+    }
+
+    public void incrementNumReconfigs() {
+        this.numReconfigs++;
     }
 
     public void incrementNumAttempts() {
