@@ -280,7 +280,8 @@ public class RackRolling {
         } catch (RuntimeException e) {
             LOGGER.warnCr(reconciliation, "An exception thrown during the restart of the node {}", context.nodeRef(), e);
         }
-        context.transitionTo(State.RESTARTED, time);
+        context.transitionTo(State.UNKNOWN, time);
+        context.incrementNumRestarts();
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context.nodeRef());
     }
 
@@ -295,7 +296,8 @@ public class RackRolling {
         }
         LOGGER.debugCr(reconciliation, "Node {}: Reconfiguring", context.nodeRef());
         rollClient.reconfigureNode(context.nodeRef(), context.brokerConfigDiff(), context.loggingDiff());
-        context.transitionTo(State.RECONFIGURED, time);
+        context.transitionTo(State.UNKNOWN, time);
+        context.incrementNumReconfigs();
         LOGGER.debugCr(reconciliation, "Node {}: Reconfigured", context.nodeRef());
     }
 
