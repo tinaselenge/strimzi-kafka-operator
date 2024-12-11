@@ -979,32 +979,20 @@ public class KafkaRoller {
     @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE") // seems to be completely spurious
     int controller(NodeRef nodeRef, long timeout, TimeUnit unit, RestartContext restartContext) throws Exception {
         int id;
-        if (nodeRef.controller()) {
-            id = await(restartContext.quorumCheck.quorumLeaderId(), timeout, unit,
-                    t -> new UnforceableProblem("An error while trying to determine the quorum leader id", t));
-            LOGGER.debugCr(reconciliation, "KRaft active controller is {}", id);
-        } else {
-            // TODO Either this is a KRaft broker or ZooKeeper broker. Since KafkaRoller does not know if this is KRaft mode or
-            //      not continue with describeCluster. In KRaft mode this returns a random broker and will mean this broker is deferred.
-            //      In future this can be improved by telling KafkaRoller whether the cluster is in KRaft mode or not.
-            //      This is tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/9373.
-            // Use admin client connected directly to this broker here, then any exception or timeout trying to connect to
-            // the current node will be caught and handled from this method, rather than appearing elsewhere.
-            try (Admin ac = brokerAdminClient(Set.of(nodeRef))) {
-                Node controllerNode = null;
+        try (Admin ac = nodeRef.controller() ? controllerAdminClient(Set.of(nodeRef)) : brokerAdminClient(Set.of(nodeRef))) {
+            Node activeControllerNode = null;
 
-                try {
-                    DescribeClusterResult describeClusterResult = ac.describeCluster();
-                    KafkaFuture<Node> controller = describeClusterResult.controller();
-                    controllerNode = controller.get(timeout, unit);
-                    restartContext.clearConnectionError();
-                } catch (ExecutionException | TimeoutException e) {
-                    maybeTcpProbe(nodeRef, e, restartContext);
-                }
-
-                id = controllerNode == null || Node.noNode().equals(controllerNode) ? -1 : controllerNode.id();
-                LOGGER.debugCr(reconciliation, "Controller is {} (only relevant for Zookeeper mode)", id);
+            try {
+                DescribeClusterResult describeClusterResult = ac.describeCluster();
+                KafkaFuture<Node> controller = describeClusterResult.controller();
+                activeControllerNode = controller.get(timeout, unit);
+                restartContext.clearConnectionError();
+            } catch (ExecutionException | TimeoutException e) {
+                maybeTcpProbe(nodeRef, e, restartContext);
             }
+
+            id = activeControllerNode == null || Node.noNode().equals(activeControllerNode) ? -1 : activeControllerNode.id();
+            LOGGER.debugCr(reconciliation, "Active controller is {} ", id);
         }
         return id;
     }

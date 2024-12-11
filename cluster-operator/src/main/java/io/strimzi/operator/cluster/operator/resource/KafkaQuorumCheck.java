@@ -56,17 +56,6 @@ class KafkaQuorumCheck {
     }
 
     /**
-     * Returns id of the quorum leader.
-     **/
-    Future<Integer> quorumLeaderId() {
-        LOGGER.debugCr(reconciliation, "Determining the controller quorum leader id");
-        return describeMetadataQuorum().map(QuorumInfo::leaderId).recover(error -> {
-            LOGGER.warnCr(reconciliation, "Error determining the controller quorum leader id", error);
-            return Future.failedFuture(error);
-        });
-    }
-
-    /**
      * Returns true if the majority of the controllers' lastCaughtUpTimestamps are within
      * the controller.quorum.fetch.timeout.ms based on the given quorum info.
      * The given nodeIdToRestart is the one being considered to restart, therefore excluded from the check.
