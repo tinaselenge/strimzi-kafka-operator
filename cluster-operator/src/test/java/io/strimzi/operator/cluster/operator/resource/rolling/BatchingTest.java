@@ -9,89 +9,65 @@ import org.apache.kafka.common.Node;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
 public class BatchingTest {
 
     @Test
     public void testCellCreation() {
-
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
-                        addKafkaNode(1, false, true, Set.of()),
-                        addKafkaNode(2, false, true, addReplicas(2, "my-topic", 0, 1, 2))));
+                Set.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 1, 0)),
+                        addKafkaNode(1, Set.of()),
+                        addKafkaNode(2, addReplicas(2, "my-topic", 0, 1, 2))));
 
         assertEquals(cells.size(), 2);
-        assertEquals(cells.get(0).toString(), "[KafkaNode[id=1, controller=false, broker=true, replicas=[]], KafkaNode[id=0, controller=true, broker=false, replicas=[my-topic-0]]]");
-        assertEquals(cells.get(1).toString(), "[KafkaNode[id=2, controller=false, broker=true, replicas=[my-topic-0]]]");
+        assertEquals("[KafkaNode[id=0, replicas=[my-topic-0]], KafkaNode[id=1, replicas=[]]]", cells.get(0).toString());
+        assertEquals("[KafkaNode[id=2, replicas=[my-topic-0]]]", cells.get(1).toString());
     }
 
     @Test
     public void testBatchCreationWithSingleTopic() {
+        Set<KafkaNode> kafkaNodes = Set.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 1, 0)),
+                addKafkaNode(1, Set.of()),
+                addKafkaNode(2, addReplicas(2, "my-topic", 0, 1, 2)));
+        List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION, kafkaNodes);
 
-        List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
-                        addKafkaNode(1, false, true, Set.of()),
-                        addKafkaNode(2, false, true, addReplicas(2, "my-topic", 0, 1, 2))));
+        Availability availability = mock(Availability.class);
+        doReturn(true).when(availability).anyPartitionWouldBeUnderReplicated(0);
+        doReturn(true).when(availability).anyPartitionWouldBeUnderReplicated(2);
 
-        Map<String, Integer> topicAndMinIsrs = new HashMap<>();
-
-        topicAndMinIsrs.put("my-topic", 2);
-
-
-        List<Set<KafkaNode>> batch = Batching.batchCells(Reconciliation.DUMMY_RECONCILIATION, cells, topicAndMinIsrs, 2);
+        List<Set<Integer>> batch = Batching.batchCells(Reconciliation.DUMMY_RECONCILIATION, cells, availability, 2);
 
         assertEquals(batch.size(), 1);
-        assertEquals(batch.get(0).toString(), "[KafkaNode[id=1, controller=false, broker=true, replicas=[]]]");
-    }
-
-    @Test
-    public void testBatchCreationWithNonRestartableNodes() {
-
-        Map<String, Integer> topicAndMinIsrs = new HashMap<>();
-
-        List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
-                        addKafkaNode(1, true, true, addReplicas(1, "my-topic", 1, 1, 0)),
-                        addKafkaNode(2, false, true, addReplicas(2, "my-topic-1", 0, 1, 2)),
-                        addKafkaNode(3, false, true, addReplicas(3, "my-topic-1", 0, 1, 3))));
-
-        topicAndMinIsrs.put("my-topic", 2);
-        topicAndMinIsrs.put("my-topic-1", 2);
-
-
-        List<Set<KafkaNode>> batch = Batching.batchCells(Reconciliation.DUMMY_RECONCILIATION, cells, topicAndMinIsrs, 2);
-
-        // cannot batch any cells since we cannot restart nodes {1,2,0,3} without violating some topics' min.in.sync.replicas
-        assertEquals(batch.size(), 0);
+        assertEquals("[1]", batch.get(0).toString());
     }
 
     @Test
     public void testBatchCreationWithMultipleTopics() {
 
-        Map<String, Integer> topicAndMinIsrs = new HashMap<>();
-
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, true, false, addReplicas(0, "my-topic", 0, 1, 0)),
-                        addKafkaNode(1, true, true, addReplicas(1, "my-topic-1", 1, 1, 3)),
-                        addKafkaNode(2, false, true, addReplicas(2, "my-topic-1", 1, 0, 2)),
-                        addKafkaNode(3, false, true, addReplicas(3, "my-topic-2", 1, 1, 0))));
+                Set.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 0, 3)),
+                        addKafkaNode(3, addReplicas(3, "my-topic", 0, 0, 3)),
+                        addKafkaNode(1, addReplicas(1, "my-topic-1", 1, 1, 2)),
+                        addKafkaNode(2, addReplicas(2, "my-topic-1", 1, 1, 2))));
 
-        topicAndMinIsrs.put("my-topic", 2);
-        topicAndMinIsrs.put("my-topic-1", 2);
-        topicAndMinIsrs.put("my-topic-2", 2);
+        Availability availability = mock(Availability.class);
+        doReturn(true).when(availability).anyPartitionWouldBeUnderReplicated(0);
+        doReturn(true).when(availability).anyPartitionWouldBeUnderReplicated(1);
+        doReturn(true).when(availability).anyPartitionWouldBeUnderReplicated(2);
 
-        List<Set<KafkaNode>> batch = Batching.batchCells(Reconciliation.DUMMY_RECONCILIATION, cells, topicAndMinIsrs, 2);
+        List<Set<Integer>> batch = Batching.batchCells(Reconciliation.DUMMY_RECONCILIATION, cells, availability, 2);
+
 
         System.out.println(batch);
         assertEquals(batch.size(), 1);
-        assertEquals(batch.get(0).toString(), "[KafkaNode[id=3, controller=false, broker=true, replicas=[my-topic-2-1]]]");
+        assertEquals( "[3]", batch.get(0).toString());
     }
 
     static public Set<Replica> addReplicas(int brokerid, String topicName, int partition, int... isrIds) {
@@ -112,7 +88,7 @@ public class BatchingTest {
         return nodes;
     }
 
-    static public KafkaNode addKafkaNode(int nodeId, boolean controller, boolean broker, Set<Replica> replicas) {
-        return new KafkaNode(nodeId, controller, broker, replicas);
+    static public KafkaNode addKafkaNode(int nodeId, Set<Replica> replicas) {
+        return new KafkaNode(nodeId, replicas);
     }
 }

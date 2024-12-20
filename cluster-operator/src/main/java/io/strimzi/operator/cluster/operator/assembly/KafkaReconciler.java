@@ -511,7 +511,6 @@ public class KafkaReconciler {
                 adminClientProvider,
                 kafkaAgentClientProvider,
                 kafkaConfigProvider,
-                kafka.controllerNodes().size(),
                 allowReconfiguration,
                 kafka.getKafkaVersion(),
                 logging,

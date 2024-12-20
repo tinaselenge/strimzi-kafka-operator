@@ -11,5 +11,5 @@ import java.util.Set;
  * @param id The id of the server
  * @param replicas The replicas on this server
  */
-record KafkaNode(int id, boolean controller, boolean broker, Set<Replica> replicas) {
+record KafkaNode(int id, Set<Replica> replicas) {
 }

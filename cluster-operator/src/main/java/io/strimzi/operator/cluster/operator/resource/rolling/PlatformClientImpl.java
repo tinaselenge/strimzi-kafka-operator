@@ -42,7 +42,9 @@ public class PlatformClientImpl implements PlatformClient {
     @Override
     public NodeState nodeState(NodeRef nodeRef) {
         var pod = podOps.get(namespace, nodeRef.podName());
-        if (pod == null || pod.getStatus() == null) {
+        if (pod == null) {
+            throw new UnrestartableNodesException("Pod " + nodeRef.podName() + " does not exist: ");
+        } else if (pod.getStatus() == null) {
             return NodeState.NOT_RUNNING;
         } else {
             if (podOps.isReady(namespace, nodeRef.podName())) {

@@ -11,9 +11,7 @@ enum State {
     UNKNOWN, // the initial state
     NOT_RUNNING, // The pod/process is not running.
     NOT_READY, // decided to restart right now or broker state < 2 OR == 127
-    RESTARTED, // after successful kube pod delete
-    RECONFIGURED, // after successful reconfig
     RECOVERING, // broker state == 2
-    SERVING, // broker state >= 3 AND != 127
+    READY, // broker state >= 3 AND != 127
     LEADING_ALL_PREFERRED // broker state== 3 and leading all preferred replicas
 }

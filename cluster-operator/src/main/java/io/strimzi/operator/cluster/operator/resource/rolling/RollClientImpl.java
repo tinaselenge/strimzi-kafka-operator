@@ -69,8 +69,6 @@ class RollClientImpl implements RollClient {
     private final Reconciliation reconciliation;
 
     private final AdminClientProvider adminClientProvider;
-    private int quorumLeader = -1;
-
     RollClientImpl(Reconciliation reconciliation,
                    TlsPemIdentity coTlsPemIdentity,
                    AdminClientProvider adminClientProvider) {
@@ -209,7 +207,6 @@ class RollClientImpl implements RollClient {
     public Map<Integer, Long> quorumLastCaughtUpTimestamps() {
         DescribeMetadataQuorumResult dmqr = controllerAdmin.describeMetadataQuorum(new DescribeMetadataQuorumOptions());
         try {
-            quorumLeader = dmqr.quorumInfo().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS).leaderId();
             return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
                     QuorumInfo.ReplicaState::replicaId,
                     state -> state.lastCaughtUpTimestamp().orElse(-1)));
@@ -217,19 +214,13 @@ class RollClientImpl implements RollClient {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
-        } catch (TimeoutException e) {
-            throw new RuntimeException(e);
         }
     }
 
     @Override
     public int activeController() {
-        if (quorumLeader != -1) {
-            return quorumLeader;
-        }
-
         try {
-            return controllerAdmin.describeMetadataQuorum().quorumInfo().get().leaderId();
+            return controllerAdmin.describeCluster().controller().get().id();
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         } catch (InterruptedException e) {

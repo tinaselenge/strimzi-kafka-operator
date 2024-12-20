@@ -24,7 +24,6 @@ import io.strimzi.operator.topic.model.ReconcilableTopic;
 import io.strimzi.operator.topic.model.Results;
 import io.strimzi.operator.topic.model.TopicOperatorException;
 import io.strimzi.operator.topic.model.TopicState;
-import io.strimzi.operator.topic.model.UncheckedInterruptedException;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;

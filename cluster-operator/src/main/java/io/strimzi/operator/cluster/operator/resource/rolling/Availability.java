@@ -4,11 +4,12 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.ReconciliationLogger;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -18,48 +19,29 @@ import java.util.Set;
  * Determines whether the given broker can be rolled without affecting
  * producers with acks=all publishing to topics with a {@code min.in.sync.replicas}.
  */
-public class Availability {
+class Availability {
 
-    protected static Map<Integer, KafkaNode> nodeIdToKafkaNode(RollClient rollClient, Map<Integer, Context> contextMap, Map<Integer, NodeRoles> nodesNeedingRestart) {
+    private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(Availability.class.getName());
 
-        Map<Integer, KafkaNode> nodeIdToKafkaNode = new HashMap<>();
+    private final Reconciliation reconciliation;
 
-        // Get all the topics in the cluster
+    private final List<TopicDescription> topicDescriptions;
+
+    private final Map<String, Integer> minIsrByTopic;
+
+    Availability(Reconciliation reconciliation, RollClient rollClient) {
+        this.reconciliation = reconciliation;
+        // 1. Get all topics
         Collection<TopicListing> topicListings = rollClient.listTopics();
-
-        // batch the describeTopics requests to avoid trying to get the state of all topics in the cluster
-        var topicIds = topicListings.stream().map(TopicListing::topicId).toList();
-
-        // Convert the TopicDescriptions to the Server and Replicas model
-        List<TopicDescription> topicDescriptions = rollClient.describeTopics(topicIds);
-
-        topicDescriptions.forEach(topicDescription -> {
-            topicDescription.partitions().forEach(partition -> {
-                partition.replicas().forEach(replicatingBroker -> {
-                    var kafkaNode = nodeIdToKafkaNode.computeIfAbsent(replicatingBroker.id(),
-                            ig -> {
-                                NodeRoles nodeRoles = contextMap.get(replicatingBroker.id()).currentRoles();
-                                return new KafkaNode(replicatingBroker.id(), nodeRoles.controller(), nodeRoles.broker(), new HashSet<>());
-                            });
-                    kafkaNode.replicas().add(new Replica(
-                            replicatingBroker,
-                            topicDescription.name(),
-                            partition.partition(),
-                            partition.isr()));
-                });
-            });
-        });
-
-        // Add any servers which we know about but which were absent from any partition metadata
-        // i.e. brokers without any assigned partitions
-        nodesNeedingRestart.forEach((nodeId, nodeRoles) -> nodeIdToKafkaNode.putIfAbsent(nodeId, new KafkaNode(nodeId, nodeRoles.controller(), nodeRoles.broker(), Set.of())));
-
-        return nodeIdToKafkaNode;
+        // 2. Get topic descriptions
+        topicDescriptions = rollClient.describeTopics(topicListings.stream().map(TopicListing::topicId).toList());
+        // 2. Get topic minISR configurations
+        minIsrByTopic = rollClient.describeTopicMinIsrs(rollClient.listTopics().stream().map(TopicListing::name).toList());
     }
 
-    protected static boolean anyReplicaWouldBeUnderReplicated(KafkaNode kafkaNode,
-                                                              Map<String, Integer> minIsrByTopic) {
-        for (var replica : kafkaNode.replicas()) {
+    protected boolean anyPartitionWouldBeUnderReplicated(int nodeId) {
+        var replicas = getReplicasForNode(nodeId);
+        for (var replica : replicas) {
             var topicName = replica.topicName();
             Integer minIsr = minIsrByTopic.get(topicName);
             if (wouldBeUnderReplicated(minIsr, replica)) {
@@ -69,6 +51,24 @@ public class Availability {
         return false;
     }
 
+    protected Set<Replica> getReplicasForNode(int nodeId) {
+        Set<Replica> replicas = new HashSet<>();
+        topicDescriptions.forEach(topicDescription -> {
+            topicDescription.partitions().forEach(topicPartitionInfo -> {
+                topicPartitionInfo.replicas().forEach(replicatingBroker -> {
+                    if (replicatingBroker.id() == nodeId) {
+                        replicas.add(new Replica(
+                                replicatingBroker,
+                                topicDescription.name(),
+                                topicPartitionInfo.partition(),
+                                topicPartitionInfo.isr()
+                        ));
+                    }
+                });
+            });
+        });
+        return replicas;
+    }
 
     private static boolean wouldBeUnderReplicated(Integer minIsr, Replica replica) {
         final boolean wouldByUnderReplicated;
@@ -76,6 +76,8 @@ public class Availability {
             // if topic doesn't have minISR then it's fine
             wouldByUnderReplicated = false;
         } else {
+            //TODO: check if minISR can be set to equal to or greater than replica size
+
             // else topic has minISR
             // compute spare = size(ISR) - minISR
             int sizeIsr = replica.isrSize();

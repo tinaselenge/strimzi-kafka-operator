@@ -60,12 +60,7 @@ final class Context {
             return state;
         }
         this.state = state;
-        if (state == State.RESTARTED) {
-            this.numRestarts++;
-        }
-        if (state == State.RECONFIGURED) {
-            this.numReconfigs++;
-        }
+
         this.lastTransition = time.systemTimeMillis();
         return state;
     }
@@ -110,6 +105,14 @@ final class Context {
         this.numAttempts++;
     }
 
+    public void incrementNumRestarts() {
+        this.numRestarts++;
+    }
+
+    public void incrementNumReconfigs() {
+        this.numReconfigs++;
+    }
+
     @Override
     public String toString() {
 
@@ -127,7 +130,6 @@ final class Context {
     public void brokerConfigDiff(KafkaBrokerConfigurationDiff diff) {
         this.brokerConfigDiff = diff;
     }
-
     public void loggingDiff(KafkaBrokerLoggingConfigurationDiff loggingDiff) {
         this.loggingDiff = loggingDiff;
     }
