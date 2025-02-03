@@ -291,7 +291,7 @@ public class KafkaConnectAssemblyOperator extends AbstractConnectOperator<Kubern
                         noConnectCluster(reconciliation.namespace(), reconciliation.name())));
             }
             return Future.join(connectorFutures);
-        }).map((Void) null);
+        }).mapEmpty();
     }
 
     /**
@@ -346,7 +346,7 @@ public class KafkaConnectAssemblyOperator extends AbstractConnectOperator<Kubern
                             ? maybeUpdateConnectorStatus(reconciliation, connector, null, null)
                             : maybeUpdateConnectorStatus(reconciliation, connector, null, zeroReplicas(namespace, connectName)))
                         .collect(Collectors.toList())
-                )).map((Void) null);
+                )).mapEmpty();
         } else {
             String host = KafkaConnectResources.qualifiedServiceName(connectName, namespace);
             KafkaConnectApi apiClient = connectClientProvider.apply(vertx);
