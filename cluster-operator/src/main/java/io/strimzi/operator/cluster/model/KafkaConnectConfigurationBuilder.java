@@ -255,7 +255,7 @@ public class KafkaConnectConfigurationBuilder {
      *
      * @return Returns the builder instance
      */
-    public KafkaConnectConfigurationBuilder withConfigurations(AbstractConfiguration configurations) {
+    public KafkaConnectConfigurationBuilder withUserConfigurations(AbstractConfiguration configurations) {
         printConfigProviders(configurations);
 
         if (configurations != null && !configurations.getConfiguration().isEmpty()) {
