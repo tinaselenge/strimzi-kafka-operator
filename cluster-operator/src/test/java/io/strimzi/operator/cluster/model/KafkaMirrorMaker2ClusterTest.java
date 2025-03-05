@@ -64,8 +64,6 @@ import io.strimzi.api.kafka.model.mirrormaker2.KafkaMirrorMaker2ClusterSpec;
 import io.strimzi.api.kafka.model.mirrormaker2.KafkaMirrorMaker2ClusterSpecBuilder;
 import io.strimzi.api.kafka.model.mirrormaker2.KafkaMirrorMaker2Resources;
 import io.strimzi.api.kafka.model.podset.StrimziPodSet;
-import io.strimzi.kafka.oauth.client.ClientConfig;
-import io.strimzi.kafka.oauth.server.ServerConfig;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ResourceUtils;
@@ -93,6 +91,7 @@ import java.util.TreeMap;
 import static java.util.Collections.singletonMap;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -408,12 +407,15 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, not(containsString("ssl.truststore.certificates")));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_TRUSTED_CERTS),
-                    is(nullValue()));
             assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_MIRRORMAKER_2_TRUSTED_CERTS_CLUSTERS),
                     is(nullValue()));
         });
@@ -442,6 +444,12 @@ public class KafkaMirrorMaker2ClusterTest {
                 .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.keystore.certificate.chain=${strimzisecrets:namespace/user-secret:user.crt}"));
+        assertThat(configs, containsString("ssl.keystore.key=${strimzisecrets:namespace/user-secret:user.key}"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -449,8 +457,6 @@ public class KafkaMirrorMaker2ClusterTest {
 
             Container cont = pod.getSpec().getContainers().get(0);
             assertThat(cont.getVolumeMounts().get(3).getMountPath(), is(KafkaMirrorMaker2Cluster.TLS_CERTS_BASE_VOLUME_MOUNT + "user-secret"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_TLS_AUTH_CERT), is("user-secret/user.crt"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_TLS_AUTH_KEY), is("user-secret/user.key"));
         });
     }
 
@@ -525,6 +531,12 @@ public class KafkaMirrorMaker2ClusterTest {
                 .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-512"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/user1-secret:password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -532,9 +544,6 @@ public class KafkaMirrorMaker2ClusterTest {
 
             Container cont = pod.getSpec().getContainers().get(0);
             assertThat(cont.getVolumeMounts().get(2).getMountPath(), is(KafkaMirrorMaker2Cluster.PASSWORD_VOLUME_MOUNT + "user1-secret"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE), is("user1-secret/password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME), is("user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM), is("scram-sha-512"));
         });
     }
 
@@ -564,6 +573,14 @@ public class KafkaMirrorMaker2ClusterTest {
             .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.truststore.certificates=${strimzisecrets:namespace/my-secret:*.crt"));
+        assertThat(configs, containsString("ssl.truststore.type=PEM"));
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-512"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/my-secret:user1.password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -588,10 +605,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(cont.getVolumeMounts().get(4).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_TLS_CERTS_BASE_VOLUME_MOUNT + targetClusterAlias + "/my-secret"));
             assertThat(cont.getVolumeMounts().get(5).getName(), is("target-my-secret"));
             assertThat(cont.getVolumeMounts().get(5).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_PASSWORD_VOLUME_MOUNT + targetClusterAlias + "/my-secret"));
-
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE, "my-secret/user1.password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME, "user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM, "scram-sha-512"));
         });
     }
 
@@ -626,6 +639,14 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.truststore.certificates=${strimzisecrets:namespace/my-secret:*.crt"));
+        assertThat(configs, containsString("ssl.truststore.type=PEM"));
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-512"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/my-secret:user1.password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -656,9 +677,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(cont.getVolumeMounts().get(7).getName(), is("source-my-secret"));
             assertThat(cont.getVolumeMounts().get(7).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_PASSWORD_VOLUME_MOUNT + "source/my-secret"));
 
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE, "my-secret/user1.password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME, "user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM, "scram-sha-512"));
         });
     }
 
@@ -680,6 +698,12 @@ public class KafkaMirrorMaker2ClusterTest {
                 .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-256"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/user1-secret:password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -687,9 +711,6 @@ public class KafkaMirrorMaker2ClusterTest {
 
             Container cont = pod.getSpec().getContainers().get(0);
             assertThat(cont.getVolumeMounts().get(2).getMountPath(), is(KafkaMirrorMaker2Cluster.PASSWORD_VOLUME_MOUNT + "user1-secret"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE), is("user1-secret/password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME), is("user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM), is("scram-sha-256"));
         });
     }
 
@@ -719,6 +740,14 @@ public class KafkaMirrorMaker2ClusterTest {
                 .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.truststore.certificates=${strimzisecrets:namespace/my-secret:*.crt"));
+        assertThat(configs, containsString("ssl.truststore.type=PEM"));
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-256"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/my-secret:user1.password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -744,9 +773,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(cont.getVolumeMounts().get(5).getName(), is("target-my-secret"));
             assertThat(cont.getVolumeMounts().get(5).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_PASSWORD_VOLUME_MOUNT + targetClusterAlias + "/my-secret"));
 
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE, "my-secret/user1.password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME, "user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM, "scram-sha-256"));
         });
     }
 
@@ -781,6 +807,14 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.truststore.certificates=${strimzisecrets:namespace/my-secret:*.crt"));
+        assertThat(configs, containsString("ssl.truststore.type=PEM"));
+        assertThat(configs, containsString("sasl.mechanism=SCRAM-SHA-256"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/my-secret:user1.password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -811,9 +845,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(cont.getVolumeMounts().get(7).getName(), is("source-my-secret"));
             assertThat(cont.getVolumeMounts().get(7).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_PASSWORD_VOLUME_MOUNT + "source/my-secret"));
 
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE, "my-secret/user1.password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME, "user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM, "scram-sha-256"));
         });
     }
 
@@ -835,6 +866,12 @@ public class KafkaMirrorMaker2ClusterTest {
                 .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=PLAIN"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/user1-secret:password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -843,10 +880,6 @@ public class KafkaMirrorMaker2ClusterTest {
             Container cont = pod.getSpec().getContainers().get(0);
 
             assertThat(cont.getVolumeMounts().get(2).getMountPath(), is(KafkaMirrorMaker2Cluster.PASSWORD_VOLUME_MOUNT + "user1-secret"));
-
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE), is("user1-secret/password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME), is("user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont).get(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM), is("plain"));
         });
     }
 
@@ -877,6 +910,14 @@ public class KafkaMirrorMaker2ClusterTest {
             .build();
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaMirrorMaker2Cluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("ssl.truststore.certificates=${strimzisecrets:namespace/my-secret:*.crt"));
+        assertThat(configs, containsString("ssl.truststore.type=PEM"));
+        assertThat(configs, containsString("sasl.mechanism=PLAIN"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=user1 password=${strimzidir:/opt/kafka/connect-password/my-secret:user1.password};"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
@@ -902,9 +943,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(cont.getVolumeMounts().get(5).getName(), is("target-my-secret"));
             assertThat(cont.getVolumeMounts().get(5).getMountPath(), is(KafkaMirrorMaker2Cluster.MIRRORMAKER_2_PASSWORD_VOLUME_MOUNT + targetClusterAlias + "/my-secret"));
 
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE, "my-secret/user1.password"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_USERNAME, "user1"));
-            assertThat(io.strimzi.operator.cluster.TestUtils.containerEnvVars(cont), hasEntry(KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM, "plain"));
         });
     }
 
@@ -1702,14 +1740,18 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.access.token=${strimzidir:/opt/kafka/oauth/my-token-secret:my-token-key};"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_ACCESS_TOKEN.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-token-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_ACCESS_TOKEN.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-token-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().isEmpty(), is(true));
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-token-secret".equals(var.getName())).count(), is(1L));
         });
     }
@@ -1749,13 +1791,18 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.access.token.location=\"/var/run/secrets/kubernetes.io/serviceaccount/token\";"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\"", ClientConfig.OAUTH_ACCESS_TOKEN_LOCATION, "/var/run/secrets/kubernetes.io/serviceaccount/token")));
 
             assertThat(cont.getVolumeMounts().stream().filter(var -> var.getName().endsWith("token-secret")).count(), is(0L));
         });
@@ -1788,16 +1835,26 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"my-client-id\" " +
+                "oauth.token.endpoint.uri=\"http://my-oauth-server\" " +
+                "oauth.connect.timeout.seconds=\"15\" " +
+                "oauth.read.timeout.seconds=\"15\" " +
+                "oauth.http.retries=\"2\" " +
+                "oauth.http.retry.pause.millis=\"500\" " +
+                "oauth.enable.metrics=\"true\" " +
+                "oauth.include.accept.header=\"false\" " +
+                "oauth.refresh.token=${strimzidir:/opt/kafka/oauth/my-token-secret:my-token-key};"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_REFRESH_TOKEN.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-token-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_REFRESH_TOKEN.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-token-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server",
-                            ClientConfig.OAUTH_CONNECT_TIMEOUT_SECONDS, "15", ClientConfig.OAUTH_READ_TIMEOUT_SECONDS, "15", ClientConfig.OAUTH_HTTP_RETRIES, "2", ClientConfig.OAUTH_HTTP_RETRY_PAUSE_MILLIS, "500", ClientConfig.OAUTH_ENABLE_METRICS, "true", ClientConfig.OAUTH_INCLUDE_ACCEPT_HEADER, "false")));
 
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-token-secret".equals(var.getName())).count(), is(1L));
         });
@@ -1824,15 +1881,20 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"my-client-id\" " +
+                "oauth.token.endpoint.uri=\"http://my-oauth-server\" " +
+                "oauth.client.secret=${strimzidir:/opt/kafka/oauth/my-secret-secret:my-secret-key};"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-secret-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-secret-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server")));
 
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-secret-secret".equals(var.getName())).count(), is(1L));
         });
@@ -1860,16 +1922,22 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"my-client-id\" " +
+                "oauth.token.endpoint.uri=\"http://my-oauth-server\" " +
+                "oauth.sasl.extension.key1=\"value1\" " +
+                "oauth.sasl.extension.key2=\"value2\" " +
+                "oauth.client.secret=${strimzidir:/opt/kafka/oauth/my-secret-secret:my-secret-key};"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-secret-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-secret-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\" %s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server",
-                            ClientConfig.OAUTH_SASL_EXTENSION_PREFIX + "key1", "value1", ClientConfig.OAUTH_SASL_EXTENSION_PREFIX + "key2", "value2")));
 
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-secret-secret".equals(var.getName())).count(), is(1L));
         });
@@ -1900,11 +1968,6 @@ public class KafkaMirrorMaker2ClusterTest {
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_ASSERTION.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-secret-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_ASSERTION.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-secret-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server")));
         });
     }
 
@@ -1934,17 +1997,22 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"my-client-id\" " +
+                "oauth.password.grant.username=\"user1\" " +
+                "oauth.token.endpoint.uri=\"http://my-oauth-server\" " +
+                "oauth.client.secret=${strimzidir:/opt/kafka/oauth/my-secret-secret:my-secret-key} " +
+                "oauth.password.grant.password=${strimzidir:/opt/kafka/oauth/my-password-secret:user1.password};"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-password-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("user1.password"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-secret-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-secret-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaMirrorMaker2Cluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_PASSWORD_GRANT_USERNAME, "user1", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server")));
 
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-password-secret".equals(var.getName())).count(), is(1L));
             assertThat(cont.getVolumeMounts().stream().filter(var -> "target-my-secret-secret".equals(var.getName())).count(), is(1L));
@@ -2032,16 +2100,23 @@ public class KafkaMirrorMaker2ClusterTest {
 
         KafkaMirrorMaker2Cluster kmm2 = KafkaMirrorMaker2Cluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, resource, VERSIONS, SHARED_ENV_PROVIDER);
 
+        // Check config map
+        ConfigMap configMap = kmm2.generateConnectConfigMap(new MetricsAndLogging(metricsCM, null));
+        String configs = configMap.getData().get(KafkaConnectCluster.KAFKA_CONNECT_CONFIGURATION_FILENAME);
+        assertThat(configs, containsString("sasl.mechanism=OAUTH"));
+        assertThat(configs, containsString("sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"my-client-id\" " +
+                "oauth.token.endpoint.uri=\"http://my-oauth-server\" " +
+                "oauth.ssl.endpoint.identification.algorithm=\"\" " +
+                "oauth.client.secret=${strimzidir:/opt/kafka/oauth/my-secret-secret:my-secret-key} " +
+                "oauth.ssl.truststore.location=\"/opt/kafka/oauth-certs/first-certificate/ca.crt\" " +
+                "oauth.ssl.truststore.type=\"PEM\";"));
+        assertThat(configs, containsString("sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"));
+
         // Check PodSet
         StrimziPodSet podSet = kmm2.generatePodSet(3, Map.of(), Map.of(), false, null, null, null);
         PodSetUtils.podSetToPods(podSet).forEach(pod -> {
             Container cont = pod.getSpec().getContainers().get(0);
-
-            assertThat(cont.getEnv().stream().filter(var -> KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM.equals(var.getName())).findFirst().orElseThrow().getValue(), is("oauth"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getName(), is("my-secret-secret"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET.equals(var.getName())).findFirst().orElseThrow().getValueFrom().getSecretKeyRef().getKey(), is("my-secret-key"));
-            assertThat(cont.getEnv().stream().filter(var -> KafkaConnectCluster.ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG.equals(var.getName())).findFirst().orElseThrow().getValue().trim(),
-                    is(String.format("%s=\"%s\" %s=\"%s\" %s=\"%s\"", ClientConfig.OAUTH_CLIENT_ID, "my-client-id", ClientConfig.OAUTH_TOKEN_ENDPOINT_URI, "http://my-oauth-server", ServerConfig.OAUTH_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, "")));
 
             // Volume mounts
             assertThat(cont.getVolumeMounts().stream().filter(mount -> "oauth-certs-first-certificate".equals(mount.getName())).findFirst().orElseThrow().getMountPath(), is(KafkaConnectCluster.OAUTH_TLS_CERTS_BASE_VOLUME_MOUNT + "first-certificate"));
@@ -2054,10 +2129,6 @@ public class KafkaMirrorMaker2ClusterTest {
             assertThat(pod.getSpec().getVolumes().stream().filter(vol -> "oauth-certs-second-certificate".equals(vol.getName())).findFirst().orElseThrow().getSecret().getItems().isEmpty(), is(true));
             assertThat(pod.getSpec().getVolumes().stream().filter(vol -> "target-oauth-certs-first-certificate".equals(vol.getName())).findFirst().orElseThrow().getSecret().getItems().isEmpty(), is(true));
             assertThat(pod.getSpec().getVolumes().stream().filter(vol -> "target-oauth-certs-second-certificate".equals(vol.getName())).findFirst().orElseThrow().getSecret().getItems().isEmpty(), is(true));
-
-            // Environment variable
-            assertThat(cont.getEnv().stream().filter(e -> "KAFKA_CONNECT_OAUTH_TRUSTED_CERTS".equals(e.getName())).findFirst().orElseThrow().getValue(), is("first-certificate/ca.crt;second-certificate/tls.crt;first-certificate/ca2.crt"));
-            assertThat(cont.getEnv().stream().filter(e -> "KAFKA_MIRRORMAKER_2_OAUTH_TRUSTED_CERTS_CLUSTERS".equals(e.getName())).findFirst().orElseThrow().getValue(), is("target=first-certificate/ca.crt;second-certificate/tls.crt;first-certificate/ca2.crt"));
         });
     }
 

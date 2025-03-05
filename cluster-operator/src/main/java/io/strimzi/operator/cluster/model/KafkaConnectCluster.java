@@ -103,6 +103,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     protected static final String EXTERNAL_CONFIGURATION_VOLUME_MOUNT_BASE_PATH = "/opt/kafka/external-configuration/";
     protected static final String EXTERNAL_CONFIGURATION_VOLUME_NAME_PREFIX = "ext-conf-";
     protected static final String OAUTH_TLS_CERTS_BASE_VOLUME_MOUNT = "/opt/kafka/oauth-certs/";
+    protected static final String OAUTH_SECRETS_BASE_VOLUME_MOUNT = "/opt/kafka/oauth/";
     protected static final String KAFKA_CONNECT_CONFIG_VOLUME_NAME = "kafka-connect-configurations";
     protected static final String KAFKA_CONNECT_CONFIG_VOLUME_MOUNT = "/opt/kafka/custom-config/";
 
@@ -121,20 +122,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     public static final String ANNO_STRIMZI_IO_CONFIGURATION_HASH = Annotations.STRIMZI_DOMAIN + "configuration-hash";
 
     // Kafka Connect configuration keys (EnvVariables)
-    protected static final String ENV_VAR_PREFIX = "KAFKA_CONNECT_";
     protected static final String ENV_VAR_KAFKA_CONNECT_METRICS_ENABLED = "KAFKA_CONNECT_METRICS_ENABLED";
-    protected static final String ENV_VAR_KAFKA_CONNECT_TRUSTED_CERTS = "KAFKA_CONNECT_TRUSTED_CERTS";
-    protected static final String ENV_VAR_KAFKA_CONNECT_TLS_AUTH_CERT = "KAFKA_CONNECT_TLS_AUTH_CERT";
-    protected static final String ENV_VAR_KAFKA_CONNECT_TLS_AUTH_KEY = "KAFKA_CONNECT_TLS_AUTH_KEY";
-    protected static final String ENV_VAR_KAFKA_CONNECT_SASL_PASSWORD_FILE = "KAFKA_CONNECT_SASL_PASSWORD_FILE";
-    protected static final String ENV_VAR_KAFKA_CONNECT_SASL_USERNAME = "KAFKA_CONNECT_SASL_USERNAME";
-    protected static final String ENV_VAR_KAFKA_CONNECT_SASL_MECHANISM = "KAFKA_CONNECT_SASL_MECHANISM";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_CONFIG = "KAFKA_CONNECT_OAUTH_CONFIG";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_SECRET = "KAFKA_CONNECT_OAUTH_CLIENT_SECRET";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_ACCESS_TOKEN = "KAFKA_CONNECT_OAUTH_ACCESS_TOKEN";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_REFRESH_TOKEN = "KAFKA_CONNECT_OAUTH_REFRESH_TOKEN";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD = "KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD";
-    protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_CLIENT_ASSERTION = "KAFKA_CONNECT_OAUTH_CLIENT_ASSERTION";
     protected static final String ENV_VAR_STRIMZI_TRACING = "STRIMZI_TRACING";
 
     protected static final String CO_ENV_VAR_CUSTOM_CONNECT_POD_LABELS = "STRIMZI_CUSTOM_KAFKA_CONNECT_LABELS";
@@ -466,7 +454,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         if (tls != null) {
             CertUtils.createTrustedCertificatesVolumeMounts(volumeMountList, tls.getTrustedCertificates(), TLS_CERTS_BASE_VOLUME_MOUNT);
         }
-        AuthenticationUtils.configureClientAuthenticationVolumeMounts(authentication, volumeMountList, TLS_CERTS_BASE_VOLUME_MOUNT, PASSWORD_VOLUME_MOUNT, OAUTH_TLS_CERTS_BASE_VOLUME_MOUNT, "oauth-certs");
+        AuthenticationUtils.configureClientAuthenticationVolumeMounts(authentication, volumeMountList, TLS_CERTS_BASE_VOLUME_MOUNT, PASSWORD_VOLUME_MOUNT, OAUTH_TLS_CERTS_BASE_VOLUME_MOUNT, "oauth-certs", "", true, OAUTH_SECRETS_BASE_VOLUME_MOUNT);
         volumeMountList.addAll(getExternalConfigurationVolumeMounts());
 
         TemplateUtils.addAdditionalVolumeMounts(volumeMountList, templateContainer);
@@ -639,8 +627,6 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         JvmOptionUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
         JvmOptionUtils.jvmPerformanceOptions(varList, jvmOptions);
         JvmOptionUtils.jvmSystemProperties(varList, jvmOptions);
-
-        AuthenticationUtils.configureClientAuthenticationEnvVars(authentication, varList, name -> ENV_VAR_PREFIX + name);
 
         if (tracing != null) {
             varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_TRACING, tracing.getType()));

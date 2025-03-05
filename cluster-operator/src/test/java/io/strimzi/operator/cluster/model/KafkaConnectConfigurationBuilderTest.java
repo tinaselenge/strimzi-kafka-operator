@@ -338,12 +338,16 @@ class KafkaConnectConfigurationBuilderTest {
                 .build();
 
         String saslJaasConfig = "sasl.jaas.config=" +
-                "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required ${strimzienv:KAFKA_CONNECT_OAUTH_CONFIG}" +
-                " oauth.client.secret=${strimzienv:KAFKA_CONNECT_OAUTH_CLIENT_SECRET}" +
-                " oauth.refresh.token=${strimzienv:KAFKA_CONNECT_OAUTH_REFRESH_TOKEN}" +
-                " oauth.access.token=${strimzienv:KAFKA_CONNECT_OAUTH_ACCESS_TOKEN}" +
-                " oauth.password.grant.password=${strimzienv:KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD}" +
-                " oauth.ssl.truststore.location=\"/opt/kafka/oauth-certs/my-tls-trusted-certificate/pem-content\" oauth.ssl.truststore.type=\"PEM\";";
+                "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required " +
+                "oauth.client.id=\"oauth-client-id\" " +
+                "oauth.password.grant.username=\"oauth-username\" " +
+                "oauth.token.endpoint.uri=\"http://token-endpoint-uri\" " +
+                "oauth.client.secret=${strimzidir:/opt/kafka/oauth/my-client-secret-secret:my-client-secret-key} " +
+                "oauth.refresh.token=${strimzidir:/opt/kafka/oauth/my-refresh-token-secret:my-refresh-token-key} " +
+                "oauth.access.token=${strimzidir:/opt/kafka/oauth/my-access-token-secret:my-access-token-key} " +
+                "oauth.password.grant.password=${strimzidir:/opt/kafka/oauth/my-password-secret-secret:my-password-key} " +
+                "oauth.ssl.truststore.location=\"/opt/kafka/oauth-certs/my-tls-trusted-certificate/pem-content\" " +
+                "oauth.ssl.truststore.type=\"PEM\";";
 
         assertThat(configuration, isEquivalent(
                 "bootstrap.servers=my-cluster-kafka-bootstrap:9092",
