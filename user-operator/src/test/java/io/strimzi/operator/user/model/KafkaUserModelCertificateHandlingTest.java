@@ -11,7 +11,7 @@ import io.strimzi.certs.CertAndKey;
 import io.strimzi.certs.CertIssuer;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
@@ -209,13 +209,13 @@ public class KafkaUserModelCertificateHandlingTest {
         }
 
         @Override
-        CertAndKey generateNewCertificate(Reconciliation reconciliation, Ca clientsCa) {
+        CertAndKey generateNewCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa) {
             generateNewCertificateCalled++;
             return null;
         }
 
         @Override
-        CertAndKey reuseCertificate(Reconciliation reconciliation, Ca clientsCa, Secret userSecret) {
+        CertAndKey reuseCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa, Secret userSecret) {
             reuseCertificateCalled++;
             return null;
         }

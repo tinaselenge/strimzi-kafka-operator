@@ -5,13 +5,11 @@
 package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
-import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.strimzi.api.kafka.model.kafka.Kafka;
 import io.strimzi.api.kafka.model.kafka.exporter.KafkaExporterResources;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.CertUtils;
-import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.model.KafkaExporter;
 import io.strimzi.operator.cluster.model.KafkaVersion;
@@ -25,6 +23,7 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 import io.vertx.core.Future;
 
@@ -41,7 +40,7 @@ public class KafkaExporterReconciler {
     private final Reconciliation reconciliation;
     private final long operationTimeoutMs;
     private final KafkaExporter kafkaExporter;
-    private final ClusterCa clusterCa;
+    private final Ca clusterCa;
     private final List<String> maintenanceWindows;
     private final boolean isNetworkPolicyGeneration;
     private final boolean isPodDisruptionBudgetGeneration;
@@ -69,7 +68,7 @@ public class KafkaExporterReconciler {
             ResourceOperatorSupplier supplier,
             Kafka kafkaAssembly,
             KafkaVersion.Lookup versions,
-            ClusterCa clusterCa
+            Ca clusterCa
     ) {
         this.reconciliation = reconciliation;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
@@ -100,7 +99,7 @@ public class KafkaExporterReconciler {
      */
     public Future<Void> reconcile(boolean isOpenShift, ImagePullPolicy imagePullPolicy, List<LocalObjectReference> imagePullSecrets, Clock clock)    {
         return serviceAccount()
-                .compose(i -> certificatesSecret(clock))
+                .compose(secret -> certificatesSecret(clock))
                 .compose(i -> networkPolicy())
                 .compose(i -> podDisruptionBudget())
                 .compose(i -> deployment(isOpenShift, imagePullPolicy, imagePullSecrets))
@@ -125,25 +124,25 @@ public class KafkaExporterReconciler {
     /**
      * Manages the Kafka Exporter Secret with certificates.
      *
-     * @param clock The clock for supplying the reconciler with the time instant of each reconciliation cycle.
-     *              That time is used for checking maintenance windows
-     *
-     * @return      Future which completes when the reconciliation is done
+     * @param clock             The clock for supplying the reconciler with the time instant of each reconciliation cycle.
+     *                          That time is used for checking maintenance windows
+     * @return Future which completes when the reconciliation is done
      */
     private Future<Void> certificatesSecret(Clock clock) {
         if (kafkaExporter != null) {
             return VertxUtil.toFuture(secretOperator.getAsync(reconciliation.namespace(), KafkaExporterResources.secretName(reconciliation.name())))
-                    .compose(oldSecret -> {
-                        Secret newSecret = kafkaExporter.generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
+                    .compose(oldSecret -> Future.fromCompletionStage(kafkaExporter.generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))))
+                    .compose(newSecret -> VertxUtil.toFuture(secretOperator
+                            .reconcile(reconciliation,
+                                    reconciliation.namespace(),
+                                    KafkaExporterResources.secretName(reconciliation.name()),
+                                    newSecret))
+                            .compose(result -> {
+                                certificateHash = CertUtils.getCertificateShortThumbprint(newSecret, InternalCa.SecretEntry.CRT.asKey(KafkaExporter.COMPONENT_TYPE));
 
-                        return VertxUtil.toFuture(secretOperator
-                                .reconcile(reconciliation, reconciliation.namespace(), KafkaExporterResources.secretName(reconciliation.name()), newSecret))
-                                .compose(i -> {
-                                    certificateHash = CertUtils.getCertificateShortThumbprint(newSecret, Ca.SecretEntry.CRT.asKey(KafkaExporter.COMPONENT_TYPE));
-
-                                    return Future.succeededFuture();
-                                });
-                    });
+                                return Future.succeededFuture();
+                            })
+                    );
         } else {
             return VertxUtil.toFuture(secretOperator
                     .reconcile(reconciliation, reconciliation.namespace(), KafkaExporterResources.secretName(reconciliation.name()), null))
@@ -200,8 +199,8 @@ public class KafkaExporterReconciler {
     private Future<Void> deployment(boolean isOpenShift, ImagePullPolicy imagePullPolicy, List<LocalObjectReference> imagePullSecrets) {
         if (kafkaExporter != null) {
             Map<String, String> podAnnotations = new LinkedHashMap<>();
-            podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(clusterCa.caCertGeneration()));
-            podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(clusterCa.caKeyGeneration()));
+            podAnnotations.put(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(clusterCa.caCertGeneration()));
+            podAnnotations.put(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(clusterCa.caKeyGeneration()));
             podAnnotations.put(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, certificateHash);
 
             Deployment deployment = kafkaExporter.generateDeployment(podAnnotations, isOpenShift, imagePullPolicy, imagePullSecrets);

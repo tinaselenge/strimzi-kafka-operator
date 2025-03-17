@@ -5,7 +5,6 @@
 package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
-import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.rbac.Role;
 import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
@@ -13,7 +12,6 @@ import io.strimzi.api.kafka.model.kafka.Kafka;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.CertUtils;
-import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.EntityOperator;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.operator.VertxUtil;
@@ -49,7 +47,7 @@ public class EntityOperatorReconciler {
     private final Reconciliation reconciliation;
     private final long operationTimeoutMs;
     private final EntityOperator entityOperator;
-    private final ClusterCa clusterCa;
+    private final Ca clusterCa;
     private final List<String> maintenanceWindows;
 
     private final DeploymentOperator deploymentOperator;
@@ -83,7 +81,7 @@ public class EntityOperatorReconciler {
             ClusterOperatorConfig config,
             ResourceOperatorSupplier supplier,
             Kafka kafkaAssembly,
-            ClusterCa clusterCa
+            Ca clusterCa
     ) {
         this.reconciliation = reconciliation;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
@@ -437,19 +435,16 @@ public class EntityOperatorReconciler {
      * @return      Future which completes when the reconciliation is done
      */
     protected Future<Void> topicOperatorSecret(Clock clock) {
-        if (shouldInstallEntityOperator() && entityOperator.topicOperator() != null) {
+        if (entityOperator != null && entityOperator.topicOperator() != null) {
             return VertxUtil.toFuture(secretOperator.getAsync(reconciliation.namespace(), KafkaResources.entityTopicOperatorSecretName(reconciliation.name())))
-                    .compose(oldSecret -> {
-                        Secret newSecret = entityOperator.topicOperator().generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
-
-                        return VertxUtil.toFuture(secretOperator
+                    .compose(oldSecret -> Future.fromCompletionStage(entityOperator.topicOperator().generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))))
+                    .compose(newSecret ->  VertxUtil.toFuture(secretOperator
                                 .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.entityTopicOperatorSecretName(reconciliation.name()), newSecret))
                                 .compose(i -> {
                                     toCertificateHash = CertUtils.getCertificateShortThumbprint(newSecret, Ca.SecretEntry.CRT.asKey(EntityOperator.COMPONENT_TYPE));
 
                                     return Future.succeededFuture();
-                                });
-                    })
+                                }))
                     .compose(i -> {
                         if (isCruiseControlEnabled) {
                             return VertxUtil.toFuture(secretOperator.getAsync(reconciliation.namespace(), KafkaResources.entityTopicOperatorCcApiSecretName(reconciliation.name())))
@@ -476,19 +471,17 @@ public class EntityOperatorReconciler {
      * @return      Future which completes when the reconciliation is done
      */
     protected Future<Void> userOperatorSecret(Clock clock) {
-        if (shouldInstallEntityOperator() && entityOperator.userOperator() != null) {
+        if (entityOperator != null && entityOperator.userOperator() != null) {
             return VertxUtil.toFuture(secretOperator.getAsync(reconciliation.namespace(), KafkaResources.entityUserOperatorSecretName(reconciliation.name())))
-                    .compose(oldSecret -> {
-                        Secret newSecret = entityOperator.userOperator().generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
-
-                        return VertxUtil.toFuture(secretOperator
+                    .compose(oldSecret -> Future.fromCompletionStage(entityOperator.userOperator().generateCertificatesSecret(clusterCa, oldSecret, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))))
+                    .compose(newSecret -> VertxUtil.toFuture(secretOperator
                                 .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.entityUserOperatorSecretName(reconciliation.name()), newSecret))
                                 .compose(i -> {
                                     uoCertificateHash = CertUtils.getCertificateShortThumbprint(newSecret, Ca.SecretEntry.CRT.asKey(EntityOperator.COMPONENT_TYPE));
 
                                     return Future.succeededFuture();
-                                });
-                    });
+                                })
+                    );
         } else {
             return VertxUtil.toFuture(secretOperator
                     .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.entityUserOperatorSecretName(reconciliation.name()), null))

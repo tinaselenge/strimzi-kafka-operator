@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.strimzi.api.kafka.model.common.CertificateManagerType;
 import io.strimzi.api.kafka.model.user.KafkaUser;
 import io.strimzi.api.kafka.model.user.KafkaUserAuthentication;
 import io.strimzi.api.kafka.model.user.KafkaUserAuthorizationSimple;
@@ -26,7 +27,7 @@ import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.ClientsCa;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
@@ -241,13 +242,14 @@ public class KafkaUserModel {
         int renewalDays = kafkaUserTlsClientAuthentication.getRenewalDays() != null ? kafkaUserTlsClientAuthentication.getRenewalDays() : caRenewalDays;
         validateCACertificates(clientsCaCertSecret, clientsCaKeySecret);
 
-        ClientsCa clientsCa = new ClientsCa(
+        InternalCa clientsCa = new InternalCa(
                 reconciliation,
+                Ca.CaRole.CLIENTS_CA,
                 certIssuer,
                 passwordGenerator,
                 clientsCaCertSecret,
                 clientsCaKeySecret,
-                new CaConfig(validityDays, renewalDays, false, generatePkcs12Stores)
+                new CaConfig(validityDays, renewalDays, false, generatePkcs12Stores, CertificateManagerType.STRIMZI_IO)
         );
         this.caCert = clientsCa.currentCaCertBase64();
 
@@ -294,16 +296,16 @@ public class KafkaUserModel {
         }
     }
 
-    CertAndKey generateNewCertificate(Reconciliation reconciliation, Ca clientsCa) {
+    CertAndKey generateNewCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa) {
         try {
-            return clientsCa.generateSignedCert(name);
+            return clientsStrimziCa.generateSignedCert(name);
         } catch (IOException e) {
             LOGGER.errorCr(reconciliation, "Error generating signed certificate for user {}", name, e);
             return null;
         }
     }
 
-    CertAndKey reuseCertificate(Reconciliation reconciliation, Ca clientsCa, Secret userSecret) {
+    CertAndKey reuseCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa, Secret userSecret) {
         String userKeyStore = userSecret.getData().get("user.p12");
         String userKeyStorePassword = userSecret.getData().get("user.password");
 
@@ -320,7 +322,7 @@ public class KafkaUserModel {
         } else {
             // coming from an older operator version, the user secret exists but without keystore and password
             try {
-                return clientsCa.addKeyAndCertToKeyStore(name,
+                return clientsStrimziCa.addKeyAndCertToKeyStore(name,
                         decodeFromSecret(userSecret, "user.key"),
                         decodeFromSecret(userSecret, "user.crt"));
             } catch (IOException e) {

@@ -26,7 +26,7 @@ import io.strimzi.api.kafka.model.kafka.listener.KafkaListenerAuthenticationTls;
 import io.strimzi.api.kafka.model.kafka.listener.KafkaListenerType;
 import io.strimzi.api.kafka.model.user.acl.AclOperation;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.systemtest.AbstractST;
 import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;
@@ -613,9 +613,9 @@ class SecurityST extends AbstractST {
         Secret secretCaCluster = KubeResourceManager.get().kubeClient().getClient().secrets().inNamespace(testStorage.getNamespaceName()).withName(clusterSecretName).get();
         Secret secretCaClients = KubeResourceManager.get().kubeClient().getClient().secrets().inNamespace(testStorage.getNamespaceName()).withName(clientsSecretName).get();
         assertThat("Cluster CA certificate has been renewed outside of maintenanceTimeWindows",
-                secretCaCluster.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("0"));
+                secretCaCluster.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("0"));
         assertThat("Clients CA certificate has been renewed outside of maintenanceTimeWindows",
-                secretCaClients.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("0"));
+                secretCaClients.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("0"));
 
         assertThat("Rolling update was performed outside of maintenanceTimeWindows", brokerPods, is(PodUtils.podSnapshot(testStorage.getNamespaceName(), testStorage.getBrokerSelector())));
 
@@ -635,9 +635,9 @@ class SecurityST extends AbstractST {
         secretCaClients = KubeResourceManager.get().kubeClient().getClient().secrets().inNamespace(testStorage.getNamespaceName()).withName(clientsSecretName).get();
 
         assertThat("Cluster CA certificate has not been renewed within maintenanceTimeWindows",
-                secretCaCluster.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("1"));
+                secretCaCluster.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("1"));
         assertThat("Clients CA certificate has not been renewed within maintenanceTimeWindows",
-                secretCaClients.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("1"));
+                secretCaClients.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION), is("1"));
         assertThat("KafkaUser certificate has not been renewed within maintenanceTimeWindows",
                 kafkaUserSecret, not(sameInstance(kafkaUserSecretRolled)));
 

@@ -46,7 +46,7 @@ class CaTest {
     /**
      * Mock implementation of the CA class which does not generate the CA certificate
      */
-    private static class MockCa extends Ca {
+    private static class MockCa extends InternalCa {
 
         /**
          * Constructs the CA object
@@ -58,12 +58,7 @@ class CaTest {
          * @param caKeySecret       Kubernetes Secret where the CA private key will be stored
          */
         public MockCa(Reconciliation reconciliation, CertIssuer certIssuer, PasswordGenerator passwordGenerator, Secret caCertSecret, Secret caKeySecret, boolean generateCa) {
-            super(reconciliation, certIssuer, passwordGenerator, "mock", caCertSecret, caKeySecret, new CaConfig(new CertificateAuthorityBuilder().withGenerateCertificateAuthority(generateCa).build(), true));
-        }
-
-        @Override
-        protected String caCertGenerationAnnotation() {
-            return "mock";
+            super(reconciliation, CaRole.CLUSTER_CA, certIssuer, passwordGenerator, caCertSecret, caKeySecret, new CaConfig(new CertificateAuthorityBuilder().withGenerateCertificateAuthority(generateCa).build(), true));
         }
 
         @Override
@@ -72,7 +67,7 @@ class CaTest {
         }
     }
 
-    private Ca ca;
+    private InternalCa ca;
     private Duration oneYear;
     private Clock now;
 
@@ -86,7 +81,7 @@ class CaTest {
     @Test
     @DisplayName("Should return certificate expiration date as epoch when certificate is present")
     void shouldReturnCertificateExpirationDateEpoch() {
-        ca.createRenewOrReplace(true, false, false);
+        ca.createOrUpdateStrimziManagedCa(true, false, false);
 
         Instant inOneYear = Clock.offset(now, oneYear).instant();
         long expectedEpoch = inOneYear.truncatedTo(ChronoUnit.SECONDS).toEpochMilli();
@@ -97,10 +92,10 @@ class CaTest {
     @Test
     @DisplayName("Should result in NOOP when CA key and certificate already exist and are valid")
     void shouldNoopWhenCaAlreadyExists() {
-        ca.createRenewOrReplace(true, false, false);
+        ca.createOrUpdateStrimziManagedCa(true, false, false);
         assertTrue(ca.keyCreated(), "First call should create the CA");
 
-        ca.createRenewOrReplace(true, false, false);
+        ca.createOrUpdateStrimziManagedCa(true, false, false);
         assertFalse(ca.certRenewed(), "Second call should not renew the certificate");
         assertFalse(ca.keyReplaced(), "Second call should not replace the key");
         assertFalse(ca.keyCreated(), "Second call should not create a new key");
@@ -141,13 +136,13 @@ class CaTest {
             D0z+vgrfionoRhyWUDh7POlWwdUOWiBDBOFrkgeKNphSC0glYFN+2IW7
             -----END CERTIFICATE-----""";
 
-        X509Certificate x509 = Ca.x509Certificate(cert.getBytes());
+        X509Certificate x509 = CaUtils.x509Certificate(cert.getBytes());
         assertThat(x509.getSubjectX500Principal().getName(), is("CN=cluster-ca,O=Default Company Ltd,L=Default City,C=XX"));
 
-        String pem = Ca.x509CertificateToPem(x509);
+        String pem = CaUtils.x509CertificateToPem(x509);
         assertThat(pem, is(cert));
 
-        X509Certificate nextX509 = Ca.x509Certificate(pem.getBytes());
+        X509Certificate nextX509 = CaUtils.x509Certificate(pem.getBytes());
         assertThat(nextX509.getSubjectX500Principal().getName(), is("CN=cluster-ca,O=Default Company Ltd,L=Default City,C=XX"));
         assertThat(nextX509.getSignature(), is(x509.getSignature()));
     }
@@ -191,8 +186,8 @@ class CaTest {
         X509Certificate x509AlternateRootCert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(alternateRootCert));
         X509Certificate x509Cert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(cert));
 
-        assertTrue(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509RootCert));
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509AlternateRootCert));
+        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509RootCert));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509AlternateRootCert));
     }
 
     @Test
@@ -243,16 +238,16 @@ class CaTest {
         X509Certificate x509IntermediateCert2 = (X509Certificate) certFactory.generateCertificate(new FileInputStream(intermediateCert2));
         X509Certificate x509LeafCert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(leafCert));
 
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509RootCert));
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert1));
-        assertTrue(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert2));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509RootCert));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert1));
+        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert2));
 
-        assertTrue(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509IntermediateCert1));
-        assertTrue(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2, x509IntermediateCert1), x509RootCert));
+        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509IntermediateCert1));
+        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2, x509IntermediateCert1), x509RootCert));
 
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert1, x509IntermediateCert2), x509RootCert));
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509RootCert));
-        assertFalse(Ca.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509IntermediateCert2, x509IntermediateCert1, x509LeafCert), x509RootCert));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert1, x509IntermediateCert2), x509RootCert));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509RootCert));
+        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509IntermediateCert2, x509IntermediateCert1, x509LeafCert), x509RootCert));
     }
 
     @Test

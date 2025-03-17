@@ -39,7 +39,7 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.StrimziPodSetOpe
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -76,9 +76,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static io.strimzi.operator.common.model.Ca.CA_CRT;
-import static io.strimzi.operator.common.model.Ca.CA_STORE;
-import static io.strimzi.operator.common.model.Ca.CA_STORE_PASSWORD;
+import static io.strimzi.operator.common.model.InternalCa.CA_CRT;
+import static io.strimzi.operator.common.model.InternalCa.CA_STORE;
+import static io.strimzi.operator.common.model.InternalCa.CA_STORE_PASSWORD;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.aMapWithSize;
@@ -99,6 +99,7 @@ import static org.mockito.Mockito.when;
  * The test cases use a mock CaReconciler class to capture when Kafka pods and
  * other deployment (Kafka Exporter etc) are rolled.
  * <p>
+ * Use CaReconcilerCertManagerTest for testing rolling updates after Cert Manager provided CA Secrets are reconciled.
  * Use CaReconcilerReconcileCasTest for testing the reconcileCas method in isolation.
  */
 @ExtendWith(VertxExtension.class)
@@ -200,7 +201,7 @@ public class CaReconcilerTest {
     }
 
     @Test
-    public void testOldClusterCaCertsGetsRemovedAuto(VertxTestContext context)
+    public void testOldStrimziManagedClusterCaCertsGetsRemovedAuto(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = getCertificateAuthority();
 
@@ -258,9 +259,9 @@ public class CaReconcilerTest {
         assertThat(initialClientsCaTrustStore.isCertificateEntry(oldCertAlias), is(true));
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         Pod controllerPod = podWithNameAndAnnotations("my-cluster-controllers-1", false, true, generationAnnotations);
         Pod brokerPod = podWithNameAndAnnotations("my-cluster-brokers-0", true, false, generationAnnotations);
@@ -279,8 +280,10 @@ public class CaReconcilerTest {
                     ArgumentCaptor<Secret> clientsCaCert = ArgumentCaptor.forClass(Secret.class);
 
                     // Cluster CA should be reconciled twice, once initially, then when removing the old cert. Clients CA is only reconciled once
-                    verify(supplier.secretOperations, times(2)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
-                    verify(supplier.secretOperations, times(1)).reconcile(any(), eq(NAMESPACE), eq(KafkaResources.clientsCaCertificateSecretName(NAME)), clientsCaCert.capture());
+                    verify(supplier.secretOperations, times(1)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
+                    verify(supplier.concurrentSecretOperator, times(1)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
+                    verify(supplier.concurrentSecretOperator, times(1)).reconcile(any(), eq(NAMESPACE), eq(KafkaResources.clientsCaCertificateSecretName(NAME)), clientsCaCert.capture());
+
 
                     //getValue() returns the latest captured value
                     Map<String, String> clusterCaCertData = clusterCaCert.getValue().getData();
@@ -331,9 +334,9 @@ public class CaReconcilerTest {
         List<Secret> clientsCaSecrets = initialClientsCaSecrets(certificateAuthority);
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -363,9 +366,9 @@ public class CaReconcilerTest {
                 for (Pod pod : returnedPods) {
                     Map<String, String> podAnnotations = pod.getMetadata().getAnnotations();
                     // Expect that the CA key generation was updated. CA cert generations are updated by component reconcilers
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
                 }
             });
             async.flag();
@@ -397,25 +400,25 @@ public class CaReconcilerTest {
         // Edit Cluster CA key and cert to increment generation as though replacement happened in previous reconcile
         Secret clusterCaKeySecret = clusterCaSecrets.get(0).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
                 .endMetadata()
                 .build();
         Secret clusterCaCertSecret = clusterCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         List<Secret> clientsCaSecrets = initialClientsCaSecrets(certificateAuthority);
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
         Map<String, String> updatedGenerationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -446,9 +449,9 @@ public class CaReconcilerTest {
                 for (Pod pod : returnedPods) {
                     Map<String, String> podAnnotations = pod.getMetadata().getAnnotations();
                     // Expect that the CA key generation was updated. CA cert generations are updated by component reconcilers
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
                 }
             });
             async.flag();
@@ -490,9 +493,9 @@ public class CaReconcilerTest {
         List<Secret> clientsCaSecrets = initialClientsCaSecrets(certificateAuthority);
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -530,21 +533,21 @@ public class CaReconcilerTest {
         // Edit Cluster CA key and cert to increment generation as though user has replaced CA key
         Secret clusterCaKeySecret = clusterCaSecrets.get(0).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
                 .endMetadata()
                 .build();
         Secret clusterCaCertSecret = clusterCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         List<Secret> clientsCaSecrets = initialClientsCaSecrets(certificateAuthority);
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -574,9 +577,9 @@ public class CaReconcilerTest {
                 for (Pod pod : returnedPods) {
                     Map<String, String> podAnnotations = pod.getMetadata().getAnnotations();
                     // Expect that the CA key generation was updated. CA cert generations are updated by component reconcilers
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
-                    assertThat(podAnnotations, hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "1"));
+                    assertThat(podAnnotations, hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
                 }
             });
             async.flag();
@@ -615,16 +618,16 @@ public class CaReconcilerTest {
         // Edit Cluster CA cert to increment generation as though user has renewed CA cert
         Secret clusterCaCertSecret = clusterCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         List<Secret> clientsCaSecrets = initialClientsCaSecrets(certificateAuthority);
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -677,9 +680,9 @@ public class CaReconcilerTest {
                 .build();
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -721,19 +724,19 @@ public class CaReconcilerTest {
         // Edit Clients CA key and cert to increment generation as though replacement happened in previous reconcile
         Secret clientsCaKeySecret = clientsCaSecrets.get(0).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
                 .endMetadata()
                 .build();
         Secret clientsCaCertSecret = clientsCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -779,9 +782,9 @@ public class CaReconcilerTest {
                 .build();
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -821,19 +824,19 @@ public class CaReconcilerTest {
         // Edit Clients CA key and cert to increment generation as though user has replaced CA key
         Secret clientsCaKeySecret = clientsCaSecrets.get(0).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "1")
                 .endMetadata()
                 .build();
         Secret clientsCaCertSecret = clientsCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();
@@ -882,14 +885,14 @@ public class CaReconcilerTest {
         // Edit Clients CA cert to increment generation as though user has renewed CA cert
         Secret clientsCaCertSecret = clientsCaSecrets.get(1).edit()
                 .editMetadata()
-                    .addToAnnotations(Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
+                    .addToAnnotations(InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "1")
                 .endMetadata()
                 .build();
 
         Map<String, String> generationAnnotations =
-                Map.of(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
-                        Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
+                Map.of(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, "0",
+                        InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0");
 
         // Kafka pods with old CA cert and key generation
         List<Pod> controllerPods = new ArrayList<>();

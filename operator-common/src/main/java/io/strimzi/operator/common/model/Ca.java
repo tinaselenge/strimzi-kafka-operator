@@ -6,50 +6,23 @@ package io.strimzi.operator.common.model;
 
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.Secret;
-import io.strimzi.certs.CertAndKey;
-import io.strimzi.certs.CertIssuer;
-import io.strimzi.certs.Subject;
+import io.strimzi.api.kafka.model.common.CertificateManagerType;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertPath;
-import java.security.cert.CertPathValidator;
-import java.security.cert.CertPathValidatorException;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.PKIXParameters;
-import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
-import java.security.spec.InvalidKeySpecException;
 import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
 import java.time.chrono.IsoChronology;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.SignStyle;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static java.time.temporal.ChronoField.DAY_OF_MONTH;
@@ -59,7 +32,6 @@ import static java.time.temporal.ChronoField.MONTH_OF_YEAR;
 import static java.time.temporal.ChronoField.NANO_OF_SECOND;
 import static java.time.temporal.ChronoField.SECOND_OF_MINUTE;
 import static java.time.temporal.ChronoField.YEAR;
-import static java.util.Collections.singletonMap;
 
 /**
  * A Certificate Authority which can renew its own (self-signed) certificates, and generate signed certificates
@@ -119,7 +91,10 @@ public abstract class Ca {
 
     protected static final ReconciliationLogger LOGGER = ReconciliationLogger.create(Ca.class);
 
-    private static final DateTimeFormatter DATE_TIME_FORMATTER = new DateTimeFormatterBuilder()
+    /**
+     * DateTimeFormatter used for renaming old certificates
+     */
+    public static final DateTimeFormatter DATE_TIME_FORMATTER = new DateTimeFormatterBuilder()
             .appendValue(YEAR, 4, 10, SignStyle.EXCEEDS_PAD)
             .appendLiteral('-')
             .appendValue(MONTH_OF_YEAR, 2)
@@ -138,7 +113,7 @@ public abstract class Ca {
             .appendOffsetId()
             .toFormatter().withChronology(IsoChronology.INSTANCE);
 
-    private static final String CA_SECRET_PREFIX = "ca";
+    protected static final String CA_SECRET_PREFIX = "ca";
 
     /**
      * Key for storing the CA private key in a Kubernetes Secret
@@ -149,16 +124,6 @@ public abstract class Ca {
      * Key for storing the CA public key in a Kubernetes Secret
      */
     public static final String CA_CRT = SecretEntry.CRT.asKey(CA_SECRET_PREFIX);
-
-    /**
-     * Key for storing the CA PKCS21 store in a Kubernetes Secret
-     */
-    public static final String CA_STORE = SecretEntry.P12_KEYSTORE.asKey(CA_SECRET_PREFIX);
-
-    /**
-     * Key for storing the PKCS12 store password in a Kubernetes Secret
-     */
-    public static final String CA_STORE_PASSWORD = SecretEntry.P12_KEYSTORE_PASSWORD.asKey(CA_SECRET_PREFIX);
 
     /**
      * Organization used in the generated CAs
@@ -191,13 +156,32 @@ public abstract class Ca {
     public static final String ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION = Annotations.STRIMZI_DOMAIN + "cluster-ca-key-generation";
 
     /**
+     * Pattern used for the old CA certificate during CA renewal. This pattern is used to recognize this certificate
+     * and delete it when it is not needed anymore.
+     */
+    private static final Pattern OLD_CA_CERT_PATTERN = Pattern.compile("^ca-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}Z.crt$");
+
+    /**
      * Initial generation used for the CAs
      */
     public static final int INIT_GENERATION = 0;
 
-    private final PasswordGenerator passwordGenerator;
     protected final Reconciliation reconciliation;
-    private Clock clock;
+    Clock clock;
+
+    /**
+     * Ca Role
+     */
+    public enum CaRole {
+        /**
+         * Cluster Ca
+         */
+        CLUSTER_CA,
+        /**
+         * Clients Ca
+         */
+        CLIENTS_CA
+    }
 
     /**
      * Enum describing whether an event related to a certificate renewal is happening or not.
@@ -291,8 +275,6 @@ public abstract class Ca {
         public abstract String postDescription(String caName);
     }
 
-    protected final String commonName;
-    protected final CertIssuer certIssuer;
     protected int caCertGeneration;
     protected int caKeyGeneration;
     protected Map<String, String> caCertData;
@@ -300,44 +282,48 @@ public abstract class Ca {
     protected RenewalType renewalType;
     protected boolean caCertsRemoved;
     protected final CaConfig caConfig;
+    protected final CaRole caRole;
 
     /**
      * Constructs the CA object
      *
-     * @param reconciliation        Reconciliation marker
-     * @param certIssuer            Certificate issuer instance
-     * @param passwordGenerator     Password generator instance
-     * @param commonName            Common name which should be used by this CA
-     * @param caCertSecret          Kubernetes Secret where the CA public key is stored
-     * @param caKeySecret           Kubernetes Secret where the CA private key is stored
-     * @param caConfig              Certificate Authority configuration
+     * @param reconciliation Reconciliation marker
+     * @param caRole         Ca Role
+     * @param caCertSecret   Kubernetes Secret where the CA public key is stored
+     * @param caKeySecret    Kubernetes Secret where the CA private key is stored
+     * @param caConfig       Certificate Authority configuration
      */
     public Ca(Reconciliation reconciliation,
-              CertIssuer certIssuer,
-              PasswordGenerator passwordGenerator,
-              String commonName,
+              CaRole caRole,
               Secret caCertSecret,
               Secret caKeySecret,
               CaConfig caConfig) {
-        boolean isGenerateCa = caConfig.isGenerateCa();
-        if (!isGenerateCa && (caCertSecret == null || caKeySecret == null))   {
-            throw new InvalidResourceException(caName() + " should not be generated, but the secrets were not found.");
-        }
-
         this.reconciliation = reconciliation;
-        this.commonName = commonName;
-        this.caCertGeneration = initCaCertGeneration(caCertSecret);
-        this.caCertData = initCaCertData(isGenerateCa, caCertSecret);
-        this.caKeyGeneration = initCaKeyGeneration(caKeySecret);
-        this.caKeyData = initCaKeyData(isGenerateCa, caKeySecret);
-        this.certIssuer = certIssuer;
-        this.passwordGenerator = passwordGenerator;
+        this.caRole = caRole;
         this.caConfig = caConfig;
+        this.caCertGeneration = initCaCertGeneration(caCertSecret);
+        this.caCertData = initCaCertData(caCertSecret);
+        this.caKeyGeneration = initCaKeyGeneration(caKeySecret, caCertSecret);
+        this.caKeyData = initCaKeyData(caKeySecret);
         this.renewalType = RenewalType.NOOP;
         this.clock = Clock.systemUTC();
     }
 
-    protected abstract String caName();
+    protected String caName() {
+        if (caRole.equals(CaRole.CLIENTS_CA)) {
+            return "Clients CA";
+        } else {
+            return "Cluster CA";
+        }
+    };
+
+    protected String caCommonName() {
+        if (caRole.equals(CaRole.CLIENTS_CA)) {
+            return "clients-ca";
+        } else {
+            return "cluster-ca";
+        }
+    };
 
     /**
      * Sets the clock to some specific value. This method is useful in testing. But it has to be public because of how
@@ -366,285 +352,9 @@ public abstract class Ca {
         return INIT_GENERATION;
     }
 
-    /**
-     * Extracts the CA key generation from the CA key Secret
-     *
-     * @param caKeySecret Secret to extract the CA key from
-     * @return CA key generation or the initial generation if no generation is set
-     */
-    private int initCaKeyGeneration(Secret caKeySecret) {
-        if (caKeySecret != null) {
-            if (!Annotations.hasAnnotation(caKeySecret, ANNO_STRIMZI_IO_CA_KEY_GENERATION)) {
-                LOGGER.warnOp("Secret {}/{} is missing generation annotation {}",
-                        caKeySecret.getMetadata().getNamespace(), caKeySecret.getMetadata().getName(), ANNO_STRIMZI_IO_CA_KEY_GENERATION);
-            }
-            return Annotations.intAnnotation(caKeySecret, ANNO_STRIMZI_IO_CA_KEY_GENERATION, INIT_GENERATION);
-        }
-        return INIT_GENERATION;
-    }
-
-    private Map<String, String> initCaCertData(boolean generateCa, Secret caCertSecret) {
-        if (generateCa) {
-            return caCertSecret == null ? new HashMap<>() : caCertSecret.getData();
-        } else {
-            validateUserCaCertChain(caCertSecret.getData());
-            return caCertSecret.getData();
-        }
-    }
-
-    private Map<String, String> initCaKeyData(boolean generateCa, Secret caKeySecret) {
-        if (generateCa) {
-            return caKeySecret == null ? new HashMap<>() : caKeySecret.getData();
-        } else {
-            return singletonMap(CA_KEY, caKeySecret.getData().get(CA_KEY));
-        }
-    }
-
-    protected static void delete(Reconciliation reconciliation, File file) {
-        if (file != null && !file.delete()) {
-            LOGGER.warnCr(reconciliation, "{} cannot be deleted", file.getName());
-        }
-    }
-
-    /**
-     * Adds a certificate into a PKCS12 keystore
-     *
-     * @param alias     Alias under which it should be stored in the PKCS12 store
-     * @param key       Private key
-     * @param cert      Public key
-     *
-     * @return  PKCS12 store with the certificate
-     *
-     * @throws IOException  Throws an IOException if something fails when working with the files
-     */
-    public CertAndKey addKeyAndCertToKeyStore(String alias, byte[] key, byte[] cert) throws IOException {
-        try {
-            File keyFile = Files.createTempFile("tls", "key").toFile();
-            File certFile = Files.createTempFile("tls", "cert").toFile();
-            File keyStoreFile = null;
-
-            try {
-                Files.write(keyFile.toPath(), key);
-                Files.write(certFile.toPath(), cert);
-
-                if (caConfig.isGeneratePkcs12Stores()) {
-                    keyStoreFile = Files.createTempFile("tls", "p12").toFile();
-
-                    String keyStorePassword = passwordGenerator.generate();
-                    certIssuer.addKeyAndCertToKeyStore(keyFile, certFile, alias, keyStoreFile, keyStorePassword);
-
-                    return new CertAndKey(
-                            Files.readAllBytes(keyFile.toPath()),
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            Files.readAllBytes(keyStoreFile.toPath()),
-                            keyStorePassword);
-                } else {
-                    return new CertAndKey(
-                            Files.readAllBytes(keyFile.toPath()),
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            null,
-                            null);
-                }
-            } finally {
-                delete(reconciliation, keyFile);
-                delete(reconciliation, certFile);
-                delete(reconciliation, keyStoreFile);
-            }
-        } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    protected CertAndKey generateSignedCert(Subject subject,
-                                           File csrFile, File keyFile, File certFile, File keyStoreFile, boolean includeCaChain) {
-        LOGGER.infoCr(reconciliation, "Generating certificate {}, signed by CA {}", subject, this);
-
-        try {
-            byte[] caCertBytes = currentCaCertBytes();
-            certIssuer.generateCsr(keyFile, csrFile, subject);
-            certIssuer.generateCert(csrFile, currentCaKey(), caCertBytes,
-                    certFile, subject, caConfig.getValidityDays());
-
-            byte[] certChain;
-            if (includeCaChain) {
-                byte[] leafCert = Files.readAllBytes(certFile.toPath());
-                certChain = new byte[leafCert.length + caCertBytes.length];
-                System.arraycopy(leafCert, 0, certChain, 0, leafCert.length);
-                System.arraycopy(caCertBytes, 0, certChain, leafCert.length, caCertBytes.length);
-            } else {
-                certChain = Files.readAllBytes(certFile.toPath());
-            }
-
-            if (caConfig.isGeneratePkcs12Stores()) {
-                String keyStorePassword = passwordGenerator.generate();
-                certIssuer.addKeyAndCertToKeyStore(keyFile, certFile, subject.commonName(), keyStoreFile, keyStorePassword);
-
-                return new CertAndKey(
-                        Files.readAllBytes(keyFile.toPath()),
-                        certChain,
-                        null,
-                        Files.readAllBytes(keyStoreFile.toPath()),
-                        keyStorePassword,
-                        caCertGeneration);
-            } else {
-                return new CertAndKey(
-                        Files.readAllBytes(keyFile.toPath()),
-                        certChain,
-                        null,
-                        null,
-                        null,
-                        caCertGeneration);
-            }
-        } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Generates a certificate signed by this CA
-     *
-     * @param commonName The CN of the certificate to be generated.
-     * @return The CertAndKey
-     * @throws IOException If the cert could not be generated.
-     */
-    public CertAndKey generateSignedCert(String commonName) throws IOException {
-        return generateSignedCert(commonName, null);
-    }
-
-    /**
-     * Generates a certificate signed by this CA
-     *
-     * @param commonName The CN of the certificate to be generated.
-     * @param organization The O of the certificate to be generated. May be null.
-     * @return The CertAndKey
-     * @throws IOException If the cert could not be generated.
-     */
-    public CertAndKey generateSignedCert(String commonName, String organization) throws IOException {
-        File csrFile = Files.createTempFile("tls", "csr").toFile();
-        File keyFile = Files.createTempFile("tls", "key").toFile();
-        File certFile = Files.createTempFile("tls", "cert").toFile();
-        File keyStoreFile = Files.createTempFile("tls", "p12").toFile();
-
-        Subject.Builder subject = new Subject.Builder();
-
-        if (organization != null) {
-            subject.withOrganizationName(organization);
-        }
-
-        subject.withCommonName(commonName);
-
-        CertAndKey result = generateSignedCert(subject.build(),
-                csrFile, keyFile, certFile, keyStoreFile, false);
-
-        delete(reconciliation, csrFile);
-        delete(reconciliation, keyFile);
-        delete(reconciliation, certFile);
-        delete(reconciliation, keyStoreFile);
-        return result;
-    }
-
-    /**
-     * Returns whether the certificate is expiring or not
-     *
-     * @param secret  Secret with the certificate
-     * @param certKey   Key under which is the certificate stored
-     * @return  True when the certificate should be renewed. False otherwise.
-     */
-    public boolean isExpiring(Secret secret, String certKey)  {
-        X509Certificate currentCert = cert(secret, certKey);
-        return certNeedsRenewal(currentCert);
-    }
-
-    /**
-     * Returns whether the certificate is expiring or not
-     *
-     * @param certificate Byte array with the certificate
-     *
-     * @return  True when the certificate should be renewed. False otherwise.
-     */
-    public boolean isExpiring(byte[] certificate)  {
-        try {
-            X509Certificate currentCert = x509Certificate(certificate);
-            return certNeedsRenewal(currentCert);
-        } catch (CertificateException e) {
-            LOGGER.errorCr(reconciliation, "Failed to parse existing certificate", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Create the CA {@code Secrets} if they don't exist, otherwise if within the renewal period then either renew
-     * the CA cert or replace the CA cert and key, according to the configured policy. After calling this method
-     * {@link #certsRemoved()} will return whether expired secrets were removed from the Secret.
-     *
-     * @param maintenanceWindowSatisfied Flag indicating whether we are in the maintenance window
-     * @param forceReplace Flag indicating whether to do a force replace
-     * @param forceRenew Flag indicating whether to do a force renew
-     */
-    public void createRenewOrReplace(boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
-        if (caConfig.isGenerateCa()) {
-            X509Certificate currentCert = currentCaCertX509();
-            Map<String, String> certData;
-            Map<String, String> keyData;
-            this.renewalType = shouldCreateOrRenew(currentCert, maintenanceWindowSatisfied, forceReplace, forceRenew);
-            LOGGER.debugCr(reconciliation, "{} renewalType {}", this, renewalType);
-
-            switch (renewalType) {
-                case CREATE -> {
-                    keyData = new HashMap<>(1);
-                    certData = new HashMap<>(3);
-                    generateCaKeyAndCert(nextCaSubject(caKeyGeneration), keyData, certData);
-                }
-                case REPLACE_KEY -> {
-                    keyData = new HashMap<>(1);
-                    certData = new HashMap<>(caCertData);
-                    if (certData.containsKey(CA_CRT)) {
-                        String notAfterDate = DATE_TIME_FORMATTER.format(currentCert.getNotAfter().toInstant().atZone(ZoneId.of("Z")));
-
-                        if (caConfig.isGeneratePkcs12Stores()) {
-                            addCertCaToTrustStore("ca-" + notAfterDate + SecretEntry.CRT.suffix, certData);
-                        }
-
-                        certData.put("ca-" + notAfterDate + SecretEntry.CRT.suffix, certData.remove(CA_CRT));
-                    }
-                    ++caCertGeneration;
-                    generateCaKeyAndCert(nextCaSubject(++caKeyGeneration), keyData, certData);
-                }
-                case RENEW_CERT -> {
-                    keyData = new HashMap<>(caKeyData);
-                    certData = new HashMap<>(3);
-                    ++caCertGeneration;
-                    renewCaCert(nextCaSubject(caKeyGeneration), certData);
-                }
-                default -> {
-                    keyData = new HashMap<>(caKeyData);
-                    certData = new HashMap<>(caCertData);
-
-                    if (caConfig.isGeneratePkcs12Stores() && !certData.containsKey(CA_STORE)) {
-                        // If we are generating PKCS12 stores, and it is missing in the Secret, we add it
-                        addCertCaToTrustStore(CA_CRT, certData);
-                    } else if (!caConfig.isGeneratePkcs12Stores() && certData.containsKey(CA_STORE)) {
-                        // If we are not generating PKCS12 stores, and it is already present in the Secret, we will remove it
-                        certData.remove(CA_STORE);
-                        certData.remove(CA_STORE_PASSWORD);
-                    }
-                }
-            }
-
-            if (removeCerts(certData, this::removeExpiredCert)) {
-                LOGGER.infoCr(reconciliation, "{}: Expired CA certificates removed", this);
-                this.caCertsRemoved = true;
-            }
-
-            if (renewalType != RenewalType.NOOP && renewalType != RenewalType.POSTPONED) {
-                LOGGER.debugCr(reconciliation, "{}: {}", this, renewalType.postDescription(caName()));
-            }
-            caCertData = certData;
-            caKeyData = keyData;
-        }
-    }
+    protected abstract int initCaKeyGeneration(Secret caKeySecret, Secret caCertSecret);
+    protected abstract Map<String, String> initCaCertData(Secret caCertSecret);
+    protected abstract Map<String, String> initCaKeyData(Secret caKeySecret);
 
     /**
      * Validates whether each of the user provided CA certs has a valid chain. Any intermediate CAs should be provided first,
@@ -657,7 +367,7 @@ public abstract class Ca {
                 .stream()
                 .filter(entry -> SecretEntry.CRT.matchesType(entry.getKey()))
                 .forEach(entry -> {
-                    List<X509Certificate> certChain = extractCaCertChain(entry.getKey(), Util.decodeBytesFromBase64(entry.getValue()));
+                    List<X509Certificate> certChain = CaUtils.extractCertChain(entry.getKey(), Util.decodeBytesFromBase64(entry.getValue()));
                     if (certChain.isEmpty()) {
                         LOGGER.errorCr(reconciliation, "{} certificate chain in {} is empty", caName(), entry.getKey());
                         throw new RuntimeException("Failed to validate User supplied " + caName() + " cert chain in " + entry.getKey());
@@ -665,71 +375,12 @@ public abstract class Ca {
                         LOGGER.debugCr(reconciliation, "{} certificate {} contains a single certificate", caName(), entry.getKey());
                         return;
                     }
-                    if (!certIsTrusted(reconciliation, certChain.subList(0, certChain.size() - 1), certChain.getLast())) {
+                    if (!CaUtils.certIsTrusted(reconciliation, certChain.subList(0, certChain.size() - 1), certChain.getLast())) {
                         String errorMessage = "User supplied " + caName() + " cert chain " + entry.getKey() + " is not valid. Certificates must be provided in the correct order.";
                         LOGGER.errorCr(reconciliation, errorMessage);
                         throw new RuntimeException(errorMessage);
                     }
                 });
-    }
-
-    private Subject nextCaSubject(int version) {
-        return new Subject.Builder()
-        // Key replacements does not work if both old and new CA certs have the same subject DN, so include the
-        // key generation in the DN so the certificates appear distinct during CA key replacement.
-            .withCommonName(commonName + " v" + version)
-            .withOrganizationName(IO_STRIMZI).build();
-    }
-
-    private RenewalType shouldCreateOrRenew(X509Certificate currentCert, boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
-        String reason = null;
-        RenewalType renewalType = RenewalType.NOOP;
-        if (caKeyData.get(CA_KEY) == null) {
-            reason = "CA key secret for " + caName() + " is missing or lacking data." + CA_KEY.replace(".", "\\.");
-            renewalType = RenewalType.CREATE;
-        } else if (this.caCertData.get(CA_CRT) == null) {
-            reason = "CA certificate secret for " + caName() + " is missing or lacking data." + CA_CRT.replace(".", "\\.");
-            renewalType = RenewalType.RENEW_CERT;
-        } else if (forceRenew) {
-            reason = "CA certificate secret for " + caName() + " is annotated with " + Annotations.ANNO_STRIMZI_IO_FORCE_RENEW;
-
-            if (maintenanceWindowSatisfied) {
-                renewalType = RenewalType.RENEW_CERT;
-            } else {
-                renewalType = RenewalType.POSTPONED;
-            }
-        } else if (forceReplace) {
-            reason = "CA key secret for " + caName() + " is annotated with " + Annotations.ANNO_STRIMZI_IO_FORCE_REPLACE;
-
-            if (maintenanceWindowSatisfied) {
-                renewalType = RenewalType.REPLACE_KEY;
-            } else {
-                renewalType = RenewalType.POSTPONED;
-            }
-        } else if (currentCert != null
-                && certNeedsRenewal(currentCert)) {
-            reason = "Within renewal period for CA certificate (expires on " + currentCert.getNotAfter() + ")";
-
-            if (maintenanceWindowSatisfied) {
-                renewalType = switch (caConfig.getCertificateExpirationPolicy()) {
-                    case REPLACE_KEY -> RenewalType.REPLACE_KEY;
-                    case RENEW_CERTIFICATE -> RenewalType.RENEW_CERT;
-                };
-            } else {
-                renewalType = RenewalType.POSTPONED;
-            }
-        }
-
-        switch (renewalType) {
-            case NOOP ->
-                    LOGGER.debugCr(reconciliation, "{}: {}", this, renewalType.preDescription(caName()));
-            case REPLACE_KEY, RENEW_CERT, CREATE ->
-                    LOGGER.debugCr(reconciliation, "{}: {}: {}", this, renewalType.preDescription(caName()), reason);
-            case POSTPONED ->
-                    LOGGER.warnCr(reconciliation, "{}: {}: {}", this, renewalType.preDescription(caName()), reason);
-        }
-
-        return renewalType;
     }
 
     /**
@@ -768,32 +419,20 @@ public abstract class Ca {
         return caCertData.get(CA_CRT);
     }
 
-    private X509Certificate currentCaCertX509() {
+    /**
+     * Gets the current CA certificate as an X509Certificate.
+     *
+     * @return The current CA certificate as an X509Certificate.
+     */
+    public X509Certificate currentCaCertX509() {
         if (caCertData.get(CA_CRT) != null) {
             try {
-                return x509Certificate(currentCaCertBytes());
+                return CaUtils.x509Certificate(currentCaCertBytes());
             } catch (CertificateException e) {
                 throw new RuntimeException("Failed to decode "  + CA_CRT + " in Secret for " + caName(), e);
             }
         } else {
             return null;
-        }
-    }
-
-    private List<X509Certificate> extractCaCertChain(String key, byte[] caCertBytes) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(caCertBytes)) {
-            Collection<? extends Certificate> certificates = certificateFactory().generateCertificates(bis);
-            List<X509Certificate> x509Certificates = new ArrayList<>(certificates.size());
-            for (Certificate certificate : certificates) {
-                if (certificate instanceof X509Certificate) {
-                    x509Certificates.add((X509Certificate) certificate);
-                } else {
-                    throw new CertificateException("Not an X509Certificate: " + certificate);
-                }
-            }
-            return x509Certificates;
-        } catch (CertificateException | IOException e) {
-            throw new RuntimeException("Failed to decode "  + key + " in Secret for " + caName(), e);
         }
     }
 
@@ -808,29 +447,12 @@ public abstract class Ca {
                 .filter(e -> e.getKey().endsWith(SecretEntry.CRT.suffix) && e.getValue() != null && !e.getValue().isBlank())
                 .map(e -> {
                     try {
-                        return x509CertificateToPem(x509Certificate(Util.decodeBytesFromBase64(e.getValue())));
+                        return CaUtils.x509CertificateToPem(CaUtils.x509Certificate(Util.decodeBytesFromBase64(e.getValue())));
                     } catch (CertificateException ex) {
                         throw new RuntimeException("Failed to decode " + e.getKey() + " in Secret for " + caName(), ex);
                     }
                 })
                 .collect(Collectors.joining(System.lineSeparator()));
-    }
-
-    /**
-     * Converts the Java X509Certificate into the proper PEM format.
-     *
-     * @param cert  X509 certificate to convert
-     *
-     * @return  String with PEM encoded certificate
-     *
-     * @throws CertificateEncodingException An exception might be thrown if the certificate encoding fails
-     */
-    public static String x509CertificateToPem(X509Certificate cert) throws CertificateEncodingException {
-        Base64.Encoder encoder = Base64.getMimeEncoder(64, System.lineSeparator().getBytes(StandardCharsets.US_ASCII));
-
-        return "-----BEGIN CERTIFICATE-----\n"
-                + new String(encoder.encode(cert.getEncoded()), StandardCharsets.US_ASCII)
-                + "\n-----END CERTIFICATE-----";
     }
 
     /**
@@ -843,8 +465,7 @@ public abstract class Ca {
     }
 
     /**
-     * True if the last call to {@link #createRenewOrReplace(boolean, boolean, boolean)}
-     * resulted in expired certificates being removed from the CA {@code Secret}.
+     * True if the expired certificates being removed from the CA {@code Secret}.
      * @return Whether any expired certificates were removed.
      */
     public boolean certsRemoved() {
@@ -852,17 +473,15 @@ public abstract class Ca {
     }
 
     /**
-     * True if the last call to {@link #createRenewOrReplace(boolean, boolean, boolean)}
-     * resulted in a renewed CA certificate.
+     * True if renewed CA certificate.
      * @return Whether the certificate was renewed.
      */
     public boolean certRenewed() {
-        return renewalType.equals(RenewalType.RENEW_CERT) || renewalType.equals(RenewalType.REPLACE_KEY);
+        return renewalType.equals(InternalCa.RenewalType.RENEW_CERT) || renewalType.equals(InternalCa.RenewalType.REPLACE_KEY);
     }
 
     /**
-     * True if the last call to {@link #createRenewOrReplace(boolean, boolean, boolean)}
-     * resulted in a replaced CA key.
+     * True if replaced CA key.
      * @return Whether the key was replaced.
      */
     public boolean keyReplaced() {
@@ -876,15 +495,6 @@ public abstract class Ca {
      */
     public boolean keyCreated() {
         return renewalType.equals(RenewalType.CREATE);
-    }
-
-    /**
-     * Checks if the renewal or replacement was postponed.
-     *
-     * @return Returns true if the renewal or replacement was postponed
-     */
-    public boolean postponed() {
-        return renewalType.equals(RenewalType.POSTPONED);
     }
 
     /**
@@ -915,272 +525,14 @@ public abstract class Ca {
     }
 
     /**
-     * Predicate used to remove expired certificates that are stored in the CA Secret
-     *
-     * @param entry entry in the CA Secret data section to check
-     * @return if the certificate is expired and has to be removed
-     */
-    private boolean removeExpiredCert(Map.Entry<String, String> entry) {
-        boolean remove = false;
-        String certName = entry.getKey();
-        String certText = entry.getValue();
-        try {
-            X509Certificate cert = x509Certificate(Util.decodeBytesFromBase64(certText));
-            Instant expiryDate = cert.getNotAfter().toInstant();
-            remove = expiryDate.isBefore(clock.instant());
-            if (remove) {
-                LOGGER.infoCr(reconciliation, "The certificate (data.{}) in Secret expired {}; removing it",
-                        certName.replace(".", "\\."), expiryDate);
-            }
-        } catch (CertificateException e) {
-            // doesn't remove stores and related password
-            if (!SecretEntry.P12_KEYSTORE.matchesType(certName) && !SecretEntry.P12_KEYSTORE_PASSWORD.matchesType(certName)) {
-                remove = true;
-                LOGGER.debugCr(reconciliation, "The certificate (data.{}) in Secret is not an X.509 certificate; removing it",
-                        certName.replace(".", "\\."));
-            }
-        }
-        return remove;
-    }
-
-    /**
      * Remove certificates from the CA related Secret and store which match the provided predicate
      *
      * @param newData data section of the CA Secret containing certificates
      * @param predicate predicate to match for removing a certificate
      * @return boolean indicating whether any certs were removed
      */
-    protected boolean removeCerts(Map<String, String> newData, Predicate<Map.Entry<String, String>> predicate) {
-        Iterator<Map.Entry<String, String>> iter = newData.entrySet().iterator();
-        List<String> removed = new ArrayList<>();
-        while (iter.hasNext()) {
-            Map.Entry<String, String> entry = iter.next();
-            boolean remove = predicate.test(entry);
-            if (remove) {
-                String certName = entry.getKey();
-                LOGGER.debugCr(reconciliation, "Removing data.{} from Secret",
-                        certName.replace(".", "\\."));
-                iter.remove();
-                removed.add(certName);
-            }
-        }
-        if (removed.isEmpty()) {
-            return false;
-        } else {
-            if (caConfig.isGeneratePkcs12Stores()) {
-                // the certificates removed from the Secret data have to be removed from the store as well
-                try {
-                    File trustStoreFile = Files.createTempFile("tls", "-truststore").toFile();
-                    Files.write(trustStoreFile.toPath(), Util.decodeBytesFromBase64(newData.get(CA_STORE)));
-                    try {
-                        String trustStorePassword = Util.decodeFromBase64(newData.get(CA_STORE_PASSWORD));
-                        certIssuer.deleteFromTrustStore(removed, trustStoreFile, trustStorePassword);
-                        newData.put(CA_STORE, Base64.getEncoder().encodeToString(Files.readAllBytes(trustStoreFile.toPath())));
-                    } finally {
-                        delete(reconciliation, trustStoreFile);
-                    }
-                } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException e) {
-                    throw new RuntimeException(e);
-                }
-            }
 
-            return true;
-        }
-    }
-
-    private boolean certNeedsRenewal(X509Certificate cert)  {
-        Instant notAfter = cert.getNotAfter().toInstant();
-        Instant renewalPeriodBegin = notAfter.minus(caConfig.getRenewalDays(), ChronoUnit.DAYS);
-        LOGGER.traceCr(reconciliation, "Certificate {} expires on {} renewal period begins on {}", cert.getSubjectX500Principal(), notAfter, renewalPeriodBegin);
-        return this.clock.instant().isAfter(renewalPeriodBegin);
-    }
-
-    /**
-     * Extracts X509 certificate from a Kubernetes Secret
-     *
-     * @param secret    Kubernetes Secret with the certificate
-     * @param key       Key under which the certificate is stored in the Secret
-     *
-     * @return  An X509Certificate instance with the certificate
-     */
-    public static X509Certificate cert(Secret secret, String key)  {
-        if (secret == null || secret.getData() == null || secret.getData().get(key) == null) {
-            return null;
-        }
-        byte[] bytes = Util.decodeBytesFromBase64(secret.getData().get(key));
-        try {
-            return x509Certificate(bytes);
-        } catch (CertificateException e) {
-            throw new RuntimeException("Failed to decode certificate in data." + key.replace(".", "\\.") + " of Secret " + secret.getMetadata().getName(), e);
-        }
-    }
-
-    /**
-     * Creates X509Certificate instance from a byte array containing a certificate.
-     *
-     * @param bytes     Bytes with the X509 certificate
-     *
-     * @throws CertificateException     Thrown when the creation of the X509Certificate instance fails. Typically, this
-     *                                  would happen because the bytes do not contain a valid X509 certificate.
-     *
-     * @return  X509Certificate instance created based on the Certificate bytes
-     */
-    public static X509Certificate x509Certificate(byte[] bytes) throws CertificateException {
-        CertificateFactory factory = certificateFactory();
-        return x509Certificate(factory, bytes);
-    }
-
-    static X509Certificate x509Certificate(CertificateFactory factory, byte[] bytes) throws CertificateException {
-        // When bytes contain a certificate chain, read only the first certificate
-        // to get thumbprints of the leaf certificate
-        Certificate certificate = factory.generateCertificates(new ByteArrayInputStream(bytes)).stream().findFirst().orElse(null);
-        if (certificate instanceof X509Certificate) {
-            return (X509Certificate) certificate;
-        } else {
-            throw new CertificateException("Not an X509Certificate: " + certificate);
-        }
-    }
-
-    static CertificateFactory certificateFactory() {
-        CertificateFactory factory;
-        try {
-            factory = CertificateFactory.getInstance("X.509");
-        } catch (CertificateException e) {
-            throw new RuntimeException("No security provider with support for X.509 certificates", e);
-        }
-        return factory;
-    }
-
-    private void addCertCaToTrustStore(String alias, Map<String, String> certData) {
-        try {
-            File certFile = Files.createTempFile("tls", "-cert").toFile();
-            Files.write(certFile.toPath(), Util.decodeBytesFromBase64(certData.get(CA_CRT)));
-            try {
-                File trustStoreFile = Files.createTempFile("tls", "-truststore").toFile();
-                if (certData.containsKey(CA_STORE)) {
-                    Files.write(trustStoreFile.toPath(), Util.decodeBytesFromBase64(certData.get(CA_STORE)));
-                }
-                try {
-                    String trustStorePassword = certData.containsKey(CA_STORE_PASSWORD) ?
-                            Util.decodeFromBase64(certData.get(CA_STORE_PASSWORD)) :
-                            passwordGenerator.generate();
-                    certIssuer.addCertToTrustStore(certFile, alias, trustStoreFile, trustStorePassword);
-                    certData.put(CA_STORE, Base64.getEncoder().encodeToString(Files.readAllBytes(trustStoreFile.toPath())));
-                    certData.put(CA_STORE_PASSWORD, Base64.getEncoder().encodeToString(trustStorePassword.getBytes(StandardCharsets.US_ASCII)));
-                } finally {
-                    delete(reconciliation, trustStoreFile);
-                }
-            } finally {
-                delete(reconciliation, certFile);
-            }
-
-        } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void generateCaKeyAndCert(Subject subject, Map<String, String> keyData, Map<String, String> certData) {
-        try {
-            LOGGER.infoCr(reconciliation, "Generating CA with subject={}", subject);
-
-            File keyFile = Files.createTempFile("tls", subject.commonName() + "-key").toFile();
-            File certFile = Files.createTempFile("tls", subject.commonName() + "-cert").toFile();
-
-            try {
-                certIssuer.generateSelfSignedCert(keyFile, certFile, subject, caConfig.getValidityDays());
-                CertAndKey ca;
-
-                if (caConfig.isGeneratePkcs12Stores()) {
-                    File trustStoreFile = Files.createTempFile("tls", subject.commonName() + "-truststore").toFile();
-                    String trustStorePassword;
-                    // if secret already contains the truststore, we have to reuse it without changing password
-                    if (certData.containsKey(CA_STORE)) {
-                        Files.write(trustStoreFile.toPath(), Util.decodeBytesFromBase64(certData.get(CA_STORE)));
-                        trustStorePassword = Util.decodeFromBase64(certData.get(CA_STORE_PASSWORD));
-                    } else {
-                        trustStorePassword = passwordGenerator.generate();
-                    }
-                    try {
-                        certIssuer.addCertToTrustStore(certFile, CA_CRT, trustStoreFile, trustStorePassword);
-                        ca = new CertAndKey(
-                                Files.readAllBytes(keyFile.toPath()),
-                                Files.readAllBytes(certFile.toPath()),
-                                Files.readAllBytes(trustStoreFile.toPath()),
-                                null,
-                                trustStorePassword);
-
-                        certData.put(CA_STORE, ca.trustStoreAsBase64String());
-                        certData.put(CA_STORE_PASSWORD, ca.storePasswordAsBase64String());
-                    } finally {
-                        delete(reconciliation, trustStoreFile);
-                    }
-                } else {
-                    ca = new CertAndKey(
-                            Files.readAllBytes(keyFile.toPath()),
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            null,
-                            null);
-                }
-
-                certData.put(CA_CRT, ca.certAsBase64String());
-                keyData.put(CA_KEY, ca.keyAsBase64String());
-            } finally {
-                delete(reconciliation, certFile);
-                delete(reconciliation, keyFile);
-            }
-        } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void renewCaCert(Subject subject, Map<String, String> certData) {
-        try {
-            LOGGER.infoCr(reconciliation, "Renewing CA with subject={}", subject);
-
-            byte[] bytes = Util.decodeBytesFromBase64(caKeyData.get(CA_KEY));
-            File keyFile = Files.createTempFile("tls", subject.commonName() + "-key").toFile();
-            Files.write(keyFile.toPath(), bytes);
-            File certFile = Files.createTempFile("tls", subject.commonName() + "-cert").toFile();
-
-            try {
-                certIssuer.renewSelfSignedCert(keyFile, certFile, subject, caConfig.getValidityDays());
-                CertAndKey ca;
-
-                if (caConfig.isGeneratePkcs12Stores()) {
-                    File trustStoreFile = Files.createTempFile("tls", subject.commonName() + "-truststore").toFile();
-                    try {
-                        String trustStorePassword = passwordGenerator.generate();
-                        certIssuer.addCertToTrustStore(certFile, CA_CRT, trustStoreFile, trustStorePassword);
-                        ca = new CertAndKey(
-                                bytes,
-                                Files.readAllBytes(certFile.toPath()),
-                                Files.readAllBytes(trustStoreFile.toPath()),
-                                null,
-                                trustStorePassword);
-                        certData.put(CA_STORE, ca.trustStoreAsBase64String());
-                        certData.put(CA_STORE_PASSWORD, ca.storePasswordAsBase64String());
-                    } finally {
-                        delete(reconciliation, trustStoreFile);
-                    }
-                } else {
-                    ca = new CertAndKey(
-                            bytes,
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            null,
-                            null);
-                }
-
-                certData.put(CA_CRT, ca.certAsBase64String());
-            } finally {
-                delete(reconciliation, keyFile);
-                delete(reconciliation, certFile);
-            }
-        } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-    }
+    protected abstract boolean removeCerts(Map<String, String> newData, Predicate<Map.Entry<String, String>> predicate);
 
     /**
      * Gets the name of the annotation bringing the generation of the specific CA certificate type.
@@ -1188,7 +540,13 @@ public abstract class Ca {
      * @return the name of the annotation bringing the generation of the specific CA certificate type (cluster or clients)
      *         on the Secrets containing certificates signed by that CA (i.e. Kafka brokers, ...)
      */
-    protected abstract String caCertGenerationAnnotation();
+    public String caCertGenerationAnnotation() {
+        if (caRole.equals(CaRole.CLIENTS_CA)) {
+            return  ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION;
+        } else {
+            return  ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION;
+        }
+    }
 
     /**
      * It checks if the current (cluster or clients) CA certificate generation is changed compared to the one
@@ -1222,45 +580,28 @@ public abstract class Ca {
     }
 
     /**
-     * Validates whether the provided cert chain is trusted and valid using the provided CA certificate.
-     * <p>
-     * Uses the <code>CertPathValidator.validate</code> method to check if a cert chain
-     * can be validated with the provided caCert. If the cert chain contains more than one
-     * certificate the first certificate should be the end entity (or leaf) certificate, while
-     * the final certificate should be the one issued by the root Ca. The root Ca should not be
-     * included in the cert chain list.
+     * Get the CertificateManagerType of this CA.
      *
-     * @param reconciliation Reconciliation marker
-     * @param certChainToValidate Certificates to validate. Can be a single certificate or a chain of ordered certificates.
-     * @param caCert The root Ca certificate to use for validation.
-     *
-     * @return True if the CA certificate can be used to validate the provided certificate or certificate chain. False otherwise.
+     * @return the CertificateManagerType of this CA.
      */
-    protected static boolean certIsTrusted(Reconciliation reconciliation, List<X509Certificate> certChainToValidate, X509Certificate caCert) {
-        CertPathValidator certPathValidator;
-        CertPath eeCertPath;
-        PKIXParameters pkixParams;
-        try {
-            certPathValidator = CertPathValidator.getInstance("PKIX");
-            CertificateFactory factory = CertificateFactory.getInstance("X.509");
-            TrustAnchor trustAnchor = new TrustAnchor(caCert, null);
-            pkixParams = new PKIXParameters(Collections.singleton(trustAnchor));
-            pkixParams.setRevocationEnabled(false);
-            eeCertPath = factory.generateCertPath(certChainToValidate);
-        } catch (NoSuchAlgorithmException | CertificateException | InvalidAlgorithmParameterException e) {
-            LOGGER.errorCr(reconciliation, "Error constructing objects to validate certificate chain.", e);
-            throw new RuntimeException(e);
-        }
-        try {
-            certPathValidator.validate(eeCertPath, pkixParams);
-            LOGGER.debugCr(reconciliation, "Certificate chain validated using supplied CA cert.");
-            return true;
-        } catch (CertPathValidatorException e) {
-            LOGGER.errorCr(reconciliation, "Certificate chain cannot be validated with supplied CA cert.", e);
-            return false;
-        } catch (InvalidAlgorithmParameterException e) {
-            LOGGER.errorCr(reconciliation, "Error validating the certificate chain.", e);
-            throw new RuntimeException(e);
+    public CertificateManagerType getType() {
+        return caConfig.getCertificateManagerType();
+    }
+
+
+    /**
+     * Remove old certificates that are stored in the CA Secret.
+     */
+    public abstract void maybeDeleteOldCerts();
+
+    /**
+     * Remove old certificates that are stored in the CA Secret matching the "ca-YYYY-MM-DDTHH-MM-SSZ.crt" naming pattern.
+     * NOTE: mostly used when a CA certificate is renewed by replacing the key
+     */
+    public void deleteOldCerts() {
+        if (removeCerts(caCertData(), entry -> OLD_CA_CERT_PATTERN.matcher(entry.getKey()).matches())) {
+            LOGGER.infoCr(reconciliation, "{}: Old CA certificates removed", this);
+            this.caCertsRemoved = true;
         }
     }
 }

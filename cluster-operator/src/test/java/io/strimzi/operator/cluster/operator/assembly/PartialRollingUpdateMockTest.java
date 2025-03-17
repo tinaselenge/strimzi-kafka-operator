@@ -31,7 +31,7 @@ import io.strimzi.operator.cluster.operator.VertxUtil;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
@@ -268,7 +268,7 @@ public class PartialRollingUpdateMockTest {
 
         for (Pod pod : initialPods) {
             String podCertHash = pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH);
-            String expectedCertHash = CertUtils.getCertificateThumbprint(certSecrets.get(pod.getMetadata().getName()), Ca.SecretEntry.CRT.asKey(pod.getMetadata().getName()));
+            String expectedCertHash = CertUtils.getCertificateThumbprint(certSecrets.get(pod.getMetadata().getName()), InternalCa.SecretEntry.CRT.asKey(pod.getMetadata().getName()));
             context.verify(() -> assertThat(podCertHash, is(expectedCertHash)));
         }
 
@@ -284,7 +284,7 @@ public class PartialRollingUpdateMockTest {
 
                     for (Pod pod : initialPods) {
                         String podCertHash = pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH);
-                        String expectedCertHash = CertUtils.getCertificateThumbprint(certSecrets.get(pod.getMetadata().getName()), Ca.SecretEntry.CRT.asKey(pod.getMetadata().getName()));
+                        String expectedCertHash = CertUtils.getCertificateThumbprint(certSecrets.get(pod.getMetadata().getName()), InternalCa.SecretEntry.CRT.asKey(pod.getMetadata().getName()));
                         assertThat(podCertHash, is(expectedCertHash));
                     }
 
@@ -296,9 +296,9 @@ public class PartialRollingUpdateMockTest {
     public void testReconcileOfPartiallyRolledClusterForClusterCaCertificate(VertxTestContext context) {
         // Fake the test state in MockKube
         updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), PodRevision.STRIMZI_REVISION_ANNOTATION, "notmatchingrevision");
-        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "-1");
+        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "-1");
         updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), PodRevision.STRIMZI_REVISION_ANNOTATION, "notmatchingrevision");
-        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "-1");
+        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "-1");
 
         // Test the next reconciliation fixes it
         LOGGER.info("Recovery reconciliation");
@@ -309,7 +309,7 @@ public class PartialRollingUpdateMockTest {
                     assertThat(updatedPods.size(), is(6));
 
                     for (Pod pod : updatedPods) {
-                        String certGeneration = pod.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION);
+                        String certGeneration = pod.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION);
                         assertThat(certGeneration, is("0"));
                     }
 
@@ -321,9 +321,9 @@ public class PartialRollingUpdateMockTest {
     public void testReconcileOfPartiallyRolledClusterForClientsCaCertificate(VertxTestContext context) {
         // Fake the test state in MockKube
         updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), PodRevision.STRIMZI_REVISION_ANNOTATION, "notmatchingrevision");
-        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "-1");
+        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "controllers", 100), InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "-1");
         updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), PodRevision.STRIMZI_REVISION_ANNOTATION, "notmatchingrevision");
-        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "-1");
+        updatePodAnnotation(KafkaResources.kafkaPodName(CLUSTER_NAME, "brokers", 1), InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "-1");
 
         // Test the next reconciliation fixes it
         Checkpoint async = context.checkpoint();
@@ -333,7 +333,7 @@ public class PartialRollingUpdateMockTest {
                     assertThat(updatedPods.size(), is(6));
 
                     for (Pod pod : updatedPods) {
-                        String certGeneration = pod.getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION);
+                        String certGeneration = pod.getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION);
                         assertThat(certGeneration, is("0"));
                     }
                     async.flag();

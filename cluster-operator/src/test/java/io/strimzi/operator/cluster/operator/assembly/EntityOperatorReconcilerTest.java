@@ -24,7 +24,6 @@ import io.strimzi.operator.cluster.ClusterOperatorConfig.ClusterOperatorConfigBu
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.ResourceUtils;
 import io.strimzi.operator.cluster.model.AbstractModel;
-import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ConfigMapOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.DeploymentOperator;
@@ -38,6 +37,8 @@ import io.strimzi.operator.common.InvalidConfigurationException;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.CaConfig;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -91,13 +92,14 @@ public class EntityOperatorReconcilerTest {
                 .endKafka()
             .endSpec()
             .build();
-
-    private final static ClusterCa CLUSTER_CA = new ClusterCa(
+    private final static InternalCa CLUSTER_CA = new InternalCa(
             Reconciliation.DUMMY_RECONCILIATION,
+            Ca.CaRole.CLUSTER_CA,
             new MockCertIssuer(),
             new PasswordGenerator(10, "a", "a"),
             ResourceUtils.createInitialCaCertSecret(NAMESPACE, NAME, AbstractModel.clusterCaCertSecretName(NAME), MockCertIssuer.clusterCaCert(), MockCertIssuer.clusterCaCertStore(), "123456"),
-            ResourceUtils.createInitialCaKeySecret(NAMESPACE, NAME, AbstractModel.clusterCaKeySecretName(NAME), MockCertIssuer.clusterCaKey())
+            ResourceUtils.createInitialCaKeySecret(NAMESPACE, NAME, AbstractModel.clusterCaKeySecretName(NAME), MockCertIssuer.clusterCaKey()),
+            CaConfig.createDefault()
     );
 
     @Test
@@ -195,8 +197,8 @@ public class EntityOperatorReconcilerTest {
 
                     assertThat(depCaptor.getAllValues().size(), is(1));
                     assertThat(depCaptor.getValue(), is(notNullValue()));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
                     assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH), is("4d715cdd4d715cdd"));
 
                     assertThat(pdbCaptor.getAllValues().size(), is(1));
@@ -437,8 +439,8 @@ public class EntityOperatorReconcilerTest {
 
                     assertThat(depCaptor.getAllValues().size(), is(1));
                     assertThat(depCaptor.getValue(), is(notNullValue()));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
                     assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH), is("4d715cdd"));
 
                     assertThat(pdbCaptor.getAllValues().size(), is(1));
@@ -540,8 +542,8 @@ public class EntityOperatorReconcilerTest {
 
                     assertThat(depCaptor.getAllValues().size(), is(1));
                     assertThat(depCaptor.getValue(), is(notNullValue()));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
-                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION), is("0"));
+                    assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION), is("0"));
                     assertThat(depCaptor.getValue().getSpec().getTemplate().getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH), is("4d715cdd"));
 
                     assertThat(pdbCaptor.getAllValues().size(), is(1));

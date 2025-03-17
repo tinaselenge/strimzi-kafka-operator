@@ -17,7 +17,7 @@ import io.strimzi.api.kafka.model.common.CertificateAuthority;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.api.kafka.model.user.KafkaUser;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.systemtest.AbstractST;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;
 import io.strimzi.systemtest.docs.TestDocsLabels;
@@ -536,8 +536,8 @@ public class CustomCaST extends AbstractST {
         }
 
         // Patch secrets with new values and increase generation counter
-        SystemTestCertBundle.patchSecretAndIncreaseGeneration(caCertificateSecret, testStorage, Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION);
-        SystemTestCertBundle.patchSecretAndIncreaseGeneration(caKeySecret, testStorage, Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION);
+        SystemTestCertBundle.patchSecretAndIncreaseGeneration(caCertificateSecret, testStorage, InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION);
+        SystemTestCertBundle.patchSecretAndIncreaseGeneration(caKeySecret, testStorage, InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION);
 
         // Resume Kafka reconciliation
         LOGGER.info("Resume the reconciliation of the Kafka CustomResource ({})", KafkaComponents.getBrokerPodSetName(testStorage.getClusterName()));

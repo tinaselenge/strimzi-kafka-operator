@@ -11,7 +11,7 @@ import io.skodjob.kubetest4j.resources.KubeResourceManager;
 import io.skodjob.kubetest4j.security.CertAndKey;
 import io.skodjob.kubetest4j.security.CertAndKeyFiles;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.systemtest.storage.TestStorage;
 import io.strimzi.systemtest.utils.kubeUtils.objects.SecretUtils;
@@ -119,8 +119,8 @@ public class SystemTestCertBundle {
             KubeResourceManager.get().createResourceWithWait(secret);
 
             // 4. Annotate the secrets
-            SecretUtils.annotateSecret(namespaceName, this.caCertSecretName, Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "0");
-            SecretUtils.annotateSecret(namespaceName, this.caKeySecretName, Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "0");
+            SecretUtils.annotateSecret(namespaceName, this.caCertSecretName, InternalCa.ANNO_STRIMZI_IO_CA_CERT_GENERATION, "0");
+            SecretUtils.annotateSecret(namespaceName, this.caKeySecretName, InternalCa.ANNO_STRIMZI_IO_CA_KEY_GENERATION, "0");
         } catch (NoSuchAlgorithmException | InvalidKeySpecException | IOException e) {
             throw new RuntimeException(e);
         }

@@ -88,15 +88,21 @@ import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderCon
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.CaUtils;
+import io.strimzi.operator.common.model.CertManagerCa;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.StatusUtils;
 import io.strimzi.plugin.security.profiles.PodSecurityProviderContext;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import org.apache.kafka.server.common.MetadataVersion;
 
 import java.io.IOException;
+import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -1300,53 +1306,83 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      * public and private keys.
      * It also merges custom certificate and key data into the Secrets.
      *
-     * @param clusterCa                             The CA for cluster certificates
-     * @param existingSecrets                       The existing secrets containing Kafka certificates
-     * @param customCertsData                       Custom certificate data to add to each generated Secret
-     * @param externalBootstrapDnsName              Map with bootstrap DNS names which should be added to the certificate
-     * @param externalDnsNames                      Map with broker DNS names  which should be added to the certificate
-     * @param isMaintenanceTimeWindowsSatisfied     Indicates whether we are in a maintenance window or not
-     *
-     * @return  The generated Secrets containing Kafka node certificates and custom certificates
+     * @param clusterCa                         The CA for cluster certificates
+     * @param existingSecrets                   The existing secrets containing Kafka certificates
+     * @param customCertsData                   Custom certificate data to add to each generated Secret
+     * @param externalBootstrapDnsName          Map with bootstrap DNS names which should be added to the certificate
+     * @param externalDnsNames                  Map with broker DNS names  which should be added to the certificate
+     * @param isMaintenanceTimeWindowsSatisfied Indicates whether we are in a maintenance window or not
+     * @return The generated Secrets containing Kafka node certificates and custom certificates
      */
-    public List<Secret> generateCertificatesSecrets(ClusterCa clusterCa, List<Secret> existingSecrets, Map<String, String> customCertsData, Set<String> externalBootstrapDnsName, Map<Integer, Set<String>> externalDnsNames, boolean isMaintenanceTimeWindowsSatisfied) {
-        Map<String, Secret> existingSecretWithName = existingSecrets.stream().collect(Collectors.toMap(secret -> secret.getMetadata().getName(), secret -> secret));
-        Set<NodeRef> nodes = nodes();
-        Map<String, CertAndKey> existingCerts = new HashMap<>();
-        for (NodeRef node : nodes) {
+    public CompletionStage<List<Secret>> generateCertificatesSecrets(Ca clusterCa, List<Secret> existingSecrets, Map<String, String> customCertsData, Set<String> externalBootstrapDnsName, Map<Integer, Set<String>> externalDnsNames, boolean isMaintenanceTimeWindowsSatisfied) {
+        Map<String, Secret> existingSecretMap = existingSecrets.stream().collect(Collectors.toMap(secret -> secret.getMetadata().getName(), secret -> secret));
+        Map<String, CertAndKey> existingCertificates = extractExistingCertsFromSecret(existingSecretMap, clusterCa);
+
+        try {
+            return ClusterCaCertificateIssuer.generateBrokerCerts(
+                    reconciliation,
+                    clusterCa,
+                    namespace,
+                    cluster,
+                    existingCertificates,
+                    nodes(),
+                    externalBootstrapDnsName,
+                    externalDnsNames,
+                    isMaintenanceTimeWindowsSatisfied
+            ).thenApply(certAndKeys -> buildSecretsFromCertAndKeys(
+                    certAndKeys,
+                    customCertsData,
+                    clusterCa
+            ));
+        } catch (IOException e) {
+            LOGGER.errorCr(reconciliation, "Error while generating certificates", e);
+            return CompletableFuture.failedStage(new RuntimeException("Failed to prepare Kafka certificates", e));
+        }
+    }
+
+    private Map<String, CertAndKey> extractExistingCertsFromSecret(Map<String, Secret> existingCertSecrets, Ca ca) {
+        Map<String, CertAndKey> certs = new HashMap<>();
+        for (NodeRef node : nodes()) {
             String podName = node.podName();
-            // Reuse existing certificate if it exists
-            if (existingSecretWithName.get(podName) != null) {
-                Secret existingSecret = existingSecretWithName.get(podName);
-                CertAndKey nodeCertAndKey = CertUtils.keyStoreCertAndKey(existingSecret, podName, clusterCa.caCertGenerationAnnotation());
-                existingCerts.put(podName, nodeCertAndKey);
-            } else {
-                LOGGER.debugCr(reconciliation, "No existing certificate found for pod {}/{}", namespace, podName);
+            Secret secret = existingCertSecrets.get(podName);
+            if (secret != null) {
+                certs.put(podName, CertUtils.keyStoreCertAndKey(
+                        secret, podName, ca.caCertGenerationAnnotation()
+                ));
             }
         }
+        return certs;
+    }
 
-        Map<String, CertAndKey> updatedCerts;
-        try {
-            updatedCerts = clusterCa.generateBrokerCerts(namespace, cluster, existingCerts,
-                    nodes, externalBootstrapDnsName, externalDnsNames, isMaintenanceTimeWindowsSatisfied);
-        } catch (IOException e) {
-            LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
-            throw new RuntimeException("Failed to prepare Kafka certificates", e);
-        }
-
-        return updatedCerts.entrySet()
-                .stream()
+    private List<Secret> buildSecretsFromCertAndKeys(Map<String, CertAndKey> certAndKeys, Map<String, String> customCertsData, Ca clusterCa) {
+        return certAndKeys.entrySet().stream()
                 .map(entry -> {
-                    Map<String, String> secretData = new HashMap<>(CertUtils.buildSecretData(entry.getKey(), entry.getValue()));
-                    if (customCertsData != null && !customCertsData.isEmpty()) {
-                        secretData.putAll(customCertsData);
+                    Map<String, String> secretData = new HashMap<>(
+                            CertUtils.buildSecretData(entry.getKey(), entry.getValue())
+                    );
+
+                    Map<String, String> annotations = new HashMap<>(Map.ofEntries(clusterCa.caCertGenerationFullAnnotation()));
+
+                    //TODO: do we need this hash?
+                    if (clusterCa instanceof CertManagerCa) {
+                        String certHash;
+                        try {
+                            certHash = CertUtils.getCertificateThumbprint(CaUtils.x509Certificate(entry.getValue().cert()));
+                        } catch (CertificateException e) {
+                            throw new RuntimeException(e);
+                        }
+                        annotations.put(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, certHash);
                     }
 
-                    return ModelUtils.createSecret(entry.getKey(), namespace, labels, ownerReference,
+                    if (customCertsData != null) {
+                        secretData.putAll(customCertsData);
+                    }
+                    return ModelUtils.createSecret(
+                            entry.getKey(), namespace, labels, ownerReference,
                             secretData,
-                            Map.ofEntries(
-                                    clusterCa.caCertGenerationFullAnnotation()),
-                            emptyMap());
+                            annotations,
+                            emptyMap()
+                    );
                 })
                 .toList();
     }

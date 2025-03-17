@@ -34,7 +34,7 @@ import io.strimzi.operator.cluster.operator.VertxUtil;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
@@ -216,16 +216,16 @@ public class KafkaAssemblyOperatorKRaftMockTest {
         assertThat(controllers, is(notNullValue()));
 
         controllers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(desiredPod -> {
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
             Pod actualPod = client.pods().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
             Secret certSecret = client.secrets().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, InternalCa.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, InternalCa.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
 
             assertThat(client.configMaps().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get(), is(notNullValue()));
         });
@@ -234,16 +234,16 @@ public class KafkaAssemblyOperatorKRaftMockTest {
         assertThat(brokers, is(notNullValue()));
 
         brokers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(desiredPod -> {
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
             Pod actualPod = client.pods().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(InternalCa.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
             Secret certSecret = client.secrets().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, InternalCa.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, InternalCa.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
 
             assertThat(client.configMaps().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get(), is(notNullValue()));
         });
