@@ -1459,6 +1459,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                 volumeMountList.add(VolumeUtils.createVolumeMount(INIT_VOLUME_NAME, INIT_VOLUME_MOUNT));
             }
 
+            boolean oauthVolumeMountAdded = false;
             // Listener specific volumes related to their specific authentication or encryption settings
             for (GenericKafkaListener listener : listeners) {
                 String identifier = ListenersUtils.identifier(listener);
@@ -1469,9 +1470,11 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                     volumeMountList.add(VolumeUtils.createVolumeMount("custom-" + identifier + "-certs", "/opt/kafka/certificates/custom-" + identifier + "-certs"));
                 }
 
-                if (ListenersUtils.isListenerWithOAuth(listener) && listener.getAuth() instanceof KafkaListenerAuthenticationOAuth oauth && oauth.getTlsTrustedCertificates() != null)   {
+                if (!oauthVolumeMountAdded && ListenersUtils.isListenerWithOAuth(listener) && listener.getAuth() instanceof KafkaListenerAuthenticationOAuth oauth && oauth.getTlsTrustedCertificates() != null)   {
                     String oauthTrustedCertsSecret = KafkaResources.internalOauthTrustedCertsSecretName(cluster);
                     volumeMountList.add(VolumeUtils.createVolumeMount(oauthTrustedCertsSecret, TRUSTED_CERTS_BASE_VOLUME_MOUNT + "/" + oauthTrustedCertsSecret));
+                    // the internal oauth trusted secret does not need to be volume mounted for each listener, as it contains all the trusted certificates
+                    oauthVolumeMountAdded = true;
                 }
 
                 if (ListenersUtils.isListenerWithCustomAuth(listener)) {
@@ -1676,7 +1679,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
 
         for (GenericKafkaListener listener : listeners) {
             if (listener.isTls()) {
-                if (listener.getConfiguration() != null) {
+                if (listener.getConfiguration() != null && listener.getConfiguration().getBrokerCertChainAndKey() != null) {
                     certSecretNames.add(listener.getConfiguration().getBrokerCertChainAndKey().getSecretName());
                 }
             }

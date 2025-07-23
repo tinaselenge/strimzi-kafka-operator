@@ -626,7 +626,10 @@ public class ReconcilerUtils {
                     .compose(secret -> Future.succeededFuture(secret.getData().get(scramAuth.getPasswordSecret().getPassword())));
         } else {
             return Future.failedFuture("Auth type " + auth.getType() + " does not have a password property");
-     /**   
+        }
+    }
+
+    /**
      * Generates or reconciles the secret that combines secrets and certificates
      * provided for TLS truststore.
      *
