@@ -78,6 +78,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 
 import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.BRIDGE_CONFIGURATION_FILENAME;
+import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.DEFAULT_REST_API_ADMIN_PORT;
 import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.ENV_VAR_KAFKA_INIT_INIT_FOLDER_KEY;
 import static io.strimzi.operator.cluster.model.metrics.JmxPrometheusExporterModel.CONFIG_MAP_KEY;
 import static java.util.Collections.emptyMap;
@@ -189,14 +190,17 @@ public class KafkaBridgeClusterTest {
         assertThat(svc.getSpec().getType(), is("ClusterIP"));
         assertThat(svc.getMetadata().getLabels(), is(expectedServiceLabels(kbc.getComponentName())));
         assertThat(svc.getSpec().getSelector(), is(expectedSelectorLabels()));
-        assertThat(svc.getSpec().getPorts().size(), is(1));
+        assertThat(svc.getSpec().getPorts().size(), is(2));
         assertThat(svc.getSpec().getPorts().get(0).getPort(), is(KafkaBridgeCluster.DEFAULT_REST_API_PORT));
         assertThat(svc.getSpec().getPorts().get(0).getName(), is(KafkaBridgeCluster.REST_API_PORT_NAME));
         assertThat(svc.getSpec().getPorts().get(0).getProtocol(), is("TCP"));
+        assertThat(svc.getSpec().getPorts().get(1).getPort(), is(KafkaBridgeCluster.DEFAULT_REST_API_ADMIN_PORT));
+        assertThat(svc.getSpec().getPorts().get(1).getName(), is(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME));
+        assertThat(svc.getSpec().getPorts().get(1).getProtocol(), is("TCP"));
         assertThat(svc.getSpec().getIpFamilyPolicy(), is(nullValue()));
         assertThat(svc.getSpec().getIpFamilies(), is(nullValue()));
 
-        assertThat(svc.getMetadata().getAnnotations(), is(kbc.getDiscoveryAnnotation(KafkaBridgeCluster.DEFAULT_REST_API_PORT)));
+        assertThat(svc.getMetadata().getAnnotations(), is(kbc.getDiscoveryAnnotation(KafkaBridgeCluster.DEFAULT_REST_API_PORT, KafkaBridgeCluster.DEFAULT_REST_API_ADMIN_PORT, false)));
 
         TestUtils.checkOwnerReference(svc, resource);
     }
@@ -220,10 +224,13 @@ public class KafkaBridgeClusterTest {
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getLivenessProbe().getTimeoutSeconds(), is(healthTimeout));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getInitialDelaySeconds(), is(healthDelay));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getReadinessProbe().getTimeoutSeconds(), is(healthTimeout));
-        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().size(), is(1));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().size(), is(2));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(0).getContainerPort(), is(KafkaBridgeCluster.DEFAULT_REST_API_PORT));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(0).getName(), is(KafkaBridgeCluster.REST_API_PORT_NAME));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(0).getProtocol(), is("TCP"));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(1).getContainerPort(), is(DEFAULT_REST_API_ADMIN_PORT));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(1).getName(), is(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(1).getProtocol(), is("TCP"));
         assertThat(dep.getSpec().getStrategy().getType(), is("RollingUpdate"));
         assertThat(dep.getSpec().getStrategy().getRollingUpdate().getMaxSurge().getIntVal(), is(1));
         assertThat(dep.getSpec().getStrategy().getRollingUpdate().getMaxUnavailable().getIntVal(), is(0));
@@ -1332,11 +1339,14 @@ public class KafkaBridgeClusterTest {
         Deployment dep = kb.generateDeployment(emptyMap(), true, null, null);
         Container cont = dep.getSpec().getTemplate().getSpec().getContainers().get(0);
 
-        assertThat(cont.getLivenessProbe().getHttpGet().getPort(), is(new IntOrString(KafkaBridgeCluster.REST_API_PORT_NAME)));
-        assertThat(cont.getReadinessProbe().getHttpGet().getPort(), is(new IntOrString(KafkaBridgeCluster.REST_API_PORT_NAME)));
+        assertThat(cont.getLivenessProbe().getHttpGet().getPort(), is(new IntOrString(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME)));
+        assertThat(cont.getReadinessProbe().getHttpGet().getPort(), is(new IntOrString(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME)));
         assertThat(cont.getPorts().get(0).getContainerPort(), is(1874));
+        assertThat(cont.getPorts().get(1).getContainerPort(), is(DEFAULT_REST_API_ADMIN_PORT));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(0).getName(), is(KafkaBridgeCluster.REST_API_PORT_NAME));
         assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(0).getProtocol(), is("TCP"));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(1).getName(), is(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME));
+        assertThat(dep.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().get(1).getProtocol(), is("TCP"));
 
         // Check ports on Service
         Service svc = kb.generateService();
@@ -1347,7 +1357,10 @@ public class KafkaBridgeClusterTest {
         assertThat(svc.getSpec().getPorts().get(0).getPort(), is(1874));
         assertThat(svc.getSpec().getPorts().get(0).getName(), is(KafkaBridgeCluster.REST_API_PORT_NAME));
         assertThat(svc.getSpec().getPorts().get(0).getProtocol(), is("TCP"));
-        assertThat(svc.getMetadata().getAnnotations(), is(kbc.getDiscoveryAnnotation(1874)));
+        assertThat(svc.getSpec().getPorts().get(1).getPort(), is(DEFAULT_REST_API_ADMIN_PORT));
+        assertThat(svc.getSpec().getPorts().get(1).getName(), is(KafkaBridgeCluster.REST_API_ADMIN_PORT_NAME));
+        assertThat(svc.getSpec().getPorts().get(1).getProtocol(), is("TCP"));
+        assertThat(svc.getMetadata().getAnnotations(), is(kbc.getDiscoveryAnnotation(1874, DEFAULT_REST_API_ADMIN_PORT, false)));
         TestUtils.checkOwnerReference(svc, resource);
     }
 

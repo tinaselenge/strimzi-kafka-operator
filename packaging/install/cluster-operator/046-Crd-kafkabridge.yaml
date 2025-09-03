@@ -293,6 +293,34 @@ spec:
                     type: integer
                     minimum: 1023
                     description: The port which is the server listening on.
+                  sslEnable:
+                    type: boolean
+                    description: Certificate configuration for the HTTP Bridge server.
+                  sslPort:
+                    type: integer
+                    minimum: 1023
+                    description: The port which is the SSL server listening on.
+                  certificateAndKey:
+                    type: object
+                    properties:
+                      secretName:
+                        type: string
+                        description: The name of the Secret containing the certificate.
+                      certificate:
+                        type: string
+                        description: The name of the file certificate in the Secret.
+                      key:
+                        type: string
+                        description: The name of the private key in the Secret.
+                    required:
+                    - secretName
+                    - certificate
+                    - key
+                    description: Reference to the `Secret` which holds the certificate and private key pair.
+                  config:
+                    x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                    description: Configurations for HTTP server.
                   cors:
                     type: object
                     properties:

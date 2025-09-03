@@ -32,8 +32,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static io.strimzi.api.kafka.model.common.metrics.StrimziMetricsReporter.TYPE_STRIMZI_METRICS_REPORTER;
+import static io.strimzi.operator.cluster.model.AbstractModel.LOGGER;
 import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.KAFKA_BRIDGE_CONFIG_VOLUME_MOUNT;
 import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.OAUTH_SECRETS_BASE_VOLUME_MOUNT;
+import static io.strimzi.operator.cluster.model.KafkaBridgeCluster.TLS_SERVER_CERTS_BASE_VOLUME_MOUNT;
 
 /**
  * This class is used to generate the bridge configuration template. The template is later passed using a ConfigMap to
@@ -339,6 +341,23 @@ public class KafkaBridgeConfigurationBuilder {
         printSectionHeader("HTTP configuration");
         writer.println("http.host=" + KafkaBridgeHttpConfig.HTTP_DEFAULT_HOST);
         writer.println("http.port=" + (http != null ? http.getPort() : KafkaBridgeHttpConfig.HTTP_DEFAULT_PORT));
+        writer.println("http.admin.port=" + http.getAdminPort());
+
+        if (http != null && http.isSslEnable()) {
+            writer.println("http.ssl.enable=true");
+
+            if (http.getCertificateAndKey() != null) {
+                writer.println("http.ssl.keystore.location=" + TLS_SERVER_CERTS_BASE_VOLUME_MOUNT + http.getCertificateAndKey().getSecretName() + "/" + http.getCertificateAndKey().getCertificate());
+                writer.println("http.ssl.key.location=" + TLS_SERVER_CERTS_BASE_VOLUME_MOUNT + http.getCertificateAndKey().getSecretName() + "/"  + http.getCertificateAndKey().getKey());
+            } else {
+                LOGGER.warnCr(reconciliation, "SSL enabled but missing certificate and key to load");
+            }
+        }
+
+        if (http != null && !http.getConfig().isEmpty()) {
+            http.getConfig().entrySet().stream().forEach(config -> writer.println("http." + config.getKey() + "=" + config.getValue()));
+        }
+
         if (http != null && http.getCors() != null) {
             writer.println("http.cors.enabled=true");
 
