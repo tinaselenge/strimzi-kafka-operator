@@ -18,6 +18,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static java.util.Collections.emptyList;
 
@@ -206,6 +208,18 @@ public class KafkaConfiguration extends AbstractConfiguration {
      */
     public KafkaConfiguration(Reconciliation reconciliation, Iterable<Map.Entry<String, Object>> jsonOptions) {
         super(reconciliation, jsonOptions, FORBIDDEN_PREFIXES, FORBIDDEN_PREFIX_EXCEPTIONS, List.of(), DEFAULTS);
+    }
+
+    /**
+     * Constructor used to instantiate this class from JsonObject. Should be used to create configuration from
+     * ConfigMap / CRD.
+     *
+     * @param reconciliation  The reconciliation
+     * @param jsonOptions     Json object with configuration options as key ad value pairs.
+     * @param additionalExceptions Additional exceptions to append to the FORBIDDEN_PREFIX_EXCEPTIONS
+     */
+    public KafkaConfiguration(Reconciliation reconciliation, Iterable<Map.Entry<String, Object>> jsonOptions, List<String> additionalExceptions) {
+        super(reconciliation, jsonOptions, FORBIDDEN_PREFIXES, Stream.concat(FORBIDDEN_PREFIX_EXCEPTIONS.stream(), additionalExceptions.stream()).collect(Collectors.toList()), List.of(), DEFAULTS);
     }
 
     private KafkaConfiguration(Reconciliation reconciliation, String configuration, List<String> forbiddenPrefixes) {
