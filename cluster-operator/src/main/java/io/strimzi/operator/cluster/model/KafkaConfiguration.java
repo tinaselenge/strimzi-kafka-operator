@@ -6,6 +6,7 @@ package io.strimzi.operator.cluster.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.strimzi.api.kafka.model.kafka.KafkaClusterSpec;
+import io.strimzi.api.kafka.model.kafka.listener.GenericKafkaListener;
 import io.strimzi.kafka.config.model.ConfigModel;
 import io.strimzi.kafka.config.model.ConfigModels;
 import io.strimzi.operator.common.Reconciliation;
@@ -18,8 +19,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static java.util.Collections.emptyList;
 
@@ -32,14 +31,12 @@ public class KafkaConfiguration extends AbstractConfiguration {
      */
     public static final String DEFAULT_REPLICATION_FACTOR = "default.replication.factor";
 
-    private static final List<String> FORBIDDEN_PREFIXES;
-    private static final List<String> FORBIDDEN_PREFIX_EXCEPTIONS;
+    private static final List<String> FORBIDDEN_PREFIXES = AbstractConfiguration.splitPrefixesOrOptionsToList(KafkaClusterSpec.FORBIDDEN_PREFIXES);
+    private static final List<String> FORBIDDEN_PREFIX_EXCEPTIONS = AbstractConfiguration.splitPrefixesOrOptionsToList(KafkaClusterSpec.FORBIDDEN_PREFIX_EXCEPTIONS);
+    private static final List<String> ALLOWED_PER_LISTENER_CONFIGURATIONS = AbstractConfiguration.splitPrefixesOrOptionsToList(KafkaClusterSpec.ALLOWED_PER_LISTENER_CONFIGS);
     private static final Map<String, String> DEFAULTS;
 
     static {
-        FORBIDDEN_PREFIXES = AbstractConfiguration.splitPrefixesOrOptionsToList(KafkaClusterSpec.FORBIDDEN_PREFIXES);
-        FORBIDDEN_PREFIX_EXCEPTIONS = AbstractConfiguration.splitPrefixesOrOptionsToList(KafkaClusterSpec.FORBIDDEN_PREFIX_EXCEPTIONS);
-
         DEFAULTS = new HashMap<>(1);
         // when users remove "min.insync.replicas" from the Kafka custom resource, the operator is going to force the
         // default value (1) regardless of whether ELR (Eligible Leader Replicas) is enabled or disabled
@@ -212,18 +209,25 @@ public class KafkaConfiguration extends AbstractConfiguration {
 
     /**
      * Constructor used to instantiate this class from JsonObject. Should be used to create configuration from
-     * ConfigMap / CRD.
+     * ConfigMap / CRD. It also modifies the FORBIDDEN_PREFIX_EXCEPTIONS with the given listener names.
      *
-     * @param reconciliation  The reconciliation
-     * @param jsonOptions     Json object with configuration options as key ad value pairs.
-     * @param additionalExceptions Additional exceptions to append to the FORBIDDEN_PREFIX_EXCEPTIONS
+     * @param reconciliation        The reconciliation
+     * @param jsonOptions           Json object with configuration options as key ad value pairs.
+     * @param listeners             Listener names to add to the exception list
      */
-    public KafkaConfiguration(Reconciliation reconciliation, Iterable<Map.Entry<String, Object>> jsonOptions, List<String> additionalExceptions) {
-        super(reconciliation, jsonOptions, FORBIDDEN_PREFIXES, Stream.concat(FORBIDDEN_PREFIX_EXCEPTIONS.stream(), additionalExceptions.stream()).collect(Collectors.toList()), List.of(), DEFAULTS);
+    public KafkaConfiguration(Reconciliation reconciliation, Iterable<Map.Entry<String, Object>> jsonOptions, List<GenericKafkaListener> listeners) {
+        super(reconciliation, jsonOptions, FORBIDDEN_PREFIXES, modifyWithListeners(listeners), List.of(), DEFAULTS);
     }
 
     private KafkaConfiguration(Reconciliation reconciliation, String configuration, List<String> forbiddenPrefixes) {
         super(reconciliation, configuration, forbiddenPrefixes, List.of(), List.of(), DEFAULTS);
+    }
+
+    private static List<String> modifyWithListeners(List<GenericKafkaListener> listeners) {
+        List<String> exceptions = new ArrayList<>();
+        listeners.stream().map(ListenersUtils::identifier).forEach(l -> ALLOWED_PER_LISTENER_CONFIGURATIONS.forEach(c -> exceptions.add(String.format("listener.%s.%s",  l, c))));
+        exceptions.addAll(FORBIDDEN_PREFIX_EXCEPTIONS);
+        return exceptions;
     }
 
 

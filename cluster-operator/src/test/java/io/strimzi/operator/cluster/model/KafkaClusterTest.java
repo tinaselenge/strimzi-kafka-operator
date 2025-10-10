@@ -1822,7 +1822,10 @@ public class KafkaClusterTest {
         Kafka kafkaAssembly = new KafkaBuilder(KAFKA)
                 .editSpec()
                 .editKafka()
-                .withConfig(Map.of("listener.tls.max.connections", 1000, "listener.tls.connections.max.reauth.ms", 1000))
+                .withConfig(Map.of("listener.tls-9093.max.connections", 1000,
+                        "listener.tls-9093.connections.max.reauth.ms", 1000,
+                        "listener.plain-9092.max.connections", 1000,
+                        "listener.plain-9092.connections.max.reauth.ms", 1000))
                 .endKafka()
                 .endSpec()
                 .build();
@@ -1830,8 +1833,10 @@ public class KafkaClusterTest {
         List<KafkaPool> pools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, List.of(POOL_CONTROLLERS, POOL_MIXED, POOL_BROKERS), Map.of(), KafkaVersionTestUtils.DEFAULT_KRAFT_VERSION_CHANGE, SHARED_ENV_PROVIDER);
         KafkaCluster cluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, pools, VERSIONS, KafkaVersionTestUtils.DEFAULT_KRAFT_VERSION_CHANGE, null, SHARED_ENV_PROVIDER);
 
-        assertThat(cluster.configuration.getConfiguration(), not(CoreMatchers.containsString("listener.tls.max.connections=1000")));
-        assertThat(cluster.configuration.getConfiguration(), CoreMatchers.containsString("listener.tls.connections.max.reauth.ms=1000"));
+        assertThat(cluster.configuration.getConfiguration(), not(CoreMatchers.containsString("listener.tls-9093.max.connections=1000")));
+        assertThat(cluster.configuration.getConfiguration(), CoreMatchers.containsString("listener.tls-9093.connections.max.reauth.ms=1000"));
+        assertThat(cluster.configuration.getConfiguration(), not(CoreMatchers.containsString("listener.plain-9092.max.connections=1000")));
+        assertThat(cluster.configuration.getConfiguration(), CoreMatchers.containsString("listener.plain-9092.connections.max.reauth.ms=1000"));
     }
 
     @Test
