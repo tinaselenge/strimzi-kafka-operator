@@ -50,14 +50,13 @@ public class PlatformClientImpl implements PlatformClient {
             if (podOps.isReady(namespace, nodeRef.podName())) {
                 return NodeState.READY;
             } else {
-                if (pendingAndUnschedulable(pod) || hasWaitingContainerWithReason(pod, Set.of("CrashLoopBackoff", "ImagePullBackoff"))) {
+                if (pendingAndUnschedulable(pod) || hasWaitingContainerWithReason(pod, Set.of("CrashLoopBackOff", "ErrImagePull", "ImagePullBackOff", "ContainerCreating"))) {
                     return NodeState.NOT_RUNNING; // NOT_RUNNING is more of a "likely stuck in not ready"
                 } else {
                     return NodeState.NOT_READY;
                 }
             }
         }
-
     }
 
     private static boolean hasWaitingContainerWithReason(Pod pod, Set<String> reasons) {
@@ -72,8 +71,8 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     private static boolean pendingAndUnschedulable(Pod pod) {
-        return "Pending".equals(pod.getStatus().getPhase()) && pod.getStatus().getConditions().stream().anyMatch(
-                c -> "PodScheduled".equals(c.getType())
+        return "Pending".equals(pod.getStatus().getPhase())
+                && pod.getStatus().getConditions().stream().anyMatch(c -> "PodScheduled".equals(c.getType())
                         && "False".equals(c.getStatus())
                         && "Unschedulable".equals(c.getReason()));
     }

@@ -7,11 +7,14 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 class UnrestartableNodesException extends RuntimeException {
 
     /**
-     * This exception indicates that a node cannot be attempted to restart which could be
-     * because of not satisfying the safety conditions or the maximum number of retry attempt has been reached.
+     * This exception indicates that a node cannot be attempted to restart or not ready after a restart
      * @param message the detail message. The detail message is saved for later retrieval by the getMessage() method
      */
     public UnrestartableNodesException(String message) {
         super(message);
+    }
+
+    UnrestartableNodesException(String message, Throwable throwable) {
+        super(message, throwable);
     }
 }

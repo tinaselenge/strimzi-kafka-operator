@@ -935,7 +935,7 @@ public class RackRollingTest {
                 .mockDescribeConfigs(rollClient, Set.of(), 0, 1, 2)
                 .done();
 
-        var ex = assertThrows(MaxAttemptsExceededException.class,
+        var ex = assertThrows(UnrestartableNodesException.class,
                 () -> doRollingRestart(platformClient,
                         rollClient,
                         null,
@@ -945,7 +945,7 @@ public class RackRollingTest {
                         1,
                         1));
 
-        assertEquals("The max attempts (3) to wait for restarted node pool-kafka-0/0 to become ready has been reached.", ex.getMessage());
+        assertEquals("Timed out waiting for restarted pod pool-kafka-0 to become ready", ex.getMessage());
 
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());
         Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
@@ -969,7 +969,7 @@ public class RackRollingTest {
                 .mockDescribeConfigs(rollClient, Set.of(), 0, 1, 2)
                 .done();
 
-        var ex = assertThrows(MaxAttemptsExceededException.class,
+        var ex = assertThrows(UnrestartableNodesException.class,
                 () -> doRollingRestart(platformClient,
                         rollClient,
                         null,
@@ -979,7 +979,7 @@ public class RackRollingTest {
                         1,
                         1));
 
-        assertEquals("The max attempts (3) to wait for non-restarted node pool-kafka-0/0 to become ready has been reached.", ex.getMessage());
+        assertEquals("Timed out waiting for non-restarted pod pool-kafka-0 to become ready", ex.getMessage());
 
         Mockito.verify(platformClient, never()).restartNode(any(), any());
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), anyBoolean());

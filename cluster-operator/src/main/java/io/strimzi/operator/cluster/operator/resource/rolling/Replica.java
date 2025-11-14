@@ -20,10 +20,10 @@ import java.util.Collection;
  *                    In other words, the magnitude is the size of the ISR and the sign will be negative
  *                    if the broker hosting this replica is not in the ISR.
  */
-record Replica(String topicName, int partitionId, short isrSize) {
+record Replica(String topicName, int partitionId, short isrSize, short replicasSize) {
 
-    public Replica(Node broker, String topicName, int partitionId, Collection<Node> isr) {
-        this(topicName, partitionId, (short) (isr.contains(broker) ? isr.size() : -isr.size()));
+    public Replica(Node broker, String topicName, int partitionId, Collection<Node> isr, Collection<Node> replicas) {
+        this(topicName, partitionId, (short) (isr.contains(broker) ? isr.size() : -isr.size()), (short) replicas.size());
     }
 
     @Override
@@ -36,6 +36,13 @@ record Replica(String topicName, int partitionId, short isrSize) {
      */
     public short isrSize() {
         return (short) Math.abs(isrSize);
+    }
+
+    /**
+     * @return The size of the ISR for the partition of this replica.
+     */
+    public short size() {
+        return (short) Math.abs(replicasSize);
     }
 
     /**

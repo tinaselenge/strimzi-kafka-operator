@@ -22,7 +22,7 @@ public class BatchingTest {
     @Test
     public void testCellCreation() {
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
-                Set.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 1, 0)),
+                List.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 1, 0)),
                         addKafkaNode(1, Set.of()),
                         addKafkaNode(2, addReplicas(2, "my-topic", 0, 1, 2))));
 
@@ -50,7 +50,6 @@ public class BatchingTest {
 
     @Test
     public void testBatchCreationWithMultipleTopics() {
-
         List<Set<KafkaNode>> cells = Batching.cells(Reconciliation.DUMMY_RECONCILIATION,
                 Set.of(addKafkaNode(0, addReplicas(0, "my-topic", 0, 0, 3)),
                         addKafkaNode(3, addReplicas(3, "my-topic", 0, 0, 3)),
@@ -72,7 +71,7 @@ public class BatchingTest {
     static public Set<Replica> addReplicas(int brokerid, String topicName, int partition, int... isrIds) {
         Set<Replica> replicaSet = new HashSet<>();
 
-        replicaSet.add(new Replica(addNodes(brokerid).get(0), topicName, partition, addNodes(isrIds)));
+        replicaSet.add(new Replica(addNodes(brokerid).get(0), topicName, partition, addNodes(isrIds), addNodes(isrIds)));
 
         return replicaSet;
     }

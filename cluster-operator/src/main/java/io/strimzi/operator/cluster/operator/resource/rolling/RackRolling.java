@@ -56,7 +56,7 @@ public class RackRolling {
         // Used for brokers that are initially healthy and require neither restart no reconfigure
         NOP,
         // Used in for nodes that are not healthy and require neither restart
-        WAIT_FOR_READINESS,
+        WAIT_FOR_NON_RESTARTED,
         WAIT_FOR_LOG_RECOVERY,
         // Used in {@link #initialPlan(List, RollClient)} for nodes that require reconfigure
         // before we know whether the actual config changes are reconfigurable
@@ -304,6 +304,7 @@ public class RackRolling {
      * If the maximum restart reached for any node, this method will throw MaxRestartsExceededException.
      * If the maximum attempt reached for any node, this method will throw MaxAttemptsExceededException.
      * If any node is not running but has an up-to-date revision, this method will throw UnrestartableNodesException.
+     * If any node is not ready after a restart or could not be restarted, this method will throw UnrestartableNodesException.
      *
      * @return list of nodes to retry
      * @throws InterruptedException UncheckedInterruptionException  The thread was interrupted
@@ -319,7 +320,7 @@ public class RackRolling {
             // We want to give nodes chance to get ready before we try to connect to the or consider them for rolling.
             // This is important especially for nodes which were just started.
             waitForNodeReadiness(contexts.stream().filter(context -> context.state().equals(State.NOT_READY)).collect(Collectors.toList()),
-                    (c, e) -> { });
+                    (c, e) -> LOGGER.debugCr(reconciliation, "Waited for node {} to become ready before initialising plan in case they just started", c));
 
             var byPlan = initialPlan(contexts, rollClient);
             LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan.entrySet().stream().map(plan -> String.format("\n %s=%s", plan.getKey(), plan.getValue())).collect(Collectors.toSet()));
@@ -333,8 +334,8 @@ public class RackRolling {
                 return restartUnhealthyNodes(byPlan.get(Action.RESTART_UNHEALTHY));
             }
 
-            if (!byPlan.getOrDefault(Action.WAIT_FOR_READINESS, List.of()).isEmpty()) {
-                return waitForNodeReadiness(byPlan.get(Action.WAIT_FOR_READINESS));
+            if (!byPlan.getOrDefault(Action.WAIT_FOR_NON_RESTARTED, List.of()).isEmpty()) {
+                waitForNonRestartedNodeReadiness(byPlan.get(Action.WAIT_FOR_NON_RESTARTED));
             }
 
             rollClient.initialiseControllerAdmin(contexts.stream().filter(c -> c.currentRoles().controller()).map(Context::nodeRef).collect(Collectors.toSet()));
@@ -411,7 +412,8 @@ public class RackRolling {
                         state = State.NOT_READY;
                     }
                 } catch (Exception e) {
-                    LOGGER.warnCr(reconciliation, "Could not get broker state for node {}. This might be temporary if a node was just restarted", nodeRef, e.getCause());
+                    //TODO: since observe method is called very frequently, maybe we should not print the full error cause in each message, maybe just in debug?
+                    LOGGER.warnCr(reconciliation, "Could not get broker state for node {}. This might be temporary if a node was just restarted", nodeRef, e);
                     state = State.NOT_READY;
                 }
         }
@@ -465,11 +467,12 @@ public class RackRolling {
 
             } else {
                 if (context.reason().getReasons().isEmpty()) {
-                    return context.state().equals(State.READY) ? Action.MAYBE_RECONFIGURE : Action.WAIT_FOR_READINESS;
+                    // Node might have been restarted in a previous reconciliation and left in unready state
+                    return context.state().equals(State.READY) ? Action.MAYBE_RECONFIGURE : Action.WAIT_FOR_NON_RESTARTED;
                 }
 
-                if (context.numRestarts() > 0) {
-                    return context.state().equals(State.READY) ? Action.NOP : Action.WAIT_FOR_READINESS;
+                if (context.numRestarts() > 0 && context.state().equals(State.READY)) {
+                    return Action.NOP;
                 }
 
                 return Action.RESTART;
@@ -499,7 +502,7 @@ public class RackRolling {
                 if (!c.reason().contains(RestartReason.POD_HAS_OLD_REVISION)) {
                     // If the node is not running (e.g. unschedulable) then restarting it, likely won't make any difference.
                     // Proceeding and deleting another node may result in it not running too. Avoid restarting it unless it has an old revision.
-                    throw new UnrestartableNodesException("Pod is unschedulable or is not starting");
+                    throw new UnrestartableNodesException("Pod " + c.nodeRef().podName() + " is unschedulable or is not starting");
                 }
 
                 // Collect all not running controllers to restart them in parallel
@@ -555,15 +558,7 @@ public class RackRolling {
                     awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
                 }
             } catch (TimeoutException e) {
-                LOGGER.warnCr(reconciliation, "Timed out waiting for node {} to become ready after a restart", context.nodeRef());
-                if (context.numAttempts() >= maxAttempts) {
-                    throw new MaxAttemptsExceededException("Cannot restart node " + context.nodeRef() +
-                            " because they violate quorum health or topic availability. " +
-                            "The max attempts (" + maxAttempts + ") to retry the nodes has been reached.");
-                } else {
-                    context.incrementNumAttempts();
-                    return;
-                }
+                throw new UnrestartableNodesException("Timed out waiting for restarted pod " + context.nodeRef().podName() + " to become ready", e);
             }
         }
     }
@@ -608,19 +603,10 @@ public class RackRolling {
             LOGGER.warnCr(reconciliation, "Failed to elect preferred replica", e);
         }
     }
-
-    private List<Integer> waitForNodeReadiness(List<Context> unreadyNodes) {
-        if (!unreadyNodes.isEmpty()) {
-            LOGGER.debugCr(reconciliation, "Waiting for nodes {} to become ready before initialising plan in case they just started", unreadyNodes);
-            waitForNodeReadiness(unreadyNodes, (c, e) -> {
-                if (c.numAttempts() >= maxAttempts) {
-                    String restartedState = c.numRestarts() > 0 ? "restarted" : "non-restarted";
-                    throw new MaxAttemptsExceededException("The max attempts (" + maxAttempts + ") to wait for " + restartedState + " node "  +  c.nodeRef() + " to become ready has been reached.");
-                }
-                c.incrementNumAttempts();
-            });
-        }
-        return unreadyNodes.stream().map(Context::nodeId).collect(Collectors.toList());
+    private void waitForNonRestartedNodeReadiness(List<Context> unreadyNodes) {
+        waitForNodeReadiness(unreadyNodes, (c, e) -> {
+            throw new UnrestartableNodesException("Timed out waiting for non-restarted pod " + c.nodeRef().podName() + " to become ready", e);
+        });
     }
 
     private Map<Integer, Config> getNodeConfigs(RollClient rollClient, List<Context> contexts) {
@@ -636,6 +622,7 @@ public class RackRolling {
             // TODO: Can there be situations where Admin client connection works for all nodes but the describe requests keep failing? Could we end up in a failed reconciliation loop?
             //  Possible exceptions: InvalidRequestException, ClusterAuthorizationException, UnsupportedVersionException, TimeoutException, UnknownBrokerExceptions/ConfigResourceNotFoundException
             //  I don't think these exceptions should trigger node restart anyway, but likely need to be fixed outside of the reconciliation, therefore makes sense to fail the reconciliation at this point.
+            //  Currently the roller describes one broker at a time. Then marks the broker to restart immediately if the request failed. Is that we should do? Or should retrieve which broker it failed for?
             LOGGER.errorCr(reconciliation, "Error getting configs for : " + contexts, e.getCause());
             throw e;
         }
@@ -697,7 +684,7 @@ public class RackRolling {
             }
 
             time.sleep(postOperationTimeoutMs / 2, 0);
-            waitForNodeReadiness(Collections.singletonList(context));
+            waitForNonRestartedNodeReadiness(Collections.singletonList(context));
             // TODO decide whether we need an explicit healthcheck here
             //      or at least to know that the kube health check probe will have failed at the time
             //      we break to OUTER (We need to test a scenario of breaking configuration change, does this sleep catch it?)
@@ -722,6 +709,7 @@ public class RackRolling {
         // determine batches of nodes to be restarted together
         // for controller nodes, a batch with a single node will be returned
         var batch = nextBatch(reconciliation, rollClient, nodesToRestart, maxRestartBatchSize);
+        LOGGER.debugCr(reconciliation, "Restart batch: {}", batch);
 
         // Empty batch means, there is no node that can safely restarted without violating quorum health or availability.
         if (batch.isEmpty()) {
@@ -732,6 +720,7 @@ public class RackRolling {
                             " because they violate quorum health or topic availability. " +
                             "The max attempts (" + maxAttempts + ") to retry the nodes has been reached.");
                 }
+                //TODO: Do we apply delay here before re-attempting them? The current roller has backoff delay.
                 c.incrementNumAttempts();
             });
             // sleep and retry the nodes
@@ -739,7 +728,6 @@ public class RackRolling {
             return nodesToRestart.stream().map(Context::nodeId).collect(Collectors.toList());
         }
 
-        LOGGER.debugCr(reconciliation, "Restart batch: {}", batch);
         // restart a batch
         restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batch, postOperationTimeoutMs, maxRestarts);
         return batch.stream().map(Context::nodeId).collect(Collectors.toList());
@@ -805,16 +793,13 @@ public class RackRolling {
             if (isQuorumHealthyWithoutNode(reconciliation, c.nodeId(), activeControllerId, rollClient)) {
                 // if this node is combined, then we have to check the availability as well
                 if (c.currentRoles().broker()) {
-                    Availability availability;
                     try {
-                        availability = new Availability(reconciliation, rollClient);
+                        if (new Availability(reconciliation, rollClient).anyPartitionWouldBeUnderReplicated(c.nodeId())) {
+                            LOGGER.debugCr(reconciliation, "Combined node {} cannot be safely restarted without impacting the availability", c.nodeId());
+                            return false;
+                        }
                     } catch (Exception e) {
                         LOGGER.errorCr(reconciliation, "Failed checking availability of topic partitions", e);
-                        return false;
-                    }
-
-                    if (availability.anyPartitionWouldBeUnderReplicated(c.nodeId())) {
-                        LOGGER.debugCr(reconciliation, "Combined node {} cannot be safely restarted without impacting the availability", c.nodeId());
                         return false;
                     }
                 }
@@ -908,11 +893,6 @@ public class RackRolling {
                                                    RollClient rollClient,
                                                    List<Context> nodesNeedingRestart,
                                                    int maxRestartBatchSize) {
-
-        if (nodesNeedingRestart.size() == 1) {
-            return Collections.singleton(nodesNeedingRestart.get(0));
-        }
-
         if (nodesNeedingRestart.size() < 1) {
             return Collections.emptySet();
         }
@@ -924,8 +904,6 @@ public class RackRolling {
             LOGGER.errorCr(reconciliation, "Failed checking availability of topic partitions", e);
             return Set.of();
         }
-
-        //TODO: Implement dry run for batch rolling
 
         // If maxRestartBatchSize is set to 1, no point executing batching algorithm so
         // return the next available node that is ordered by the readiness state
