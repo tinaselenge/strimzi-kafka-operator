@@ -71,6 +71,7 @@ import io.strimzi.operator.cluster.operator.resource.rolling.RackRolling;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Annotations;
 //import io.strimzi.operator.common.e;
+import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
@@ -471,25 +472,25 @@ public class KafkaReconciler {
         Function<Integer, String> kafkaConfigProvider = nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts);
         //TODO: Change this logic to run the new roller if the feature gate for it is enabled (also add feature gate).
 
-        var rr = RackRolling.rollingRestart(
-                podOperator,
-                nodes,
+        var rr = RackRolling.initialise(
                 reconciliation,
-                podNeedsRestart,
+                podOperator,
+                1_000,
+                operationTimeoutMs,
+                () -> new BackOff(250, 2, 10),
+                nodes,
                 this.coTlsPemIdentity,
                 adminClientProvider,
                 kafkaAgentClientProvider,
+                podNeedsRestart,
                 kafkaConfigProvider,
-                allowReconfiguration,
                 kafka.getKafkaVersion(),
-                operationTimeoutMs,
+                allowReconfiguration,
+                3, //Should this be hard-coded here? Would reconciler set it any differently?
                 maxRestartBatchSize,
-                3,
-                3,
-                10,
                 eventsPublisher);
 
-        return rr.executeRollingAsync(vertx);
+        return rr.rollingRestart(vertx);
         // return new KafkaRoller(
         //             reconciliation,
         //             vertx,

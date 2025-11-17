@@ -9,9 +9,11 @@ import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
+import io.strimzi.operator.common.BackOff;
 
 import java.time.Instant;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Per-server context information during a rolling restart/reconfigure
@@ -26,35 +28,38 @@ final class Context {
     /** The time of the last state transition */
     private long lastTransition;
     /** The reasons this node needs to be restarted or reconfigured */
-    private RestartReasons reason;
+    private final RestartReasons reason;
     /** The number of restarts done so far. */
     private int numRestarts;
+    /** The number of operational attempts so far. */
+    private final BackOff backOff;
     /** The number of reconfigurations done so far. */
     private int numReconfigs;
-    /** The number of operational attempts so far. */
-    private int numAttempts;
     /** The difference between the current node config and the desired node config */
     private KafkaConfigurationDiff kafkaConfigDiff;
 
-    private Context(NodeRef nodeRef, NodeRoles currentRoles, State state, long lastTransition, RestartReasons reason, int numRestarts, int numReconfigs, int numAttempts) {
+    private Context(NodeRef nodeRef, NodeRoles currentRoles, State state, long lastTransition, RestartReasons reason, BackOff backOff, int numRestarts, int numReconfigs) {
         this.nodeRef = nodeRef;
         this.currentRoles = currentRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
+        this.backOff = backOff;
         this.numRestarts = numRestarts;
         this.numReconfigs = numReconfigs;
-        this.numAttempts = numAttempts;
     }
 
     static Context start(NodeRef nodeRef,
                          NodeRoles nodeRoles,
                          Function<Pod, RestartReasons> predicate,
+                         Supplier<BackOff> backOffSupplier,
                          PodOperator podOperator,
                          String namespace,
                          Time time) {
         RestartReasons reasons = predicate.apply(podOperator.get(namespace, nodeRef.podName()));
-        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), reasons, 0, 0, 1);
+        BackOff backOff = backOffSupplier.get();
+        backOff.delayMs();
+        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), reasons, backOff, 0, 0);
     }
 
     State transitionTo(State state, Time time) {
@@ -95,16 +100,12 @@ final class Context {
         return numRestarts;
     }
 
+    public BackOff backOff() {
+        return backOff;
+    }
+
     public int numReconfigs() {
         return numReconfigs;
-    }
-
-    public int numAttempts() {
-        return numAttempts;
-    }
-
-    public void incrementNumAttempts() {
-        this.numAttempts++;
     }
 
     public void incrementNumRestarts() {
@@ -125,8 +126,7 @@ final class Context {
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
                 "reason=" + reason + ", " +
                 "numRestarts=" + numRestarts + ", " +
-                "numReconfigs=" + numReconfigs + ", " +
-                "numAttempts=" + numAttempts + ']';
+                "numReconfigs=" + numReconfigs + ']';
     }
 
     public void configDiff(KafkaConfigurationDiff diff) {

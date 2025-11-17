@@ -14,6 +14,7 @@ import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.common.AdminClientProvider;
+import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.UncheckedExecutionException;
@@ -38,6 +39,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -72,96 +74,95 @@ public class RackRolling {
      * Constructs RackRolling instance and initializes contexts for given {@code nodes}
      * to do a rolling restart (or reconfigure) of them.
      *
-     * @param podOperator               Pod operator for managing pods
-     * @param nodes                     The nodes (not all of which may need restarting).
-     * @param reconciliation            Reconciliation marker
-     * @param predicate                 The predicate used to determine whether to restart a particular node
-     * @param coTlsPemIdentity          Cluster operator PEM identity
-     * @param adminClientProvider       Kafka Admin client provider
-     * @param kafkaAgentClientProvider  Kafka Agent client provider
-     * @param kafkaVersion              Kafka version
-     * @param allowReconfiguration      Flag indicting whether reconfiguration is allowed or not
-     * @param kafkaConfigProvider       Kafka configuration provider
-     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure
-     * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once
-     * @param maxRestarts               The maximum number of restart that can be done for a node
-     * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
-     * @param maxAttempts               The maximum number to operational attempt that can be done for a node
-     * @param eventPublisher            Kubernetes Events publisher for publishing events about node restarts
+     * @param reconciliation           Reconciliation marker
+     * @param podOperator              Pod operator for managing pods
+     * @param pollingIntervalMs        The maximum number of restart that can be done for a node
+     * @param postOperationTimeoutMs   The maximum time in milliseconds to wait after a restart or reconfigure
+     * @param backOffSupplier          Backoff supplier
+     * @param nodes                    The nodes (not all of which may need restarting).
+     * @param coTlsPemIdentity         Cluster operator PEM identity
+     * @param adminClientProvider      Kafka Admin client provider
+     * @param kafkaAgentClientProvider Kafka Agent client provider
+     * @param predicate                The predicate used to determine whether to restart a particular node
+     * @param kafkaConfigProvider      Kafka configuration provider
+     * @param kafkaVersion             Kafka version
+     * @param allowReconfiguration     Flag indicting whether reconfiguration is allowed or not
+     * @param maxReconfigs             The maximum number of reconfiguration that can be done for a node
+     * @param maxRestartBatchSize      The maximum number of nodes that might be restarted at once
+     * @param eventPublisher           Kubernetes Events publisher for publishing events about node restarts
      * @return RackRolling instance
      */
-    public static RackRolling rollingRestart(PodOperator podOperator,
-                                             Collection<NodeRef> nodes,
-                                             Reconciliation reconciliation,
-                                             Function<Pod, RestartReasons> predicate,
-                                             TlsPemIdentity coTlsPemIdentity,
-                                             AdminClientProvider adminClientProvider,
-                                             KafkaAgentClientProvider kafkaAgentClientProvider,
-                                             Function<Integer, String> kafkaConfigProvider,
-                                             boolean allowReconfiguration,
-                                             KafkaVersion kafkaVersion,
-                                             long postOperationTimeoutMs,
-                                             int maxRestartBatchSize,
-                                             int maxRestarts,
-                                             int maxReconfigs,
-                                             int maxAttempts,
-                                             KubernetesRestartEventPublisher eventPublisher) {
+    public static RackRolling initialise(Reconciliation reconciliation,
+                                         PodOperator podOperator,
+                                         long pollingIntervalMs,
+                                         long postOperationTimeoutMs,
+                                         Supplier<BackOff> backOffSupplier,
+                                         Collection<NodeRef> nodes,
+                                         TlsPemIdentity coTlsPemIdentity,
+                                         AdminClientProvider adminClientProvider,
+                                         KafkaAgentClientProvider kafkaAgentClientProvider,
+                                         Function<Pod, RestartReasons> predicate,
+                                         Function<Integer, String> kafkaConfigProvider,
+                                         KafkaVersion kafkaVersion,
+                                         boolean allowReconfiguration,
+                                         int maxReconfigs,
+                                         int maxRestartBatchSize,
+                                         KubernetesRestartEventPublisher eventPublisher) {
         PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, postOperationTimeoutMs, eventPublisher);
         Time time = Time.SYSTEM_TIME;
-        final var contexts = nodes.stream().map(node -> Context.start(node, platformClient.nodeRoles(node), predicate, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
+        final var contexts = nodes.stream().map(node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
 
         RollClient rollClient = new RollClientImpl(reconciliation, coTlsPemIdentity, adminClientProvider);
         AgentClient agentClient = new AgentClientImpl(kafkaAgentClientProvider.createKafkaAgentClient(reconciliation, coTlsPemIdentity));
 
         return new RackRolling(time,
+                reconciliation,
+                pollingIntervalMs,
+                postOperationTimeoutMs,
+                maxRestartBatchSize,
+                maxReconfigs,
+                contexts,
                 platformClient,
                 rollClient,
                 agentClient,
-                reconciliation,
-                kafkaVersion,
-                allowReconfiguration,
-                kafkaConfigProvider,
-                postOperationTimeoutMs,
-                maxRestartBatchSize,
-                maxRestarts,
-                maxReconfigs,
-                maxAttempts,
-                contexts);
+                kafkaConfigProvider, kafkaVersion,
+                allowReconfiguration
+        );
     }
 
     // visible for testing
-    protected static RackRolling rollingRestart(Time time,
-                                                PlatformClient platformClient,
-                                                RollClient rollClient,
-                                                AgentClient agentClient,
-                                                Collection<NodeRef> nodes,
-                                                PodOperator podOperator,
-                                                Function<Pod, RestartReasons> predicate,
-                                                Reconciliation reconciliation,
-                                                KafkaVersion kafkaVersion,
-                                                boolean allowReconfiguration,
-                                                Function<Integer, String> kafkaConfigProvider,
-                                                long postOperationTimeoutMs,
-                                                int maxRestartBatchSize,
-                                                int maxRestarts,
-                                                int maxReconfigs,
-                                                int maxAttempts) {
-        final var contexts = nodes.stream().map(node -> Context.start(node, platformClient.nodeRoles(node), predicate, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
+    protected static RackRolling initialise(Time time,
+                                            PlatformClient platformClient,
+                                            RollClient rollClient,
+                                            AgentClient agentClient,
+                                            Collection<NodeRef> nodes,
+                                            PodOperator podOperator,
+                                            Function<Pod, RestartReasons> predicate,
+                                            Reconciliation reconciliation,
+                                            KafkaVersion kafkaVersion,
+                                            boolean allowReconfiguration,
+                                            Function<Integer, String> kafkaConfigProvider,
+                                            long postOperationTimeoutMs,
+                                            long pollingIntervalMs,
+                                            int maxRestartBatchSize,
+                                            int maxReconfigs,
+                                            Supplier<BackOff> backOffSupplier) {
+        final var contexts = nodes.stream().map(node -> Context.start(node, platformClient.nodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
 
         return new RackRolling(time,
+                reconciliation,
+                pollingIntervalMs,
+                postOperationTimeoutMs,
+                maxRestartBatchSize,
+                maxReconfigs,
+                contexts,
                 platformClient,
                 rollClient,
                 agentClient,
-                reconciliation,
-                kafkaVersion,
-                allowReconfiguration,
                 kafkaConfigProvider,
-                postOperationTimeoutMs,
-                maxRestartBatchSize,
-                maxRestarts,
-                maxReconfigs,
-                maxAttempts,
-                contexts);
+                kafkaVersion,
+                allowReconfiguration
+        );
     }
 
     private final Time time;
@@ -174,41 +175,38 @@ public class RackRolling {
     private final Function<Integer, String> kafkaConfigProvider;
     private final long postOperationTimeoutMs;
     private final int maxRestartBatchSize;
-    private final int maxRestarts;
+    private final long pollingIntervalMs;
     private final int maxReconfigs;
-    private final int maxAttempts;
 
     /**
      * Constructor for RackRolling instance
-     * @param time                      initial time to set for context
-     * @param platformClient            client for platform calls
-     * @param rollClient               client for kafka cluster admin calls
-     * @param agentClient               client for kafka agent calls
-     * @param reconciliation            Reconciliation marker
-     * @param kafkaVersion              Kafka version
-     * @param allowReconfiguration      Flag indicting whether reconfiguration is allowed or not
-     * @param kafkaConfigProvider       Kafka configuration provider
-     * @param postOperationTimeoutMs    The maximum time in milliseconds to wait after a restart or reconfigure
-     * @param maxRestartBatchSize       The maximum number of nodes that might be restarted at once
-     * @param maxRestarts               The maximum number of restart that can be done for a node
-     * @param maxReconfigs              The maximum number of reconfiguration that can be done for a node
-     * @param maxAttempts               The maximum number to operational attempt that can be done for a node
-     * @param contexts                  List of context for each node
+     *
+     * @param time                   initial time to set for context
+     * @param reconciliation         Reconciliation marker
+     * @param pollingIntervalMs      The maximum number of restart that can be done for a node
+     * @param postOperationTimeoutMs The maximum time in milliseconds to wait after a restart or reconfigure
+     * @param maxRestartBatchSize    The maximum number of nodes that might be restarted at once
+     * @param maxReconfigs           The maximum number of reconfiguration that can be done for a node
+     * @param contexts               List of context for each node
+     * @param platformClient         client for platform calls
+     * @param rollClient             client for kafka cluster admin calls
+     * @param agentClient            client for kafka agent calls
+     * @param kafkaConfigProvider    Kafka configuration provider
+     * @param kafkaVersion           Kafka version
+     * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
      */
     public RackRolling(Time time,
+                       Reconciliation reconciliation,
+                       long pollingIntervalMs,
+                       long postOperationTimeoutMs,
+                       int maxRestartBatchSize,
+                       int maxReconfigs, List<Context> contexts,
                        PlatformClient platformClient,
                        RollClient rollClient,
                        AgentClient agentClient,
-                       Reconciliation reconciliation,
+                       Function<Integer, String> kafkaConfigProvider,
                        KafkaVersion kafkaVersion,
-                       boolean allowReconfiguration,
-                       Function<java.lang.Integer, String> kafkaConfigProvider,
-                       long postOperationTimeoutMs,
-                       int maxRestartBatchSize,
-                       int maxRestarts,
-                       int maxReconfigs,
-                       int maxAttempts,
-                       List<Context> contexts) {
+                       boolean allowReconfiguration) {
         this.time = time;
         this.platformClient = platformClient;
         this.rollClient = rollClient;
@@ -218,10 +216,9 @@ public class RackRolling {
         this.kafkaConfigProvider = kafkaConfigProvider;
         this.postOperationTimeoutMs = postOperationTimeoutMs;
         this.maxRestartBatchSize = maxRestartBatchSize;
-        this.maxRestarts = maxRestarts;
+        this.pollingIntervalMs = pollingIntervalMs;
         this.maxReconfigs = maxReconfigs;
         this.contexts = contexts;
-        this.maxAttempts = maxAttempts;
         this.allowReconfiguration = allowReconfiguration;
     }
 
@@ -231,7 +228,7 @@ public class RackRolling {
      * @param vertx Vertx instance
      * @return a future based on the rolling outcome.
      */
-    public Future<Void> executeRollingAsync(
+    public Future<Void> rollingRestart(
             Vertx vertx) {
 
         Promise<Void> result = Promise.promise();
@@ -323,7 +320,7 @@ public class RackRolling {
                     (c, e) -> LOGGER.debugCr(reconciliation, "Waited for node {} to become ready before initialising plan in case they just started", c));
 
             var byPlan = initialPlan(contexts, rollClient);
-            LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan.entrySet().stream().map(plan -> String.format("\n %s=%s", plan.getKey(), plan.getValue())).collect(Collectors.toSet()));
+            LOGGER.debugCr(reconciliation, "Initial plan: {}", byPlan.entrySet().stream().map(plan -> String.format("%s=%s %n", plan.getKey(), plan.getValue())).collect(Collectors.toSet()));
 
             if (!byPlan.getOrDefault(Action.WAIT_FOR_LOG_RECOVERY, List.of()).isEmpty()) {
                 return waitForLogRecovery(byPlan.get(Action.WAIT_FOR_LOG_RECOVERY));
@@ -353,7 +350,7 @@ public class RackRolling {
                         maybeConfigureNodes,
                         nodeConfigs,
                         byPlan);
-                LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan.entrySet().stream().map(plan -> String.format("\n %s=%s", plan.getKey(), plan.getValue())).collect(Collectors.toSet()));
+                LOGGER.debugCr(reconciliation, "Refined plan: {}", byPlan.entrySet().stream().map(plan -> String.format("%s=%s %n", plan.getKey(), plan.getValue())).collect(Collectors.toSet()));
             }
 
             // Reconfigure any reconfigurable nodes
@@ -425,7 +422,7 @@ public class RackRolling {
         long remainingTimeoutMs = postOperationTimeoutMs;
         for (Context context : contexts) {
             try {
-                remainingTimeoutMs = awaitReadyState(reconciliation, time, platformClient, agentClient, context, remainingTimeoutMs);
+                remainingTimeoutMs = awaitReadyState(context, remainingTimeoutMs);
             } catch (TimeoutException e) {
                 timeoutHandler.accept(context, e);
             }
@@ -433,18 +430,13 @@ public class RackRolling {
         return contexts.stream().map(Context::nodeId).collect(Collectors.toList());
     }
 
-    private static long awaitReadyState(Reconciliation reconciliation,
-                                        Time time,
-                                        PlatformClient platformClient,
-                                        AgentClient agentClient,
-                                        Context context,
-                                        long timeoutMs) throws TimeoutException {
+    private long awaitReadyState(Context context, long timeoutMs) throws TimeoutException {
         LOGGER.debugCr(reconciliation, "Node {}: Waiting for node to enter state {}", context, State.READY);
         return Alarm.timer(
                 time,
                 timeoutMs,
                 () -> "Failed to reach " + State.READY + " within " + timeoutMs + " ms: " + context
-        ).poll(1_000, () -> {
+        ).poll(pollingIntervalMs, () -> {
             var state = context.transitionTo(observe(reconciliation, platformClient, agentClient, context.nodeRef()), time);
             return state == State.READY;
         });
@@ -481,15 +473,18 @@ public class RackRolling {
     }
 
     private List<Integer> waitForLogRecovery(List<Context> contexts) {
-        return waitForNodeReadiness(contexts, (c, e) -> {
+        List<Long> delay = new ArrayList<>();
+        List<Integer> nodesInRecovery = waitForNodeReadiness(contexts, (c, e) -> {
             var brokerState = agentClient.getBrokerState(c.nodeRef());
-            LOGGER.debugCr(reconciliation, "Node {} is still in log recovery. There are {} logs and {} segments left to recover.", c.nodeRef(), brokerState.remainingLogsToRecover(), brokerState.remainingSegmentsToRecover());
-            if (c.numAttempts() >= maxAttempts) {
-                throw new MaxAttemptsExceededException("The max attempts (" + maxAttempts + ") to wait for this node "  +  c.nodeRef() + " to finish performing log recovery has been reached. " +
+            if (c.backOff().done()) {
+                throw new MaxAttemptsExceededException("The max attempts (" + c.backOff().maxAttempts() + ") to wait for this node "  +  c.nodeRef() + " to finish performing log recovery has been reached. " +
                         "There are " + brokerState.remainingLogsToRecover() + " logs and " + brokerState.remainingSegmentsToRecover() + " segments left to recover.");
             }
-            c.incrementNumAttempts();
+            delay.add(c.backOff().delayMs());
         });
+        Collections.sort(delay);
+        time.sleep(delay.get(delay.size() - 1), 0);
+        return nodesInRecovery;
     }
 
     private List<Integer> restartUnhealthyNodes(List<Context> contexts) {
@@ -525,7 +520,7 @@ public class RackRolling {
 
         if (!notRunningControllers.isEmpty()) {
             LOGGER.debugCr(reconciliation, "There are multiple controllers {} that are not running, which runs a risk of losing the quorum. Restarting them in parallel", notRunningControllers);
-            restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, notRunningControllers, postOperationTimeoutMs, maxRestarts);
+            restartInParallel(notRunningControllers);
             return notRunningControllers.stream().map(Context::nodeId).collect(Collectors.toList());
         }
 
@@ -534,28 +529,21 @@ public class RackRolling {
                 : !combinedNodesToRestart.isEmpty() ? combinedNodesToRestart.iterator().next()
                 : contexts.get(0);
 
-        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, Collections.singleton(nodeToRestart), postOperationTimeoutMs, maxRestarts);
+        restartInParallel(Collections.singleton(nodeToRestart));
         return Collections.singletonList(nodeToRestart.nodeId());
     }
 
-    private void restartInParallel(Reconciliation reconciliation,
-                                   Time time,
-                                   PlatformClient platformClient,
-                                   RollClient rollClient,
-                                   AgentClient agentClient,
-                                   Set<Context> batch,
-                                   long timeoutMs,
-                                   int maxRestarts) {
+    private void restartInParallel(Set<Context> batch) {
         for (Context context : batch) {
-            restartNode(reconciliation, time, platformClient, context, maxRestarts);
+            restartNode(context);
         }
         //TODO: Apply post restart delay here
-        long remainingTimeoutMs = timeoutMs;
+        long remainingTimeoutMs = postOperationTimeoutMs;
         for (Context context : batch) {
             try {
-                remainingTimeoutMs = awaitReadyState(reconciliation, time, platformClient, agentClient, context, remainingTimeoutMs);
+                remainingTimeoutMs = awaitReadyState(context, remainingTimeoutMs);
                 if (context.currentRoles().broker()) {
-                    awaitPreferred(reconciliation, time, rollClient, context, remainingTimeoutMs);
+                    awaitPreferred(context, remainingTimeoutMs);
                 }
             } catch (TimeoutException e) {
                 throw new UnrestartableNodesException("Timed out waiting for restarted pod " + context.nodeRef().podName() + " to become ready", e);
@@ -563,14 +551,7 @@ public class RackRolling {
         }
     }
 
-    private static void restartNode(Reconciliation reconciliation,
-                                    Time time,
-                                    PlatformClient platformClient,
-                                    Context context,
-                                    int maxRestarts) {
-        if (context.numRestarts() >= maxRestarts) {
-            throw new MaxRestartsExceededException("Node " + context.nodeRef() + " has been restarted " + maxRestarts + " times");
-        }
+    private void restartNode(Context context) {
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context.nodeRef());
         try {
             platformClient.restartNode(context.nodeRef(), context.reason());
@@ -582,11 +563,7 @@ public class RackRolling {
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context.nodeRef());
     }
 
-    private static void awaitPreferred(Reconciliation reconciliation,
-                                       Time time,
-                                       RollClient rollClient,
-                                       Context context,
-                                       long timeoutMs) {
+    private void awaitPreferred(Context context, long timeoutMs) {
         // TODO: apply configured delay (via env variable) before triggering leader election.
         //  This should be probably passed to tryElectAllPreferredLeaders so that delay is only applied
         //  if there are topic partitions to elect, otherwise no point of delaying the process
@@ -596,7 +573,7 @@ public class RackRolling {
             Alarm.timer(time,
                             timeoutMs,
                             () -> "Failed to elect the preferred leader " + context + " for topic partitions within " + timeoutMs)
-                    .poll(1_000, () -> rollClient.tryElectAllPreferredLeaders(context.nodeRef()) == 0);
+                    .poll(pollingIntervalMs, () -> rollClient.tryElectAllPreferredLeaders(context.nodeRef()) == 0);
         } catch (TimeoutException e) {
             LOGGER.warnCr(reconciliation, "Timed out waiting for node to be leader for all its preferred replicas");
         } catch (Exception e) {
@@ -620,6 +597,7 @@ public class RackRolling {
             // Fail the reconciliation if we cannot get configurations for nodes.
             // This will trigger a new reconciliation which will check Admin client connections to the nodes and restart them if needed.
             // TODO: Can there be situations where Admin client connection works for all nodes but the describe requests keep failing? Could we end up in a failed reconciliation loop?
+            //  Do we increment the attempt for all of them?
             //  Possible exceptions: InvalidRequestException, ClusterAuthorizationException, UnsupportedVersionException, TimeoutException, UnknownBrokerExceptions/ConfigResourceNotFoundException
             //  I don't think these exceptions should trigger node restart anyway, but likely need to be fixed outside of the reconciliation, therefore makes sense to fail the reconciliation at this point.
             //  Currently the roller describes one broker at a time. Then marks the broker to restart immediately if the request failed. Is that we should do? Or should retrieve which broker it failed for?
@@ -713,23 +691,26 @@ public class RackRolling {
 
         // Empty batch means, there is no node that can safely restarted without violating quorum health or availability.
         if (batch.isEmpty()) {
+            List<Long> delay = new ArrayList<>();
+
             // check if the maxAttempt for any of the nodes has reached
             nodesToRestart.forEach(c -> {
-                if (c.numAttempts() >= maxAttempts) {
+                if (c.backOff().done()) {
                     throw new MaxAttemptsExceededException("Cannot restart nodes " + nodesToRestart.stream().map(Context::nodeRef).toList() +
                             " because they violate quorum health or topic availability. " +
-                            "The max attempts (" + maxAttempts + ") to retry the nodes has been reached.");
+                            "The max attempts (" + c.backOff().maxAttempts() + ") to retry the nodes has been reached.");
                 }
-                //TODO: Do we apply delay here before re-attempting them? The current roller has backoff delay.
-                c.incrementNumAttempts();
+                delay.add(c.backOff().delayMs());
             });
+            Collections.sort(delay);
             // sleep and retry the nodes
-            time.sleep(postOperationTimeoutMs, 0);
+            time.sleep(delay.get(delay.size() - 1), 0);
+
             return nodesToRestart.stream().map(Context::nodeId).collect(Collectors.toList());
         }
 
         // restart a batch
-        restartInParallel(reconciliation, time, platformClient, rollClient, agentClient, batch, postOperationTimeoutMs, maxRestarts);
+        restartInParallel(batch);
         return batch.stream().map(Context::nodeId).collect(Collectors.toList());
     }
 

@@ -12,6 +12,7 @@ import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
+import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.Config;
@@ -344,10 +345,7 @@ public class RackRollingTest {
                                 Function<Integer, String> kafkaConfigProvider,
                                 boolean allowReconfiguration,
                                 int maxRestartsBatchSize) {
-
-
-
-        return RackRolling.rollingRestart(time,
+        return RackRolling.initialise(time,
                 platformClient,
                 rollClient,
                 agentClient,
@@ -359,10 +357,10 @@ public class RackRollingTest {
                 allowReconfiguration,
                 kafkaConfigProvider,
                 1_000,
+                500,
                 maxRestartsBatchSize,
                 1,
-                1,
-                3);
+                () -> new BackOff(10L, 2, 3));
     }
 
 
@@ -372,10 +370,9 @@ public class RackRollingTest {
                                   Collection<NodeRef> nodeRefList,
                                   Function<Pod, RestartReasons> reason,
                                   Function<Integer, String> kafkaConfigProvider,
-                                  int maxRestartsBatchSize,
-                                  int maxRestart) throws ExecutionException, InterruptedException {
+                                  int maxRestartsBatchSize) throws ExecutionException, InterruptedException {
 
-        var rr = RackRolling.rollingRestart(time,
+        var rr = RackRolling.initialise(time,
                 platformClient,
                 rollClient,
                 agentClient,
@@ -387,10 +384,11 @@ public class RackRollingTest {
                 true,
                 kafkaConfigProvider,
                 120_000,
+                500,
                 maxRestartsBatchSize,
-                maxRestart,
                 1,
-                3);
+                () -> new BackOff(10L, 2, 3));
+
         List<Integer> nodes;
         do {
             nodes = rr.loop();
@@ -505,7 +503,7 @@ public class RackRollingTest {
                 .mockDescribeConfigs(rollClient, Set.of(), 0)
                 .done().get(0);
 
-        doRollingRestart(platformClient, rollClient, null, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1, 1);
+        doRollingRestart(platformClient, rollClient, null, List.of(nodeRef), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 1);
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), anyBoolean());
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRef), any());
@@ -705,8 +703,8 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::noReasons,
                 nodeId -> "min.insync.replicas=2",
-                1,
-                1);
+                1
+        );
 
         for (var nodeRef : nodeRefs.values()) {
             Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
@@ -715,38 +713,6 @@ public class RackRollingTest {
                 Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
             }
         }
-    }
-
-    @Test
-    void shouldThrowMaxRestartsExceeded() {
-        PlatformClient platformClient = mock(PlatformClient.class);
-        RollClient rollClient = mock(RollClient.class);
-        var nodeRefs = new MockBuilder()
-                .addNodes(platformClient, false, true, 0)
-                .addNodes(platformClient, false, true, 1)
-                .addNodes(platformClient, false, true, 2)
-                .addTopic("topic-A", 0, List.of(0, 1, 2), List.of(0, 1, 2), 2)
-                .mockHealthyNodes(platformClient, 0, 1, 2)
-                .mockTopics(rollClient)
-                .mockDescribeConfigs(rollClient, Set.of(), 0)
-                .done();
-
-        var ex = assertThrows(MaxRestartsExceededException.class,
-                () -> doRollingRestart(platformClient,
-                        rollClient,
-                        null,
-                        nodeRefs.values(),
-                        RackRollingTest::podUnresponsive,
-                        EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        3));
-
-        assertEquals("Node pool-kafka-0/0 has been restarted 3 times", ex.getMessage());
-        Mockito.verify(platformClient, times(3)).restartNode(eq(nodeRefs.get(0)), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
-        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(2)), any());
-        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
-        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(2)));
     }
 
     @Test
@@ -839,7 +805,7 @@ public class RackRollingTest {
                 .done();
 
         assertThrows(MaxAttemptsExceededException.class, () ->
-                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3, 1),
+                        doRollingRestart(platformClient, rollClient, agentClient, nodeRefs.values(), RackRollingTest::manualRolling, EMPTY_CONFIG_SUPPLIER, 3),
                 "Cannot restart nodes [pool-kafka-1/1] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.");
         //only the controller that has fallen behind should be restarted
         Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(2)), any());
@@ -912,8 +878,8 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::noReasons,
                 EMPTY_CONFIG_SUPPLIER,
-                1,
-                1);
+                1
+        );
 
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), anyBoolean());
         Mockito.verify(platformClient, never()).restartNode(any(), any());
@@ -921,7 +887,7 @@ public class RackRollingTest {
     }
 
     @Test
-    void shouldNotRestartWhenNotReadyAfterRestart() {
+    void shouldThrowUnrestartableNodesExceptionWhenNotReadyAfterRestart() {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
@@ -942,8 +908,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         assertEquals("Timed out waiting for restarted pod pool-kafka-0 to become ready", ex.getMessage());
 
@@ -955,13 +921,13 @@ public class RackRollingTest {
     }
 
     @Test
-    void shouldNotRestartWhenNotReadyNoReason() {
+    void shouldThrowUnrestartableNodesExceptionWhenNotReadyNoReason() {
         PlatformClient platformClient = mock(PlatformClient.class);
         RollClient rollClient = mock(RollClient.class);
         var nodeRefs = new MockBuilder()
-                .addNodes(platformClient, true, false, 0)
-                .addNodes(platformClient, true, false, 1)
-                .addNodes(platformClient, true, true, 2)
+                .addNodes(platformClient, false, true, 0)
+                .addNodes(platformClient, false, true, 1)
+                .addNodes(platformClient, false, true, 2)
                 .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
                 .mockHealthyNodes(platformClient, 1, 2)
                 .mockSuccessfulConnection(rollClient, 0, 1, 2)
@@ -976,14 +942,82 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::noReasons,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         assertEquals("Timed out waiting for non-restarted pod pool-kafka-0 to become ready", ex.getMessage());
 
         Mockito.verify(platformClient, never()).restartNode(any(), any());
         Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), anyBoolean());
         Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
+    }
+
+    @Test
+    void shouldThrowUnrestartableNodesExceptionWhenNotReadyWithReason() {
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(platformClient, false, true, 0)
+                .addNodes(platformClient, false, true, 1)
+                .addNodes(platformClient, false, true, 2)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_READY), 0)
+                .mockHealthyNodes(platformClient, 1, 2)
+                .mockSuccessfulConnection(rollClient, 0, 1, 2)
+                .mockTopics(rollClient)
+                .mockDescribeConfigs(rollClient, Set.of(), 0, 1, 2)
+                .done();
+
+        var ex = assertThrows(UnrestartableNodesException.class,
+                () -> doRollingRestart(platformClient,
+                        rollClient,
+                        null,
+                        nodeRefs.values(),
+                        RackRollingTest::podUnresponsive,
+                        EMPTY_CONFIG_SUPPLIER,
+                        1
+                ));
+
+        assertEquals("Timed out waiting for restarted pod pool-kafka-0 to become ready", ex.getMessage());
+
+        Mockito.verify(platformClient, times(1)).restartNode(eq(nodeRefs.get(0)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(2)), any());
+        Mockito.verify(rollClient, never()).reconfigureNode(any(), any(), anyBoolean());
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(any());
+    }
+
+    @Test
+    void shouldNotRestartNotRunningNodeWhenDoesNotHaveOldRevision() {
+        PlatformClient platformClient = mock(PlatformClient.class);
+        RollClient rollClient = mock(RollClient.class);
+        var nodeRefs = new MockBuilder()
+                .addNodes(platformClient, false, true, 0)
+                .addNodes(platformClient, false, true, 1)
+                .addNodes(platformClient, false, true, 2)
+                .addTopic("topic-A", 0, List.of(0, 1, 2), List.of(0, 1, 2), 2)
+                .mockNodeState(platformClient, List.of(PlatformClient.NodeState.NOT_RUNNING), 0)
+                .mockHealthyNodes(platformClient, 1, 2)
+                .mockTopics(rollClient)
+                .mockDescribeConfigs(rollClient, Set.of(), 0)
+                .done();
+
+        var ex = assertThrows(UnrestartableNodesException.class,
+                () -> doRollingRestart(platformClient,
+                        rollClient,
+                        null,
+                        nodeRefs.values(),
+                        RackRollingTest::podUnresponsive,
+                        EMPTY_CONFIG_SUPPLIER,
+                        1
+                ));
+
+        assertEquals("Pod pool-kafka-0 is unschedulable or is not starting", ex.getMessage());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(0)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(1)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(2)), any());
+        Mockito.verify(platformClient, never()).restartNode(eq(nodeRefs.get(0)), any());
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
+        Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(2)));
     }
 
     @Test
@@ -1010,8 +1044,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // The active controller and the up-to-date follower should not be restarted but fallen-behind follower can be restarted as doesn't impact the quorum health
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.", ex.getMessage());
@@ -1043,8 +1077,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // The partition leader and in sync replica should not be restarted but out of sync replica can be restarted as doesn't impact the availability
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.", ex.getMessage());
@@ -1078,8 +1112,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // The partition leader and in sync replica should not be restarted but out of sync replica can be restarted as doesn't impact the availability
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.", ex.getMessage());
@@ -1113,8 +1147,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // The partition leader and in sync replica should not be restarted but out of sync replica can be restarted as doesn't impact the availability
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.", ex.getMessage());
@@ -1152,8 +1186,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         assertEquals("The max attempts (3) to wait for this node pool-kafka-2/2 to finish performing log recovery has been reached. There are 100 logs and 300 segments left to recover.",
                 ex.getMessage());
@@ -1190,8 +1224,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         assertEquals("The max attempts (3) to wait for this node pool-kafka-2/2 to finish performing log recovery has been reached. There are 100 logs and 300 segments left to recover.",
                 ex.getMessage());
@@ -1220,8 +1254,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // we should not restart any controllers as the majority have not caught up to the leader
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1, pool-kafka-2/2, pool-kafka-4/4] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.",
@@ -1251,8 +1285,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // we should not restart any controllers as the majority have not caught up to the leader
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1, pool-kafka-2/2] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.",
@@ -1285,8 +1319,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::manualRolling,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         // we should not restart any controllers as the majority have not caught up to the leader
         assertEquals("Cannot restart nodes [pool-kafka-0/0, pool-kafka-1/1, pool-kafka-2/2] because they violate quorum health or topic availability. The max attempts (3) to retry the nodes has been reached.",
@@ -1381,8 +1415,8 @@ public class RackRollingTest {
                 nodeRefs.values(),
                 RackRollingTest::noReasons,
                 nodeId -> "min.insync.replicas=2",
-                1,
-                1);
+                1
+        );
 
         for (var nodeRef : nodeRefs.values()) {
             Mockito.verify(rollClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
@@ -1418,8 +1452,8 @@ public class RackRollingTest {
                         nodeRefs.values(),
                         RackRollingTest::noReasons,
                         EMPTY_CONFIG_SUPPLIER,
-                        1,
-                        1));
+                        1
+                ));
 
         assertEquals("Error getting Kafka config", ex.getMessage());
 
