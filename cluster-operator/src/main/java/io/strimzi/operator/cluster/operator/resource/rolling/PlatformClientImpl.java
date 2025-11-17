@@ -4,6 +4,8 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
+import io.fabric8.kubernetes.api.model.ContainerStateWaiting;
+import io.fabric8.kubernetes.api.model.ContainerStatus;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
@@ -12,6 +14,7 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -43,6 +46,7 @@ public class PlatformClientImpl implements PlatformClient {
     public NodeState nodeState(NodeRef nodeRef) {
         var pod = podOps.get(namespace, nodeRef.podName());
         if (pod == null) {
+            // TODO: Throw a different error to retry this node rather than fail immediately,
             throw new UnrestartableNodesException("Pod " + nodeRef.podName() + " does not exist: ");
         } else if (pod.getStatus() == null) {
             return NodeState.NOT_RUNNING;
@@ -60,14 +64,18 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     private static boolean hasWaitingContainerWithReason(Pod pod, Set<String> reasons) {
-        return pod.getStatus().getContainerStatuses().stream().anyMatch(cs -> {
-            if (cs.getState() != null && cs.getState().getWaiting() != null) {
-                var waitingReason = cs.getState().getWaiting().getReason();
-                return reasons.contains(waitingReason);
-            } else {
-                return false;
+        if (pod.getStatus() != null) {
+            Optional<ContainerStatus> kafkaContainerStatus = pod.getStatus().getContainerStatuses().stream()
+                    .filter(containerStatus -> containerStatus.getName().equals("kafka")).findFirst();
+
+            if (kafkaContainerStatus.isPresent()) {
+                ContainerStateWaiting waiting = kafkaContainerStatus.get().getState().getWaiting();
+                if (waiting != null) {
+                    return reasons.contains(waiting.getReason());
+                }
             }
-        });
+        }
+        return false;
     }
 
     private static boolean pendingAndUnschedulable(Pod pod) {

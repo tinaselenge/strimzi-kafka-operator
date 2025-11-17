@@ -569,6 +569,7 @@ public class RackRolling {
                                     Context context,
                                     int maxRestarts) {
         if (context.numRestarts() >= maxRestarts) {
+            //TODO: remove MaxRestartsExceededException
             throw new MaxRestartsExceededException("Node " + context.nodeRef() + " has been restarted " + maxRestarts + " times");
         }
         LOGGER.debugCr(reconciliation, "Node {}: Restarting", context.nodeRef());
@@ -577,6 +578,7 @@ public class RackRolling {
         } catch (RuntimeException e) {
             LOGGER.warnCr(reconciliation, "An exception thrown during the restart of the node {}", context.nodeRef(), e);
         }
+        //TODO: increment normal attempt
         context.incrementNumRestarts();
         context.transitionTo(State.UNKNOWN, time);
         LOGGER.debugCr(reconciliation, "Node {}: Restarted", context.nodeRef());
@@ -620,6 +622,7 @@ public class RackRolling {
             // Fail the reconciliation if we cannot get configurations for nodes.
             // This will trigger a new reconciliation which will check Admin client connections to the nodes and restart them if needed.
             // TODO: Can there be situations where Admin client connection works for all nodes but the describe requests keep failing? Could we end up in a failed reconciliation loop?
+            //  Do we increment the attempt for all of them?
             //  Possible exceptions: InvalidRequestException, ClusterAuthorizationException, UnsupportedVersionException, TimeoutException, UnknownBrokerExceptions/ConfigResourceNotFoundException
             //  I don't think these exceptions should trigger node restart anyway, but likely need to be fixed outside of the reconciliation, therefore makes sense to fail the reconciliation at this point.
             //  Currently the roller describes one broker at a time. Then marks the broker to restart immediately if the request failed. Is that we should do? Or should retrieve which broker it failed for?
