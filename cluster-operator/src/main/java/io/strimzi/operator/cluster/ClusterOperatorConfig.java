@@ -150,6 +150,7 @@ public class ClusterOperatorConfig {
      */
     public static final ConfigParameter<Long> OPERATION_TIMEOUT_MS = new ConfigParameter<>("STRIMZI_OPERATION_TIMEOUT_MS", LONG, "300000", CONFIG_VALUES);
 
+    //TODO: should this be a configuration per Kafka cluster rather than CO configuration that applies to all the managed clusters?
     /**
      * The maximum number of broker nodes that can be restarted at once
      */
