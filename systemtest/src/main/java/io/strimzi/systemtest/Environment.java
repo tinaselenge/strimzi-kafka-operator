@@ -136,6 +136,11 @@ public class Environment {
     public static final String STRIMZI_FEATURE_GATES_ENV = "STRIMZI_FEATURE_GATES";
 
     /**
+     * CO batch size environment
+     */
+    public static final String STRIMZI_MAX_RESTART_BATCH_SIZE_ENV = "STRIMZI_MAX_RESTART_BATCH_SIZE";
+
+    /**
      * CO PodSet-only reconciliation env variable <br>
      * Only SPS will be reconciled, when this env variable will be true
      */

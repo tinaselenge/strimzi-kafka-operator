@@ -132,11 +132,11 @@ public class KafkaAgentClient {
             URI uri = new URI("https", null, host, KAFKA_AGENT_HTTPS_PORT, BROKER_STATE_REST_PATH, null, null);
             brokerstate = MAPPER.readValue(doGet(uri), BrokerState.class);
         } catch (JsonProcessingException e) {
-            LOGGER.warnCr(reconciliation, "Failed to parse broker state", e);
+            LOGGER.warnCr(reconciliation, "Failed to parse broker state for {}", podName, e);
         } catch (URISyntaxException e) {
-            LOGGER.warnCr(reconciliation, "Failed to get broker state due to invalid URI", e);
+            LOGGER.warnCr(reconciliation, "Failed to get broker state for {} due to invalid URI", podName, e);
         } catch (RuntimeException e) {
-            LOGGER.warnCr(reconciliation, "Failed to get broker state", e);
+            LOGGER.warnCr(reconciliation, "Failed to get broker state for {}", podName, e);
         }
         return brokerstate;
     }

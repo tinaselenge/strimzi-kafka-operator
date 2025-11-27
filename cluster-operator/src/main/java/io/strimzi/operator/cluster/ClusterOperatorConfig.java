@@ -150,6 +150,12 @@ public class ClusterOperatorConfig {
      */
     public static final ConfigParameter<Long> OPERATION_TIMEOUT_MS = new ConfigParameter<>("STRIMZI_OPERATION_TIMEOUT_MS", LONG, "300000", CONFIG_VALUES);
 
+    //TODO: should this be a configuration per Kafka cluster rather than CO configuration that applies to all the managed clusters?
+    /**
+     * The maximum number of broker nodes that can be restarted at once
+     */
+    public static final ConfigParameter<Integer> MAX_RESTART_BATCH_SIZE = new ConfigParameter<>("STRIMZI_MAX_RESTART_BATCH_SIZE", INTEGER, "1", CONFIG_VALUES);
+
     /**
      * Timeout used to wait for a Kafka Connect builds to finish
      */
@@ -461,6 +467,13 @@ public class ClusterOperatorConfig {
      */
     public long getOperationTimeoutMs() {
         return get(OPERATION_TIMEOUT_MS);
+    }
+
+    /**
+     * @return  how many broker nodes can be restarted in parallel
+     */
+    public int getMaxRestartBatchSize() {
+        return get(MAX_RESTART_BATCH_SIZE);
     }
 
     /**

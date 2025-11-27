@@ -199,7 +199,7 @@ public class KafkaConfigurationDiff extends AbstractJsonDiff {
      * @param isController      Whether node has a controller role
      * @param isBroker          Whether node has a broker role
      */
-    protected KafkaConfigurationDiff(Reconciliation reconciliation, Config nodeConfigs, String desired, KafkaVersion kafkaVersion, NodeRef nodeRef, boolean isController, boolean isBroker) {
+    public KafkaConfigurationDiff(Reconciliation reconciliation, Config nodeConfigs, String desired, KafkaVersion kafkaVersion, NodeRef nodeRef, boolean isController, boolean isBroker) {
         this.reconciliation = reconciliation;
         this.configModel = KafkaConfiguration.readConfigModel(kafkaVersion);
         this.isController = isController;
@@ -210,7 +210,7 @@ public class KafkaConfigurationDiff extends AbstractJsonDiff {
     /**
      * @return  Returns true if the configuration can be updated dynamically
      */
-    protected boolean canBeUpdatedDynamically() {
+    public boolean canBeUpdatedDynamically() {
         boolean result = true;
         for (AlterConfigOp entry : nodeConfigDiff) {
             if (isScope(entry.configEntry(), Scope.READ_ONLY)) {
@@ -226,7 +226,7 @@ public class KafkaConfigurationDiff extends AbstractJsonDiff {
      * Returns configuration difference
      * @return Collection of AlterConfigOp containing difference between current and desired configuration
      */
-    protected Collection<AlterConfigOp> getConfigDiff() {
+    public Collection<AlterConfigOp> getConfigDiff() {
         return nodeConfigDiff;
     }
 
@@ -375,9 +375,10 @@ public class KafkaConfigurationDiff extends AbstractJsonDiff {
 
     /**
      * Returns configuration difference only for parameters in the specified scope
+     * @param scope Scope of the configuration
      * @return Collection of AlterConfigOp containing difference between current and desired configuration for the specified scope
      */
-    protected Collection<AlterConfigOp> getConfigDiff(Scope scope) {
+    public Collection<AlterConfigOp> getConfigDiff(Scope scope) {
         Collection<AlterConfigOp> configDiff = new ArrayList<>();
         for (AlterConfigOp entry : nodeConfigDiff) {
             if (isScope(entry.configEntry(), scope)) {
