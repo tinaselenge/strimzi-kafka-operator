@@ -322,10 +322,10 @@ public class RackRollingTest {
             Mockito.verify(rollClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
         }
 
-        List<Integer> restartedNodes = rr.loop();
+        List<Context> restartedNodes = rr.loop();
         List<Integer> expectedRestartedNodes = IntStream.of(nodeIds).boxed().toList();
         assertThat(expectedRestartedNodes.size(), is(restartedNodes.size()));
-        assertEquals(new HashSet<>(expectedRestartedNodes), new HashSet<>(restartedNodes)); //Sets may have different orders
+        assertEquals(new HashSet<>(expectedRestartedNodes), new HashSet<>(restartedNodes.stream().map(Context::nodeId).collect(Collectors.toSet()))); //Sets may have different orders
         for (var nodeId : nodeIds) {
             if (nodeRefs.get(nodeId).broker()) {
                 Mockito.verify(rollClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
@@ -389,7 +389,7 @@ public class RackRollingTest {
                 1,
                 () -> new BackOff(10L, 2, 3));
 
-        List<Integer> nodes;
+        List<Context> nodes;
         do {
             nodes = rr.loop();
         } while (!nodes.isEmpty());
@@ -1635,7 +1635,7 @@ public class RackRollingTest {
 
         var ex = assertThrows(MaxAttemptsExceededException.class,
                 () -> {
-                    List<Integer> nodes;
+                    List<Context> nodes;
                     do {
                         nodes = rr.loop();
                     } while (!nodes.isEmpty());

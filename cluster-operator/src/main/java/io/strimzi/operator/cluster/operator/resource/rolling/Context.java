@@ -56,10 +56,15 @@ final class Context {
                          PodOperator podOperator,
                          String namespace,
                          Time time) {
-        RestartReasons reasons = predicate.apply(podOperator.get(namespace, nodeRef.podName()));
-        BackOff backOff = backOffSupplier.get();
-        backOff.delayMs();
-        return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), reasons, backOff, 0, 0);
+        Pod pod = podOperator.get(namespace, nodeRef.podName());
+        if (pod == null) {
+            //TODO: debug logging here?
+            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(),  RestartReasons.empty(), backOffSupplier.get(), 0, 0);
+        } else {
+            BackOff backOff = backOffSupplier.get();
+            backOff.delayMs();
+            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(pod), backOff, 0, 0);
+        }
     }
 
     State transitionTo(State state, Time time) {

@@ -114,20 +114,20 @@ interface RollClient {
     /**
      * Return the Kafka broker configs and logger configs for each of the given nodes
      *
-     * @param toList The nodes to get the configs for
+     * @param nodeRef The nodes to get the configs for
      * @return A map from node id to configs
      * @throws io.strimzi.operator.common.UncheckedExecutionException   Execution exception from clients
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
-    Map<Integer, Config> describeBrokerConfigs(List<NodeRef> toList);
+    Map<Integer, Config> describeBrokerConfigs(NodeRef nodeRef);
 
     /**
      * Return the Kafka controller configs for each of the given nodes
      *
-     * @param toList The nodes to get the configs for
+     * @param nodeRef The nodes to get the configs for
      * @return A map from node id to configs
      * @throws io.strimzi.operator.common.UncheckedExecutionException   Execution exception from clients
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
-    Map<Integer, Config> describeControllerConfigs(List<NodeRef> toList);
+    Map<Integer, Config> describeControllerConfigs(NodeRef nodeRef);
 }

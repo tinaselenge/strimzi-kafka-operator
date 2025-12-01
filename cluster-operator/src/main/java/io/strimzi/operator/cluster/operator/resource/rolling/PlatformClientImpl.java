@@ -44,12 +44,10 @@ public class PlatformClientImpl implements PlatformClient {
 
     @Override
     public NodeState nodeState(NodeRef nodeRef) {
+        // TODO: The current roller, retries the node if get pod returns an error but here, we would fail the reconciliation immediately
         var pod = podOps.get(namespace, nodeRef.podName());
         if (pod == null) {
-            // TODO: Throw a different error to retry this node rather than fail immediately,
-            throw new UnrestartableNodesException("Pod " + nodeRef.podName() + " does not exist: ");
-        } else if (pod.getStatus() == null) {
-            return NodeState.NOT_RUNNING;
+            return null;
         } else {
             if (podOps.isReady(namespace, nodeRef.podName())) {
                 return NodeState.READY;
@@ -79,10 +77,10 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     private static boolean pendingAndUnschedulable(Pod pod) {
-        return "Pending".equals(pod.getStatus().getPhase())
-                && pod.getStatus().getConditions().stream().anyMatch(c -> "PodScheduled".equals(c.getType())
-                        && "False".equals(c.getStatus())
-                        && "Unschedulable".equals(c.getReason()));
+        return pod != null
+                && pod.getStatus() != null
+                && "Pending".equals(pod.getStatus().getPhase())
+                && pod.getStatus().getConditions().stream().anyMatch(ps -> "PodScheduled".equals(ps.getType()) && "Unschedulable".equals(ps.getReason()) && "False".equals(ps.getStatus()));
     }
 
     @Override
@@ -110,7 +108,9 @@ public class PlatformClientImpl implements PlatformClient {
             return new NodeRoles(Boolean.parseBoolean(podLabels.get(Labels.STRIMZI_CONTROLLER_ROLE_LABEL)),
                     Boolean.parseBoolean(podLabels.get(Labels.STRIMZI_BROKER_ROLE_LABEL)));
         } else {
-            throw new RuntimeException("Could not find pod " + nodeRef.podName());
+            // If pod doesn't exist yet, use the roles stored in NodeRef as these are roles that the pods would be started with
+            // We handle pod that doesn't exist later on when we observe its Kubernetes state
+            return new NodeRoles(nodeRef.controller(), nodeRef.broker());
         }
     }
 }

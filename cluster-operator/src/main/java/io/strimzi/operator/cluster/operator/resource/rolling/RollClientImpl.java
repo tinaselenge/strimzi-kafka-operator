@@ -353,27 +353,24 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Config> describeBrokerConfigs(List<NodeRef> toList) {
-        return describeNodeConfigs(brokerAdmin, toList);
+    public Map<Integer, Config> describeBrokerConfigs(NodeRef nodeRef) {
+        return describeNodeConfigs(brokerAdmin, nodeRef);
     }
 
     @Override
-    public Map<Integer, Config> describeControllerConfigs(List<NodeRef> toList) {
-        return describeNodeConfigs(controllerAdmin, toList);
+    public Map<Integer, Config> describeControllerConfigs(NodeRef nodeRef) {
+        return describeNodeConfigs(controllerAdmin, nodeRef);
     }
 
-    private Map<Integer, Config> describeNodeConfigs(Admin admin, List<NodeRef> toList) {
-        if (toList.isEmpty()) {
-            return Map.of();
-        }
-
+    private Map<Integer, Config> describeNodeConfigs(Admin admin, NodeRef nodeRef) {
+        Map<Integer, Config> nodeConfigs = new HashMap<>();
         try {
-            var dc = admin.describeConfigs(toList.stream().map(nodeRef -> new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))).toList());
-            var result = dc.all().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
-
-            return toList.stream().collect(Collectors.toMap(NodeRef::nodeId,
-                    nodeRef -> result.get(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()))
-                            )));
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()));
+            var result = admin.describeConfigs(Collections.singleton(resource)).values();
+            if (result.containsKey(resource)) {
+                nodeConfigs.put(nodeRef.nodeId(), result.get(resource).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS));
+            }
+            return nodeConfigs;
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {

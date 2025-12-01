@@ -48,6 +48,7 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.ConcurrentDeletionException;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClientProvider;
 //import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
+import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ClusterRoleBindingOperator;
@@ -491,22 +492,22 @@ public class KafkaReconciler {
                 eventsPublisher);
 
         return rr.rollingRestart(vertx);
-        // return new KafkaRoller(
-        //             reconciliation,
-        //             vertx,
-        //             podOperator,
-        //             1_000,
-        //             operationTimeoutMs,
-        //             () -> new BackOff(250, 2, 10),
-        //             nodes,
-        //             this.coTlsPemIdentity,
-        //             adminClientProvider,
-        //             kafkaAgentClientProvider,
-        //             brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-        //             kafka.getKafkaVersion(),
-        //             allowReconfiguration,
-        //             eventsPublisher
-        //     ).rollingRestart(podNeedsRestart);
+//         return new KafkaRoller(
+//                     reconciliation,
+//                     vertx,
+//                     podOperator,
+//                     1_000,
+//                     operationTimeoutMs,
+//                     () -> new BackOff(250, 2, 10),
+//                     nodes,
+//                     this.coTlsPemIdentity,
+//                     adminClientProvider,
+//                     kafkaAgentClientProvider,
+//                     brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
+//                     kafka.getKafkaVersion(),
+//                     allowReconfiguration,
+//                     eventsPublisher
+//             ).rollingRestart(podNeedsRestart);
     }
 
     /**
