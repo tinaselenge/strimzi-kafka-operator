@@ -47,6 +47,7 @@ import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.ConcurrentDeletionException;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClientProvider;
+//import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
 import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
@@ -67,8 +68,10 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceAccountOp
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.StorageClassOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.StrimziPodSetOperator;
+import io.strimzi.operator.cluster.operator.resource.rolling.RackRolling;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Annotations;
+//import io.strimzi.operator.common.e;
 import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
@@ -116,6 +119,7 @@ public class KafkaReconciler {
 
     // Various settings
     private final long operationTimeoutMs;
+    private final int maxRestartBatchSize;
     private final boolean isNetworkPolicyGeneration;
     private final boolean isPodDisruptionBudgetGeneration;
     private final List<String> maintenanceWindows;
@@ -196,6 +200,7 @@ public class KafkaReconciler {
         this.reconciliation = reconciliation;
         this.vertx = vertx;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
+        this.maxRestartBatchSize = config.getMaxRestartBatchSize();
         this.kafkaNodePoolCrs = nodePools;
         this.kafka = kafka;
 
@@ -465,22 +470,44 @@ public class KafkaReconciler {
             Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
             boolean allowReconfiguration
     ) {
-        return new KafkaRoller(
-                    reconciliation,
-                    vertx,
-                    podOperator,
-                    1_000,
-                    operationTimeoutMs,
-                    () -> new BackOff(250, 2, 10),
-                    nodes,
-                    this.coTlsPemIdentity,
-                    adminClientProvider,
-                    kafkaAgentClientProvider,
-                    brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-                    kafka.getKafkaVersion(),
-                    allowReconfiguration,
-                    eventsPublisher
-            ).rollingRestart(podNeedsRestart);
+        Function<Integer, String> kafkaConfigProvider = nodeId -> kafka.generatePerBrokerConfiguration(nodeId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts);
+        //TODO: Change this logic to run the new roller if the feature gate for it is enabled (also add feature gate).
+
+        var rr = RackRolling.initialise(
+                reconciliation,
+                podOperator,
+                1_000,
+                operationTimeoutMs,
+                () -> new BackOff(250, 2, 10),
+                nodes,
+                this.coTlsPemIdentity,
+                adminClientProvider,
+                kafkaAgentClientProvider,
+                podNeedsRestart,
+                kafkaConfigProvider,
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                3, //Should this be hard-coded here? Would reconciler set it any differently?
+                maxRestartBatchSize,
+                eventsPublisher);
+
+        return rr.rollingRestart(vertx);
+//         return new KafkaRoller(
+//                     reconciliation,
+//                     vertx,
+//                     podOperator,
+//                     1_000,
+//                     operationTimeoutMs,
+//                     () -> new BackOff(250, 2, 10),
+//                     nodes,
+//                     this.coTlsPemIdentity,
+//                     adminClientProvider,
+//                     kafkaAgentClientProvider,
+//                     brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
+//                     kafka.getKafkaVersion(),
+//                     allowReconfiguration,
+//                     eventsPublisher
+//             ).rollingRestart(podNeedsRestart);
     }
 
     /**
