@@ -4,17 +4,17 @@
  */
 package io.strimzi.operator.cluster.operator.resource.rolling;
 
-class UnrestartableNodesException extends RuntimeException {
+class RetriableException extends RuntimeException {
 
     /**
-     * This exception indicates that a node cannot be attempted to restart or not ready after a restart
+     * This exception indicates that KafkaRoller will re-attempt this node to either bring it to a healthy state, reconfigure or restart
      * @param message the detail message. The detail message is saved for later retrieval by the getMessage() method
      */
-    public UnrestartableNodesException(String message) {
+    public RetriableException(String message) {
         super(message);
     }
 
-    UnrestartableNodesException(String message, Throwable throwable) {
+    RetriableException(String message, Throwable throwable) {
         super(message, throwable);
     }
 }

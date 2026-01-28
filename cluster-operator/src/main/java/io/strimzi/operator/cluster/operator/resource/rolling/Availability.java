@@ -41,7 +41,7 @@ class Availability {
         //TODO: Refactor this out so that it can be used by both Availability and Batching classes independently
         topicDescriptions = rollClient.describeTopics(topicListings.stream().map(TopicListing::topicId).toList());
         // 2. Get topic minISR configurations
-        minIsrByTopic = rollClient.describeTopicMinIsrs(rollClient.listTopics().stream().map(TopicListing::name).toList());
+        minIsrByTopic = rollClient.describeTopicMinIsrs(topicListings.stream().map(TopicListing::name).toList());
     }
 
     protected boolean anyPartitionWouldBeUnderReplicated(int nodeId) {

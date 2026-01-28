@@ -81,14 +81,11 @@ public class Batching {
      */
     static List<Set<Integer>> batchCells(Reconciliation reconciliation,
                                            List<Set<KafkaNode>> cells,
-                                           Availability availability,
                                            int maxBatchSize) {
         List<Set<Integer>> result = new ArrayList<>();
-        Set<Integer> unavail = new HashSet<>();
         for (var cell : cells) {
             List<Set<Integer>> availBatches = new ArrayList<>();
             for (var kafkaNode : cell) {
-                if (!availability.anyPartitionWouldBeUnderReplicated(kafkaNode.id())) {
                     LOGGER.debugCr(reconciliation, "No replicas of node {} will be unavailable => add to batch",
                             kafkaNode.id());
                     var currentBatch = availBatches.isEmpty() ? null : availBatches.get(availBatches.size() - 1);
@@ -97,15 +94,8 @@ public class Batching {
                         availBatches.add(currentBatch);
                     }
                     currentBatch.add(kafkaNode.id());
-                } else {
-                    LOGGER.debugCr(reconciliation, "Some replicas of node {} will be unavailable => do not add to batch", kafkaNode.id());
-                    unavail.add(kafkaNode.id());
-                }
             }
             result.addAll(availBatches);
-        }
-        if (result.isEmpty() && !unavail.isEmpty()) {
-            LOGGER.warnCr(reconciliation, "Cannot restart nodes {} without violating some topics' min.in.sync.replicas", nodeIdsToString(unavail));
         }
         return result;
     }
@@ -176,7 +166,7 @@ public class Batching {
      * @return the "best" batch to be restarted
      */
     static Set<Integer> pickBestBatchForRestart(List<Set<Integer>> batches) {
-        if (batches.size() < 1) {
+        if (batches.isEmpty()) {
             return Set.of();
         }
 

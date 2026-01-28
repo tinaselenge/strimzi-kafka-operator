@@ -7,6 +7,7 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
 import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
@@ -77,21 +78,11 @@ interface RollClient {
     /**
      * Describe the metadata quorum info.
      *
-     * @param activeControllerNodeRef A set containing active controller NodeRef.
      * @return A map from controller quorum followers to their {@code lastCaughtUpTimestamps}.
      * @throws io.strimzi.operator.common.UncheckedExecutionException   Execution exception from clients
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
-    Map<Integer, Long> quorumLastCaughtUpTimestamps(Set<NodeRef> activeControllerNodeRef);
-
-    /**
-     * @return The id of the node that is the active controller of the cluster.
-     * If there is no active controller or failed to get quorum information,
-     * return -1 as the default value.
-     * @throws io.strimzi.operator.common.UncheckedExecutionException Execution exception from clients
-     * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
-     */
-    int activeController();
+    QuorumInfo describeMetadataQuorum();
 
     /**
      * Reconfigure the given server with the given configs
@@ -114,20 +105,34 @@ interface RollClient {
     /**
      * Return the Kafka broker configs and logger configs for each of the given nodes
      *
-     * @param nodeRef The nodes to get the configs for
+     * @param nodeId The nodes to get the configs for
      * @return A map from node id to configs
      * @throws io.strimzi.operator.common.UncheckedExecutionException   Execution exception from clients
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
-    Map<Integer, Config> describeBrokerConfigs(NodeRef nodeRef);
+    Config describeBrokerConfigs(int nodeId);
 
     /**
      * Return the Kafka controller configs for each of the given nodes
      *
-     * @param nodeRef The nodes to get the configs for
+     * @param nodeId The nodes to get the configs for
      * @return A map from node id to configs
      * @throws io.strimzi.operator.common.UncheckedExecutionException   Execution exception from clients
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
-    Map<Integer, Config> describeControllerConfigs(NodeRef nodeRef);
+    Config describeControllerConfigs(int nodeId);
+
+    /**
+     * Get the broker admin client
+     *
+     * @return The broker admin client, or null if not initialized
+     */
+    org.apache.kafka.clients.admin.Admin getBrokerAdminClient();
+
+    /**
+     * Get the controller admin client
+     *
+     * @return The controller admin client, or null if not initialized
+     */
+    org.apache.kafka.clients.admin.Admin getControllerAdminClient();
 }

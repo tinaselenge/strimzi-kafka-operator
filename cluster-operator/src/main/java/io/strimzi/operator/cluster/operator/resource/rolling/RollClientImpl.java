@@ -23,7 +23,6 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigsResult;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
-import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -70,6 +69,7 @@ class RollClientImpl implements RollClient {
     private final Reconciliation reconciliation;
 
     private final AdminClientProvider adminClientProvider;
+
     RollClientImpl(Reconciliation reconciliation,
                    TlsPemIdentity coTlsPemIdentity,
                    AdminClientProvider adminClientProvider) {
@@ -198,25 +198,13 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Long> quorumLastCaughtUpTimestamps(Set<NodeRef> activeControllerNodeRef) {
-        DescribeMetadataQuorumResult dmqr = controllerAdmin.describeMetadataQuorum(new DescribeMetadataQuorumOptions());
+    public QuorumInfo describeMetadataQuorum() {
         try {
-            return dmqr.quorumInfo().get().voters().stream().collect(Collectors.toMap(
-                    QuorumInfo.ReplicaState::replicaId,
-                    state -> state.lastCaughtUpTimestamp().orElse(-1)));
+            return controllerAdmin.describeMetadataQuorum(new DescribeMetadataQuorumOptions()).quorumInfo().get();
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
             throw new UncheckedExecutionException(e);
-        }
-    }
-
-    @Override
-    public int activeController() {
-        try {
-            return controllerAdmin.describeCluster().controller().get().id();
-        } catch (ExecutionException | InterruptedException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -307,20 +295,20 @@ class RollClientImpl implements RollClient {
         } else {
             // brokerAdmin might not be initialized at this point, e.g. we restarted not running pod
             try (Admin admin = createBrokerAdminClient(Collections.singleton(nodeRef))) {
-                return electAllPreferredLeaders(nodeRef, admin);
+                return electAllPreferredLeaders(nodeRef.nodeId(), admin);
             }
         }
     }
 
-    private int electAllPreferredLeaders(NodeRef nodeRef, Admin admin) {
+    private int electAllPreferredLeaders(int nodeId, Admin admin) {
         // If brokerAdmin has not been initialised yet, create an admin with the given node
         // this could happen, if there is any not_running nodes in the new reconciliation (not_running nodes get restarted before initialising an admin client)
         try {
             // find all partitions where the node is the preferred leader
             // we could do listTopics then describe all the topics, but that would scale poorly with number of topics
             // using describe log dirs should be more efficient
-            var topicsOnNode = admin.describeLogDirs(List.of(nodeRef.nodeId())).allDescriptions().get()
-                    .getOrDefault(nodeRef.nodeId(), Map.of()).values().stream()
+            var topicsOnNode = admin.describeLogDirs(List.of(nodeId)).allDescriptions().get()
+                    .getOrDefault(nodeId, Map.of()).values().stream()
                     .flatMap(x -> x.replicaInfos().keySet().stream())
                     .map(TopicPartition::topic)
                     .collect(Collectors.toSet());
@@ -330,8 +318,8 @@ class RollClientImpl implements RollClient {
             for (TopicDescription td : topicDescriptionsOnNode) {
                 for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
                     if (!topicPartitionInfo.replicas().isEmpty()
-                            && topicPartitionInfo.replicas().get(0).id() == nodeRef.nodeId() // this node is preferred leader
-                            && topicPartitionInfo.leader().id() != nodeRef.nodeId()) { // this onde is not current leader
+                            && topicPartitionInfo.replicas().get(0).id() == nodeId // this node is preferred leader
+                            && topicPartitionInfo.leader().id() != nodeId) { // this onde is not current leader
                         toElect.add(new TopicPartition(td.name(), topicPartitionInfo.partition()));
                     }
                 }
@@ -353,24 +341,23 @@ class RollClientImpl implements RollClient {
     }
 
     @Override
-    public Map<Integer, Config> describeBrokerConfigs(NodeRef nodeRef) {
-        return describeNodeConfigs(brokerAdmin, nodeRef);
+    public Config describeBrokerConfigs(int nodeId) {
+        return describeNodeConfigs(brokerAdmin, nodeId);
     }
 
     @Override
-    public Map<Integer, Config> describeControllerConfigs(NodeRef nodeRef) {
-        return describeNodeConfigs(controllerAdmin, nodeRef);
+    public Config describeControllerConfigs(int nodeId) {
+        return describeNodeConfigs(controllerAdmin, nodeId);
     }
 
-    private Map<Integer, Config> describeNodeConfigs(Admin admin, NodeRef nodeRef) {
-        Map<Integer, Config> nodeConfigs = new HashMap<>();
+    private Config describeNodeConfigs(Admin admin, int nodeId) {
         try {
-            ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeRef.nodeId()));
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeId));
             var result = admin.describeConfigs(Collections.singleton(resource)).values();
             if (result.containsKey(resource)) {
-                nodeConfigs.put(nodeRef.nodeId(), result.get(resource).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS));
+                return result.get(resource).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
             }
-            return nodeConfigs;
+            return null;
         } catch (InterruptedException e) {
             throw new UncheckedInterruptedException(e);
         } catch (ExecutionException e) {
@@ -378,5 +365,15 @@ class RollClientImpl implements RollClient {
         } catch (TimeoutException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Override
+    public Admin getBrokerAdminClient() {
+        return brokerAdmin;
+    }
+
+    @Override
+    public Admin getControllerAdminClient() {
+        return controllerAdmin;
     }
 }

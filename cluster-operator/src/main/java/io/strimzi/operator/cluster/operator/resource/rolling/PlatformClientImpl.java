@@ -17,9 +17,6 @@ import io.strimzi.operator.common.model.Labels;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  *  Implementation of PlatformClient in terms of Kubernetes Pods
@@ -90,14 +87,7 @@ public class PlatformClientImpl implements PlatformClient {
         podOps.restart(reconciliation, pod, operationTimeoutMs)
                 .onComplete(i -> {
                     eventPublisher.publishRestartEvents(reconciliation, pod, reasons);
-                    cf.complete(true);
                 });
-
-        try {
-            cf.get(operationTimeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     @Override

@@ -48,7 +48,6 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.ConcurrentDeletionException;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClientProvider;
 //import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
-import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ClusterRoleBindingOperator;
@@ -487,11 +486,10 @@ public class KafkaReconciler {
                 kafkaConfigProvider,
                 kafka.getKafkaVersion(),
                 allowReconfiguration,
-                3, //Should this be hard-coded here? Would reconciler set it any differently?
                 maxRestartBatchSize,
                 eventsPublisher);
 
-        return rr.rollingRestart(vertx);
+        return rr.rollingRestart();
 //         return new KafkaRoller(
 //                     reconciliation,
 //                     vertx,

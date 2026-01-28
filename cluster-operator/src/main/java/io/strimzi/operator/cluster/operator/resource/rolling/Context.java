@@ -18,35 +18,29 @@ import java.util.function.Supplier;
 /**
  * Per-server context information during a rolling restart/reconfigure
  */
-final class Context {
+public final class Context {
     /** The node this context refers to */
     private final NodeRef nodeRef;
     /** The process roles currently assigned to the node */
     private final NodeRoles currentRoles;
     /** The state of the node the last time it was observed */
     private State state;
+    /** Whether it needs to be reattempted for a restart or reconfiguration */
+    private boolean shouldRetry;
     /** The time of the last state transition */
     private long lastTransition;
     /** The reasons this node needs to be restarted or reconfigured */
     private final RestartReasons reason;
-    /** The number of restarts done so far. */
-    private int numRestarts;
     /** The number of operational attempts so far. */
     private final BackOff backOff;
-    /** The number of reconfigurations done so far. */
-    private int numReconfigs;
-    /** The difference between the current node config and the desired node config */
-    private KafkaConfigurationDiff kafkaConfigDiff;
 
-    private Context(NodeRef nodeRef, NodeRoles currentRoles, State state, long lastTransition, RestartReasons reason, BackOff backOff, int numRestarts, int numReconfigs) {
+    private Context(NodeRef nodeRef, NodeRoles currentRoles, State state, long lastTransition, RestartReasons reason, BackOff backOff) {
         this.nodeRef = nodeRef;
         this.currentRoles = currentRoles;
         this.state = state;
         this.lastTransition = lastTransition;
         this.reason = reason;
         this.backOff = backOff;
-        this.numRestarts = numRestarts;
-        this.numReconfigs = numReconfigs;
     }
 
     static Context start(NodeRef nodeRef,
@@ -59,11 +53,11 @@ final class Context {
         Pod pod = podOperator.get(namespace, nodeRef.podName());
         if (pod == null) {
             //TODO: debug logging here?
-            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(),  RestartReasons.empty(), backOffSupplier.get(), 0, 0);
+            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(),  RestartReasons.empty(), backOffSupplier.get());
         } else {
             BackOff backOff = backOffSupplier.get();
             backOff.delayMs();
-            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(pod), backOff, 0, 0);
+            return new Context(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(pod), backOff);
         }
     }
 
@@ -75,6 +69,10 @@ final class Context {
 
         this.lastTransition = time.systemTimeMillis();
         return state;
+    }
+
+    void setRetryFlag(boolean shouldRetry) {
+        this.shouldRetry = shouldRetry;
     }
 
     public int nodeId() {
@@ -92,6 +90,9 @@ final class Context {
     public State state() {
         return state;
     }
+    public boolean shouldRetry() {
+        return shouldRetry;
+    }
 
     public long lastTransition() {
         return lastTransition;
@@ -101,24 +102,8 @@ final class Context {
         return reason;
     }
 
-    public int numRestarts() {
-        return numRestarts;
-    }
-
     public BackOff backOff() {
         return backOff;
-    }
-
-    public int numReconfigs() {
-        return numReconfigs;
-    }
-
-    public void incrementNumRestarts() {
-        this.numRestarts++;
-    }
-
-    public void incrementNumReconfigs() {
-        this.numReconfigs++;
     }
 
     @Override
@@ -129,16 +114,6 @@ final class Context {
                 "currentRoles=" + currentRoles + ", " +
                 "state=" + state + ", " +
                 "lastTransition=" + Instant.ofEpochMilli(lastTransition) + ", " +
-                "reason=" + reason + ", " +
-                "numRestarts=" + numRestarts + ", " +
-                "numReconfigs=" + numReconfigs + ']';
-    }
-
-    public void configDiff(KafkaConfigurationDiff diff) {
-        this.kafkaConfigDiff = diff;
-    }
-
-    public KafkaConfigurationDiff configDiff() {
-        return kafkaConfigDiff;
+                "reason=" + reason + ']';
     }
 }

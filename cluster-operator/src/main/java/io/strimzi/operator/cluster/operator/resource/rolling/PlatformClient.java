@@ -15,6 +15,7 @@ public interface PlatformClient {
     /**
      * State of the node
      */
+    //TODO: naming is confusing with State class. Maybe should be Pod State?
     enum NodeState {
         /**
          * The pod/process is not running. This includes
