@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 /**
  * Holds the current process roles for a node.
@@ -11,6 +11,6 @@ package io.strimzi.operator.cluster.operator.resource.rolling;
  * @param controller set to true if the node has controller role
  * @param broker set to true if the node has broker role
  */
-record NodeRoles(boolean controller, boolean broker) {
+record KafkaNodeRoles(boolean controller, boolean broker) {
 }
 

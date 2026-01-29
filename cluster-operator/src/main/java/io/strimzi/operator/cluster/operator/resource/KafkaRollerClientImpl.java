@@ -2,14 +2,13 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.kafka.config.model.Scope;
 import io.strimzi.operator.cluster.model.DnsNameGenerator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.NodeRef;
-import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
@@ -18,6 +17,21 @@ import io.strimzi.operator.common.UncheckedInterruptedException;
 import io.strimzi.operator.common.auth.PemAuthIdentity;
 import io.strimzi.operator.common.auth.PemTrustSet;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigsResult;
@@ -36,30 +50,13 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
+class KafkaRollerClientImpl implements KafkaRollerClient {
 
-class RollClientImpl implements RollClient {
-
-    private final static ReconciliationLogger LOGGER = ReconciliationLogger.create(RackRolling.class);
+    private final static ReconciliationLogger LOGGER = ReconciliationLogger.create(KafkaRollerClientImpl.class);
     private final static int ADMIN_BATCH_SIZE = 200;
-    // TODO: set to the same value of the thread blocking limit for now but we need to decide whether we need a dedicated thread for RackRolling
     private final static long ADMIN_CALL_TIMEOUT = 2000L;
-    private Admin brokerAdmin = null;
 
+    private Admin brokerAdmin = null;
     private Admin controllerAdmin = null;
 
     private final PemAuthIdentity pemAuthIdentity;
@@ -70,13 +67,38 @@ class RollClientImpl implements RollClient {
 
     private final AdminClientProvider adminClientProvider;
 
-    RollClientImpl(Reconciliation reconciliation,
-                   TlsPemIdentity coTlsPemIdentity,
-                   AdminClientProvider adminClientProvider) {
+    KafkaRollerClientImpl(Reconciliation reconciliation,
+                          TlsPemIdentity coTlsPemIdentity,
+                          AdminClientProvider adminClientProvider) {
         this.pemTrustSet = coTlsPemIdentity.pemTrustSet();
         this.pemAuthIdentity = coTlsPemIdentity.pemAuthIdentity();
         this.reconciliation = reconciliation;
         this.adminClientProvider = adminClientProvider;
+    }
+
+    @Override
+    public void initialiseBrokerAdmin(Set<NodeRef> brokerNodes) {
+        if (this.brokerAdmin == null && !brokerNodes.isEmpty()) this.brokerAdmin = createBrokerAdminClient(brokerNodes);
+    }
+
+
+    @Override
+    public void closeBrokerAdminClient() {
+        if (this.brokerAdmin != null) {
+            this.brokerAdmin.close(Duration.ofSeconds(30));
+        }
+    }
+
+    @Override
+    public void initialiseControllerAdmin(Set<NodeRef> controllerNodes) {
+        if (this.controllerAdmin == null && !controllerNodes.isEmpty()) this.controllerAdmin = createControllerAdminClient(controllerNodes);
+    }
+
+    @Override
+    public void closeControllerAdminClient() {
+        if (this.controllerAdmin != null) {
+            this.controllerAdmin.close(Duration.ofSeconds(30));
+        }
     }
 
     /** Return a future that completes when all the given futures complete */
@@ -98,30 +120,6 @@ class RollClientImpl implements RollClient {
             currentBatch.add(topicId);
         }
         return allBatches;
-    }
-
-    @Override
-    public void initialiseBrokerAdmin(Set<NodeRef> brokerNodes) {
-        if (this.brokerAdmin == null && !brokerNodes.isEmpty()) this.brokerAdmin = createBrokerAdminClient(brokerNodes);
-    }
-
-    @Override
-    public void initialiseControllerAdmin(Set<NodeRef> controllerNodes) {
-        if (this.controllerAdmin == null && !controllerNodes.isEmpty()) this.controllerAdmin = createControllerAdminClient(controllerNodes);
-    }
-
-    @Override
-    public void closeControllerAdminClient() {
-        if (this.controllerAdmin != null) {
-            this.controllerAdmin.close(Duration.ofSeconds(30));
-        }
-    }
-
-    @Override
-    public void closeBrokerAdminClient() {
-        if (this.brokerAdmin != null) {
-            this.brokerAdmin.close(Duration.ofSeconds(30));
-        }
     }
 
     @Override
@@ -291,7 +289,7 @@ class RollClientImpl implements RollClient {
     @Override
     public int tryElectAllPreferredLeaders(NodeRef nodeRef) {
         if (brokerAdmin != null) {
-            return electAllPreferredLeaders(nodeRef, brokerAdmin);
+            return electAllPreferredLeaders(nodeRef.nodeId(), brokerAdmin);
         } else {
             // brokerAdmin might not be initialized at this point, e.g. we restarted not running pod
             try (Admin admin = createBrokerAdminClient(Collections.singleton(nodeRef))) {
@@ -365,15 +363,5 @@ class RollClientImpl implements RollClient {
         } catch (TimeoutException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    @Override
-    public Admin getBrokerAdminClient() {
-        return brokerAdmin;
-    }
-
-    @Override
-    public Admin getControllerAdminClient() {
-        return controllerAdmin;
     }
 }

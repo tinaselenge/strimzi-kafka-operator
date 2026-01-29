@@ -2,25 +2,24 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 import io.strimzi.operator.cluster.model.NodeRef;
-import io.strimzi.operator.cluster.operator.resource.KafkaConfigurationDiff;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Uuid;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * An abstraction over a Kafka Admin client.
  */
-interface RollClient {
+interface KafkaRollerClient {
     /**
      * Sets admin client for brokers.
      **/
@@ -121,18 +120,4 @@ interface RollClient {
      * @throws io.strimzi.operator.common.UncheckedInterruptedException The thread was interrupted
      */
     Config describeControllerConfigs(int nodeId);
-
-    /**
-     * Get the broker admin client
-     *
-     * @return The broker admin client, or null if not initialized
-     */
-    org.apache.kafka.clients.admin.Admin getBrokerAdminClient();
-
-    /**
-     * Get the controller admin client
-     *
-     * @return The controller admin client, or null if not initialized
-     */
-    org.apache.kafka.clients.admin.Admin getControllerAdminClient();
 }

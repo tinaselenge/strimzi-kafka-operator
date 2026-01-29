@@ -2,14 +2,13 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
-
-import org.apache.kafka.common.Node;
+package io.strimzi.operator.cluster.operator.resource;
 
 import java.util.Collection;
+import org.apache.kafka.common.Node;
 
 /**
- * A replica on a particular {@link KafkaNode}.
+ * A replica on a particular Kafka Node
  *
  * @param topicName   The name of the topic
  * @param partitionId The partition id
@@ -20,7 +19,7 @@ import java.util.Collection;
  *                    In other words, the magnitude is the size of the ISR and the sign will be negative
  *                    if the broker hosting this replica is not in the ISR.
  */
-record Replica(String topicName, int partitionId, short isrSize, short replicasSize) {
+public record Replica(String topicName, int partitionId, short isrSize, short replicasSize) {
 
     public Replica(Node broker, String topicName, int partitionId, Collection<Node> isr, Collection<Node> replicas) {
         this(topicName, partitionId, (short) (isr.contains(broker) ? isr.size() : -isr.size()), (short) replicas.size());

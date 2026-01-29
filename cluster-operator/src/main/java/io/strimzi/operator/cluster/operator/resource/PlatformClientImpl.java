@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 import io.fabric8.kubernetes.api.model.ContainerStateWaiting;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
@@ -13,7 +13,6 @@ import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEve
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
-
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -40,19 +39,19 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     @Override
-    public NodeState nodeState(NodeRef nodeRef) {
+    public PodState podState(NodeRef nodeRef) {
         // TODO: The current roller, retries the node if get pod returns an error but here, we would fail the reconciliation immediately
         var pod = podOps.get(namespace, nodeRef.podName());
         if (pod == null) {
             return null;
         } else {
             if (podOps.isReady(namespace, nodeRef.podName())) {
-                return NodeState.READY;
+                return PodState.READY;
             } else {
                 if (pendingAndUnschedulable(pod) || hasWaitingContainerWithReason(pod, Set.of("CrashLoopBackOff", "ErrImagePull", "ImagePullBackOff", "ContainerCreating"))) {
-                    return NodeState.NOT_RUNNING; // NOT_RUNNING is more of a "likely stuck in not ready"
+                    return PodState.NOT_RUNNING; // NOT_RUNNING is more of a "likely stuck in not ready"
                 } else {
-                    return NodeState.NOT_READY;
+                    return PodState.NOT_READY;
                 }
             }
         }
@@ -91,16 +90,16 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     @Override
-    public NodeRoles nodeRoles(NodeRef nodeRef) {
+    public KafkaNodeRoles kafkaNodeRoles(NodeRef nodeRef) {
         Pod pod = podOps.get(namespace, nodeRef.podName());
         if (pod != null) {
             var podLabels = pod.getMetadata().getLabels();
-            return new NodeRoles(Boolean.parseBoolean(podLabels.get(Labels.STRIMZI_CONTROLLER_ROLE_LABEL)),
+            return new KafkaNodeRoles(Boolean.parseBoolean(podLabels.get(Labels.STRIMZI_CONTROLLER_ROLE_LABEL)),
                     Boolean.parseBoolean(podLabels.get(Labels.STRIMZI_BROKER_ROLE_LABEL)));
         } else {
             // If pod doesn't exist yet, use the roles stored in NodeRef as these are roles that the pods would be started with
             // We handle pod that doesn't exist later on when we observe its Kubernetes state
-            return new NodeRoles(nodeRef.controller(), nodeRef.broker());
+            return new KafkaNodeRoles(nodeRef.controller(), nodeRef.broker());
         }
     }
 }

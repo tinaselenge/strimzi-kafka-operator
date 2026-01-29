@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 import io.strimzi.operator.common.UncheckedInterruptedException;
 
@@ -11,7 +11,7 @@ import io.strimzi.operator.common.UncheckedInterruptedException;
  * A Time instance represents some way of measuring durations (the {@link #nanoTime()} method) and some way of suspending 
  * the execution of a thread for some duration consistent with such measurements {@link #sleep(long, int)}.
  * <p>In practice a real system would use {@link #SYSTEM_TIME}.</p>
- * <p>In testing you can use {@link Time.TestTime} so that tests don't depend on actually sleeping threads.</p>
+ * <p>In testing you can use {@link TestTime} so that tests don't depend on actually sleeping threads.</p>
  */
 public interface Time {
 
@@ -151,7 +151,7 @@ public interface Time {
      *
      * @param millis The number of milliseconds
      * @param nanos The number of nanoseconds
-     * @throws io.strimzi.operator.common.UncheckedInterruptedException If the sleep was interrupted before the given time has elapsed.
+     * @throws UncheckedInterruptedException If the sleep was interrupted before the given time has elapsed.
      */
     void sleep(long millis, int nanos);
 

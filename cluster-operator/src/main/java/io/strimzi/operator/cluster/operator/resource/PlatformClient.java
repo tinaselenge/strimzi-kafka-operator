@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.cluster.operator.resource.rolling;
+package io.strimzi.operator.cluster.operator.resource;
 
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
@@ -13,10 +13,9 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 public interface PlatformClient {
 
     /**
-     * State of the node
+     * State of the pod
      */
-    //TODO: naming is confusing with State class. Maybe should be Pod State?
-    enum NodeState {
+    enum PodState {
         /**
          * The pod/process is not running. This includes
          * the pod has {@code status.phase=="Pending"} and condition {@code c} in {@code status.conditions}
@@ -34,7 +33,7 @@ public interface PlatformClient {
      * @param nodeRef Node reference
      * @return NodeState according to the platform
      * */
-    NodeState nodeState(NodeRef nodeRef);
+    PodState podState(NodeRef nodeRef);
 
     /**
      * Initiate the restart of the corresponding Kafka server.
@@ -45,8 +44,8 @@ public interface PlatformClient {
 
     /**
      * @param nodeRef Node reference
-     * @return Kafka process roles for this node according to the platform.
+     * @return Kafka process roles for this Kafka node according to the platform.
      * This could differ from the roles that the running process actually has (for instance if the process needs to be restarted to pick up its current roles).
      */
-    NodeRoles nodeRoles(NodeRef nodeRef);
+    KafkaNodeRoles kafkaNodeRoles(NodeRef nodeRef);
 }
