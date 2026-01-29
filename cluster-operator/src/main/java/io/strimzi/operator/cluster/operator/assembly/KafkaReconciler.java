@@ -47,7 +47,8 @@ import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.ConcurrentDeletionException;
 import io.strimzi.operator.cluster.operator.resource.KafkaAgentClientProvider;
-import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
+//import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
+import io.strimzi.operator.cluster.operator.resource.KafkaRoller2;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ClusterRoleBindingOperator;
@@ -465,22 +466,39 @@ public class KafkaReconciler {
             Map<Integer, Map<String, String>> kafkaAdvertisedPorts,
             boolean allowReconfiguration
     ) {
-        return new KafkaRoller(
-                    reconciliation,
-                    vertx,
-                    podOperator,
-                    1_000,
-                    operationTimeoutMs,
-                    () -> new BackOff(250, 2, 10),
-                    nodes,
-                    this.coTlsPemIdentity,
-                    adminClientProvider,
-                    kafkaAgentClientProvider,
-                    brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
-                    kafka.getKafkaVersion(),
-                    allowReconfiguration,
-                    eventsPublisher
-            ).rollingRestart(podNeedsRestart);
+        return KafkaRoller2.initialise(
+                reconciliation,
+                podOperator,
+                1_000,
+                operationTimeoutMs,
+                () -> new BackOff(250, 2, 10),
+                nodes,
+                coTlsPemIdentity,
+                adminClientProvider,
+                kafkaAgentClientProvider,
+                podNeedsRestart,
+                brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
+                kafka.getKafkaVersion(),
+                allowReconfiguration,
+                1,
+                eventsPublisher
+        ).rollingRestart();
+//        return new KafkaRoller(
+//                    reconciliation,
+//                    vertx,
+//                    podOperator,
+//                    1_000,
+//                    operationTimeoutMs,
+//                    () -> new BackOff(250, 2, 10),
+//                    nodes,
+//                    this.coTlsPemIdentity,
+//                    adminClientProvider,
+//                    kafkaAgentClientProvider,
+//                    brokerId -> kafka.generatePerBrokerConfiguration(brokerId, kafkaAdvertisedHostnames, kafkaAdvertisedPorts),
+//                    kafka.getKafkaVersion(),
+//                    allowReconfiguration,
+//                    eventsPublisher
+//            ).rollingRestart(podNeedsRestart);
     }
 
     /**

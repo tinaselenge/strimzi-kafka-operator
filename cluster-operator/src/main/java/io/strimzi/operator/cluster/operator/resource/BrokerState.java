@@ -12,8 +12,10 @@ import java.util.Map;
 /**
  * Java representation of the JSON response from the /v1/broker-state endpoint of the KafkaAgent
  */
-class BrokerState {
+public class BrokerState {
     private static final int BROKER_RECOVERY_STATE = 2;
+    private static final int RUNNING = 3;
+    private static final int UNKNOWN = 127;
 
     private final int code;
     private final Map<String, Object> recoveryState;
@@ -24,7 +26,7 @@ class BrokerState {
      * @param recoveryState Map that has the number of remaining logs and segments to recover
      */
     @JsonCreator
-    public BrokerState(@JsonProperty("brokerState")int code, @JsonProperty("recoveryState") Map<String, Object> recoveryState) {
+    public BrokerState(@JsonProperty("brokerState") int code, @JsonProperty("recoveryState") Map<String, Object> recoveryState) {
         this.code = code;
         this.recoveryState = recoveryState;
     }
@@ -70,5 +72,13 @@ class BrokerState {
      */
     public boolean isBrokerInRecovery() {
         return code == BROKER_RECOVERY_STATE;
+    }
+
+    /**
+     * Returns true if broker state equal or greater than 3 (RUNNING) but not 127 (UNKNOWN)
+     * @return boolean result
+     */
+    public boolean isBrokerReady() {
+        return code >= RUNNING && code != UNKNOWN;
     }
 }

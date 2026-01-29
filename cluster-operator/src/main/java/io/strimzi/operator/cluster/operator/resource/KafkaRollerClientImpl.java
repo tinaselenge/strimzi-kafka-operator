@@ -1,0 +1,355 @@
+/*
+ * Copyright Strimzi authors.
+ * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
+ */
+package io.strimzi.operator.cluster.operator.resource;
+
+import io.strimzi.api.kafka.model.kafka.KafkaResources;
+import io.strimzi.kafka.config.model.Scope;
+import io.strimzi.operator.cluster.model.DnsNameGenerator;
+import io.strimzi.operator.cluster.model.KafkaCluster;
+import io.strimzi.operator.cluster.model.NodeRef;
+import io.strimzi.operator.common.AdminClientProvider;
+import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.ReconciliationLogger;
+import io.strimzi.operator.common.auth.PemAuthIdentity;
+import io.strimzi.operator.common.auth.PemTrustSet;
+import io.strimzi.operator.common.auth.TlsPemIdentity;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterConfigsResult;
+import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
+import org.apache.kafka.clients.admin.ListTopicsOptions;
+import org.apache.kafka.clients.admin.QuorumInfo;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.admin.TopicListing;
+import org.apache.kafka.common.ElectionType;
+import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.TopicCollection;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+
+class KafkaRollerClientImpl implements KafkaRollerClient {
+
+    private final static ReconciliationLogger LOGGER = ReconciliationLogger.create(KafkaRollerClientImpl.class);
+    private final static int ADMIN_BATCH_SIZE = 200;
+    private final static long ADMIN_CALL_TIMEOUT = 2000L;
+
+    private Admin brokerAdmin = null;
+    private Admin controllerAdmin = null;
+
+    private final PemAuthIdentity pemAuthIdentity;
+
+    private final PemTrustSet pemTrustSet;
+
+    private final Reconciliation reconciliation;
+
+    private final AdminClientProvider adminClientProvider;
+
+    KafkaRollerClientImpl(Reconciliation reconciliation,
+                          TlsPemIdentity coTlsPemIdentity,
+                          AdminClientProvider adminClientProvider) {
+        this.pemTrustSet = coTlsPemIdentity.pemTrustSet();
+        this.pemAuthIdentity = coTlsPemIdentity.pemAuthIdentity();
+        this.reconciliation = reconciliation;
+        this.adminClientProvider = adminClientProvider;
+    }
+
+    @Override
+    public void initialiseBrokerAdmin(Set<NodeRef> brokerNodes) {
+        if (this.brokerAdmin == null && !brokerNodes.isEmpty()) this.brokerAdmin = createBrokerAdminClient(brokerNodes);
+    }
+
+
+    @Override
+    public void closeBrokerAdminClient() {
+        if (this.brokerAdmin != null) {
+            this.brokerAdmin.close(Duration.ofSeconds(30));
+        }
+    }
+
+    @Override
+    public void initialiseControllerAdmin(Set<NodeRef> controllerNodes) {
+        if (this.controllerAdmin == null && !controllerNodes.isEmpty()) this.controllerAdmin = createControllerAdminClient(controllerNodes);
+    }
+
+    @Override
+    public void closeControllerAdminClient() {
+        if (this.controllerAdmin != null) {
+            this.controllerAdmin.close(Duration.ofSeconds(30));
+        }
+    }
+
+    /** Return a future that completes when all the given futures complete */
+    @SuppressWarnings("rawtypes")
+    private static CompletableFuture<Void> allOf(List<? extends CompletableFuture<?>> futures) {
+        CompletableFuture[] ts = futures.toArray(new CompletableFuture[0]);
+        return CompletableFuture.allOf(ts);
+    }
+
+    /** Splits the given {@code items} into batches no larger than {@code maxBatchSize}. */
+    private static <T> Set<List<T>> batch(List<T> items, int maxBatchSize) {
+        Set<List<T>> allBatches = new HashSet<>();
+        List<T> currentBatch = null;
+        for (var topicId : items) {
+            if (currentBatch == null || currentBatch.size() > maxBatchSize) {
+                currentBatch = new ArrayList<>();
+                allBatches.add(currentBatch);
+            }
+            currentBatch.add(topicId);
+        }
+        return allBatches;
+    }
+
+    @Override
+    public boolean canConnectToNode(NodeRef nodeRef, boolean isBroker) {
+        boolean canConnect = false;
+        try (Admin ignored = isBroker ? createBrokerAdminClient(Collections.singleton(nodeRef)) : createControllerAdminClient(Collections.singleton(nodeRef))) {
+            canConnect = true;
+        } catch (Exception e) {
+            LOGGER.errorCr(reconciliation, "Cannot create an admin client connection to {}", nodeRef, e);
+        }
+        return canConnect;
+    }
+
+    private Admin createControllerAdminClient(Set<NodeRef> controllerNodes) {
+        String bootstrapHostnames = controllerNodes.stream().map(node -> DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), node.podName()) + ":" + KafkaCluster.CONTROLPLANE_PORT).collect(Collectors.joining(","));
+        LOGGER.debugCr(reconciliation, "Creating an admin client with {}", bootstrapHostnames);
+        try {
+            return adminClientProvider.createControllerAdminClient(bootstrapHostnames, pemTrustSet, pemAuthIdentity);
+        } catch (RuntimeException e) {
+            throw new RuntimeException("Failed to create controller admin client", e.getCause());
+        }
+    }
+
+    private Admin createBrokerAdminClient(Set<NodeRef> brokerNodes) {
+        String bootstrapHostnames = brokerNodes.stream().map(node -> DnsNameGenerator.podDnsName(reconciliation.namespace(), KafkaResources.brokersServiceName(reconciliation.name()), node.podName()) + ":" + KafkaCluster.REPLICATION_PORT).collect(Collectors.joining(","));
+        LOGGER.debugCr(reconciliation, "Creating an admin client with {}", bootstrapHostnames);
+        try {
+            return adminClientProvider.createAdminClient(bootstrapHostnames, pemTrustSet, pemAuthIdentity);
+        } catch (RuntimeException e) {
+            throw new RuntimeException("Failed to create broker admin client", e.getCause());
+        }
+    }
+
+    @Override
+    public Collection<TopicListing> listTopics() {
+        try {
+            return brokerAdmin.listTopics(new ListTopicsOptions().listInternal(true)).listings().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public List<TopicDescription> describeTopics(List<Uuid> topicIds) {
+        var topicIdBatches = batch(topicIds, ADMIN_BATCH_SIZE);
+        var futures = new ArrayList<CompletableFuture<Map<Uuid, TopicDescription>>>();
+        for (var topicIdBatch : topicIdBatches) {
+            var mapKafkaFuture = brokerAdmin.describeTopics(TopicCollection.ofTopicIds(topicIdBatch)).allTopicIds().toCompletionStage().toCompletableFuture();
+            futures.add(mapKafkaFuture);
+        }
+
+        try {
+            allOf(futures).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | TimeoutException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+
+        var topicDescriptions = futures.stream().flatMap(cf -> {
+            try {
+                return cf.get().values().stream();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        return topicDescriptions.toList();
+    }
+
+    @Override
+    public QuorumInfo describeMetadataQuorum() {
+        try {
+            return controllerAdmin.describeMetadataQuorum(new DescribeMetadataQuorumOptions()).quorumInfo().get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public int getActiveControllerId() {
+        return describeMetadataQuorum().leaderId();
+    }
+
+    @Override
+    public Map<String, Config> describeTopicConfigs(List<String> topicNames) {
+        var topicIdBatches = batch(topicNames, ADMIN_BATCH_SIZE);
+        var futures = new ArrayList<CompletableFuture<Map<ConfigResource, Config>>>();
+        for (var topicIdBatch : topicIdBatches) {
+            var mapKafkaFuture = brokerAdmin.describeConfigs(topicIdBatch.stream().map(name -> new ConfigResource(ConfigResource.Type.TOPIC, name)).collect(Collectors.toSet())).all().toCompletionStage().toCompletableFuture();
+            futures.add(mapKafkaFuture);
+        }
+        try {
+            allOf(futures).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            throw new RuntimeException(e);
+        }
+
+        var topicDescriptions = futures.stream().flatMap(cf -> {
+            try {
+                return cf.get().entrySet().stream();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        return topicDescriptions.collect(Collectors.toMap(
+                entry -> entry.getKey().name(),
+                Map.Entry::getValue));
+    }
+
+    @Override
+    public void reconfigureNode(NodeRef nodeRef, KafkaConfigurationDiff kafkaConfigurationDiff, boolean isBroker) {
+        Map<ConfigResource, Collection<AlterConfigOp>> updatedPerBrokerConfig = new HashMap<>(2);
+        Map<ConfigResource, Collection<AlterConfigOp>> updatedClusterWideConfig = new HashMap<>(1);
+        updatedPerBrokerConfig.put(getBrokersConfig(nodeRef.nodeId()), kafkaConfigurationDiff.getConfigDiff(Scope.PER_BROKER));
+        updatedClusterWideConfig.put(getClusterWideConfig(), kafkaConfigurationDiff.getConfigDiff(Scope.CLUSTER_WIDE));
+
+        AlterConfigsResult alterClusterConfigResult;
+        AlterConfigsResult alterBrokerConfigResult;
+        if (isBroker) {
+            alterClusterConfigResult = brokerAdmin.incrementalAlterConfigs(updatedClusterWideConfig);
+            alterBrokerConfigResult = brokerAdmin.incrementalAlterConfigs(updatedPerBrokerConfig);
+        } else {
+            alterClusterConfigResult = controllerAdmin.incrementalAlterConfigs(updatedClusterWideConfig);
+            alterBrokerConfigResult = controllerAdmin.incrementalAlterConfigs(updatedPerBrokerConfig);
+        }
+        KafkaFuture<Void> clusterConfigFuture = alterClusterConfigResult.values().get(getClusterWideConfig());
+        KafkaFuture<Void> brokerConfigFuture = alterBrokerConfigResult.values().get(getBrokersConfig(nodeRef.nodeId()));
+
+        try {
+            clusterConfigFuture.get();
+            brokerConfigFuture.get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Created config resource instance
+     *
+     * @param podId Pod ID
+     *
+     * @return  Config resource
+     */
+    private static ConfigResource getBrokersConfig(int podId) {
+        return new ConfigResource(ConfigResource.Type.BROKER, Integer.toString(podId));
+    }
+
+    /**
+     * Created config resource instance for cluster-wide dynamic changes
+     *
+     * @return  Config resource
+     */
+    private static ConfigResource getClusterWideConfig() {
+        return new ConfigResource(ConfigResource.Type.BROKER, "");
+    }
+
+    @Override
+    public int tryElectAllPreferredLeaders(NodeRef nodeRef) {
+        if (brokerAdmin != null) {
+            return electAllPreferredLeaders(nodeRef.nodeId(), brokerAdmin);
+        } else {
+            // brokerAdmin might not be initialized at this point, e.g. we restarted not running pod
+            try (Admin admin = createBrokerAdminClient(Collections.singleton(nodeRef))) {
+                return electAllPreferredLeaders(nodeRef.nodeId(), admin);
+            }
+        }
+    }
+
+    private int electAllPreferredLeaders(int nodeId, Admin admin) {
+        // find all partitions where the node is the preferred leader
+        // we could do listTopics then describe all the topics, but that would scale poorly with number of topics
+        // using describe log dirs should be more efficient
+        Set<String> topicsOnNode;
+        try {
+            topicsOnNode = admin.describeLogDirs(List.of(nodeId)).allDescriptions().get()
+                    .getOrDefault(nodeId, Map.of()).values().stream()
+                    .flatMap(x -> x.replicaInfos().keySet().stream())
+                    .map(TopicPartition::topic)
+                    .collect(Collectors.toSet());
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+
+        Collection<TopicDescription> topicDescriptionsOnNode;
+        try {
+            topicDescriptionsOnNode = admin.describeTopics(topicsOnNode).allTopicNames().get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS).values();
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            throw new RuntimeException(e);
+        }
+
+        var toElect = new HashSet<TopicPartition>();
+        for (TopicDescription td : topicDescriptionsOnNode) {
+            for (TopicPartitionInfo topicPartitionInfo : td.partitions()) {
+                if (!topicPartitionInfo.replicas().isEmpty()
+                        && topicPartitionInfo.replicas().getFirst().id() == nodeId // this node is preferred leader
+                        && topicPartitionInfo.leader().id() != nodeId) { // this node is not current leader
+                    toElect.add(new TopicPartition(td.name(), topicPartitionInfo.partition()));
+                }
+            }
+        }
+
+        Map<TopicPartition, Optional<Throwable>> electionResults;
+        try {
+            electionResults = admin.electLeaders(ElectionType.PREFERRED, toElect).partitions().get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+
+        long count = electionResults.values().stream()
+                .filter(Optional::isPresent)
+                .count();
+        return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
+    }
+
+    @Override
+    public Config describeBrokerConfigs(int nodeId) {
+        return describeNodeConfigs(brokerAdmin, nodeId);
+    }
+
+    @Override
+    public Config describeControllerConfigs(int nodeId) {
+        return describeNodeConfigs(controllerAdmin, nodeId);
+    }
+
+    private Config describeNodeConfigs(Admin admin, int nodeId) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(nodeId));
+        var result = admin.describeConfigs(Collections.singleton(resource)).values();
+        if (result.containsKey(resource)) {
+            try {
+                return result.get(resource).get(ADMIN_CALL_TIMEOUT, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return null;
+    }
+}
