@@ -45,7 +45,7 @@ class KafkaAvailability2 {
      * Determine whether the given broker can be rolled without affecting
      * producers with acks=all publishing to topics with a {@code min.in.sync.replicas}.
      */
-    boolean canRoll(int podId) {
+    boolean canRoll(int podId) throws InterruptedException {
         LOGGER.debugCr(reconciliation, "Determining whether broker {} can be rolled", podId);
         if (topicDescriptions == null || topicDescriptions.isEmpty()) {
             // 1. Get all topic names

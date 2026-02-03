@@ -37,7 +37,7 @@ class KafkaQuorumCheck2 {
      * healthy if the majority of controllers, excluding the given node, have caught up with the quorum leader within the
      * controller.quorum.fetch.timeout.ms.
      */
-    boolean canRollController(int nodeId) {
+    boolean canRollController(int nodeId) throws InterruptedException {
         LOGGER.debugCr(reconciliation, "Determining whether controller pod {} can be rolled", nodeId);
         QuorumInfo quorumInfo = rollerClient.describeMetadataQuorum();
         boolean canRoll = isQuorumHealthyWithoutNode(nodeId, quorumInfo);

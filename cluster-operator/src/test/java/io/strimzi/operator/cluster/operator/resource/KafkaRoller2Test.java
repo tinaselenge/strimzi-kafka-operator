@@ -13,6 +13,7 @@ import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.TimeoutException;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.QuorumInfo;
@@ -59,8 +60,6 @@ public class KafkaRoller2Test {
 
     // Test constants
     static final Function<Integer, String> EMPTY_CONFIG_SUPPLIER = serverId -> "";
-    // Test instance variables
-    private final Time time = new Time.TestTime(1_000_000_000L);
     private final Map<Integer, Long> defaultQuorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 10_000L);
     private final List<Integer> restartedNodesOrder = new java.util.ArrayList<>();
     private final List<List<Integer>> restartBatches = new ArrayList<>();
@@ -92,13 +91,17 @@ public class KafkaRoller2Test {
                 .when(platformClient)
                 .podState(any());
 
+        doReturn(CompletableFuture.completedFuture(null))
+                .when(platformClient)
+                .podReadiness(any());
+
         // Track restart order
         doAnswer(invocation -> {
             NodeRef nodeRef = invocation.getArgument(0);
             int nodeId = nodeRef.nodeId();
             restartedNodesOrder.add(nodeId);
             currentBatch.add(nodeId);
-            return null;
+            return CompletableFuture.completedFuture(null);
         }).when(platformClient).restartPod(any(), any());
 
         // When we check pod state AFTER a restart, we know the batch is complete
@@ -107,13 +110,13 @@ public class KafkaRoller2Test {
                 restartBatches.add(new ArrayList<>(currentBatch));
                 currentBatch.clear();
             }
-            return PlatformClient.PodState.READY;
-        }).when(platformClient).podState(any());
+            return CompletableFuture.completedFuture(null);
+        }).when(platformClient).podReadiness(any());
 
         return platformClient;
     }
 
-    private KafkaRollerClient mockedKafkaRollerClient() {
+    private KafkaRollerClient mockedKafkaRollerClient() throws InterruptedException {
         KafkaRollerClient kafkaRollerClient = mock(KafkaRollerClient.class);
 
         doReturn(0)
@@ -192,18 +195,44 @@ public class KafkaRoller2Test {
             return this;
         }
 
+        MockBuilder mockNotReadyPod(PlatformClient platformClient, int nodeId) {
+            doReturn(CompletableFuture.failedFuture(new TimeoutException()))
+                    .when(platformClient)
+                    .podReadiness(nodeRefs.get(nodeId));
+            return this;
+        }
+
+        //This emulates pod that is initially not ready but ready after the restart
+        MockBuilder mockNotReadyAndThenReadyPod(PlatformClient platformClient, int nodeId) {
+            doReturn(CompletableFuture.failedFuture(new TimeoutException()), CompletableFuture.completedFuture(null))
+                    .when(platformClient)
+                    .podReadiness(nodeRefs.get(nodeId));
+            return this;
+        }
+
+
         MockBuilder mockNodeBecomesReady(PlatformClient platformClient, int nodeId, PlatformClient.PodState state, int retriesUntilReady) {
-            int numOfCalls = retriesUntilReady * 2; // In each retry, we query the state twice (one during the initialise step and another one during the wait for unready)
             List<PlatformClient.PodState> states = new ArrayList<>();
-            for (int i = 0; i < numOfCalls; i++) {
+            for (int i = 0; i < retriesUntilReady; i++) {
                 states.add(state);
             }
             states.add(PlatformClient.PodState.READY);
             return mockNodeState(platformClient, states, nodeId);
         }
 
-        MockBuilder mockBrokerState(KafkaAgentClient kafkaAgentClient, int nodeId, int code, Map<String, Object> recoveryState) {
-            doReturn(new BrokerState(code, recoveryState))
+        MockBuilder mockBrokerStateNotReady(KafkaAgentClient kafkaAgentClient, int nodeId) {
+            doReturn(new BrokerState(1, null))
+                    .when(kafkaAgentClient)
+                    .getBrokerState(nodeRefs.get(nodeId).podName());
+            return this;
+        }
+
+        MockBuilder mockBrokerStateRecovery(KafkaAgentClient kafkaAgentClient, int nodeId) {
+            Map<String, Object> recoveryState = new HashMap<>();
+            recoveryState.put("remainingLogsToRecover", 100);
+            recoveryState.put("remainingSegmentsToRecover", 300);
+
+            doReturn(new BrokerState(2, recoveryState))
                     .when(kafkaAgentClient)
                     .getBrokerState(nodeRefs.get(nodeId).podName());
             return this;
@@ -239,7 +268,7 @@ public class KafkaRoller2Test {
             return this;
         }
 
-        MockBuilder mockTopics(KafkaRollerClient client) {
+        MockBuilder mockTopics(KafkaRollerClient client) throws InterruptedException {
             doReturn(topicListing)
                     .when(client)
                     .listTopics();
@@ -270,7 +299,7 @@ public class KafkaRoller2Test {
             return this;
         }
 
-        MockBuilder mockDescribeConfigs(KafkaRollerClient kafkaRollerClient, Set<ConfigEntry> configEntries, int... nodeIds) {
+        MockBuilder mockDescribeConfigs(KafkaRollerClient kafkaRollerClient, Set<ConfigEntry> configEntries, int... nodeIds) throws InterruptedException {
             Config config = new Config(configEntries);
             for (var nodeId : nodeIds) {
                 doReturn(config)
@@ -283,7 +312,7 @@ public class KafkaRoller2Test {
             return this;
         }
 
-        MockBuilder mockQuorumCheck(KafkaRollerClient kafkaRollerClient, int leaderId, Map<Integer, Long> quorumState) {
+        MockBuilder mockQuorumCheck(KafkaRollerClient kafkaRollerClient, int leaderId, Map<Integer, Long> quorumState) throws InterruptedException {
             QuorumInfo quorumInfo = mock(QuorumInfo.class);
             when(quorumInfo.leaderId()).thenReturn(leaderId);
 
@@ -346,7 +375,7 @@ public class KafkaRoller2Test {
                                                      Function<Integer, String> kafkaConfigProvider,
                                                      int maxRestartsBatchSize) {
 
-        var kafkaRoller = KafkaRoller2.initialise(time,
+        var kafkaRoller = KafkaRoller2.initialise(
                 platformClient,
                 kafkaRollerClient,
                 kafkaAgentClient,
@@ -413,16 +442,23 @@ public class KafkaRoller2Test {
 
                     // Verify brokers had leader election
                     for (int nodeId : List.of(3, 4, 5, 6, 7, 8)) {
-                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        try {
+                            Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                     }
 
-
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
     @Test
-    public void shouldRestartUnreadyFirst() throws ExecutionException, InterruptedException {
+    public void shouldRestartUnreadyControllerFirst() throws ExecutionException, InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient agentClient = mockedKafkaAgentClient();
@@ -430,25 +466,36 @@ public class KafkaRoller2Test {
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1)
                 .addNodes(platformClient, true, true, 2)
-                .addNodes(platformClient, false, true, 3, 4)
                 .mockNodeBecomesReady(platformClient, 2, PlatformClient.PodState.NOT_READY, 1)
-                .mockBrokerState(agentClient, 2, 1, null) // broker state < 3 for unready
-                .mockNodeBecomesReady(platformClient, 4, PlatformClient.PodState.NOT_READY, 3) // It should get restarted on the 4th round after the controllers before broker 3.
-                .mockBrokerState(agentClient, 4, 1, null) // broker state < 3 for unready
-                .mockQuorumCheck(kafkaRollerClient, 1, defaultQuorumState)
+                .mockNotReadyAndThenReadyPod(platformClient, 2)
+                .mockBrokerStateNotReady(agentClient, 2) // broker state < 3 for unready
+                .mockQuorumCheck(kafkaRollerClient, 0, defaultQuorumState)
                 .done();
 
         doRollingRestart(platformClient, kafkaRollerClient, agentClient, nodeRefs.values(), KafkaRoller2Test::manualRolling, EMPTY_CONFIG_SUPPLIER, 1)
                 .whenComplete((r, e) -> {
-                    // The order we expect is unready controller (in this case combined), ready controller, active controller, unready broker, ready broker
-                    assertRestartedNodesOrder(2, 0, 1, 4, 3);
+                    // The order we expect is unready controller (in this case combined), ready controller, active controller
+                    assertRestartedNodesOrder(2, 1, 0);
+                }).get();
+    }
 
-                    // Verify brokers had leader election
-                    for (int nodeId : List.of(2, 3, 4)) {
-                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
-                    }
+    @Test
+    public void shouldRestartUnreadyBrokerFirst() throws ExecutionException, InterruptedException {
+        PlatformClient platformClient = mockedPlatformClient();
+        KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
+        KafkaAgentClient agentClient = mockedKafkaAgentClient();
 
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+        var nodeRefs = new MockBuilder()
+                .addNodes(platformClient, false, true, 0, 1, 2)
+                .mockNodeBecomesReady(platformClient, 2, PlatformClient.PodState.NOT_READY, 1)
+                .mockNotReadyAndThenReadyPod(platformClient, 2)
+                .mockBrokerStateNotReady(agentClient, 2) // broker state < 3 for unready
+                .done();
+
+        doRollingRestart(platformClient, kafkaRollerClient, agentClient, nodeRefs.values(), KafkaRoller2Test::manualRolling, EMPTY_CONFIG_SUPPLIER, 1)
+                .whenComplete((r, e) -> {
+                    // The order we expect is unready broker, ready broker
+                    assertRestartedNodesOrder(2, 0, 1);
                 }).get();
     }
 
@@ -470,14 +517,27 @@ public class KafkaRoller2Test {
         doRollingRestart(platformClient, kafkaRollerClient, null, nodeRefs.values(), KafkaRoller2Test::podHasOldRevision, EMPTY_CONFIG_SUPPLIER, 1)
                 .whenComplete((r, e) -> {
                     // The order we expect parallel restart of controllers and then broker, then healthy nodes
-                    assertRestartedNodesOrder(0, 2, 4, 1, 3);
+                    assertRestartBatches(List.of(
+                            List.of(0, 2),
+                            List.of(4),
+                            List.of(1),
+                            List.of(3)
+                    ));
 
                     // Verify brokers had leader election
                     for (int nodeId : List.of(2, 3, 4)) {
-                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        try {
+                            Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                     }
 
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
@@ -500,9 +560,17 @@ public class KafkaRoller2Test {
                     assertRestartedNodesOrder(0, 4);
 
                     // Verify broker had leader election
-                    Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(4)));
+                    try {
+                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(4)));
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
 
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
@@ -525,11 +593,19 @@ public class KafkaRoller2Test {
 
                     // Verify brokers had leader election
                     for (int nodeId : List.of(2, 3, 4)) {
-                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        try {
+                            Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                     }
 
                     for (var nodeRef : nodeRefs.values()) {
-                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                        try {
+                            Mockito.verify(kafkaRollerClient, never()).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                     }
                 }).get();
     }
@@ -558,7 +634,11 @@ public class KafkaRoller2Test {
                 1
         ).whenComplete((r, e) -> {
             assertRestartedNodesOrder(0, 2, 1, 3, 4);
-            Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+            try {
+                Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+            } catch (InterruptedException ex) {
+                throw new RuntimeException(ex);
+            }
         }).get();
     }
 
@@ -581,9 +661,17 @@ public class KafkaRoller2Test {
                     assertRestartedNodesOrder(0, 2, 1, 3, 4);
 
                     for (var nodeRef : nodeRefs.values()) {
-                        Mockito.verify(kafkaRollerClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                        try {
+                            Mockito.verify(kafkaRollerClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                         if (nodeRef.broker()) {
-                            Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+                            try {
+                                Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRef));
+                            } catch (InterruptedException ex) {
+                                throw new RuntimeException(ex);
+                            }
                         }
                     }
                 }).get();
@@ -607,15 +695,23 @@ public class KafkaRoller2Test {
 
                     // Verify controllers did not have leader election
                     for (int nodeId : List.of(1, 2)) {
-                        Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        try {
+                            Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(nodeId)));
+                        } catch (InterruptedException ex) {
+                            throw new RuntimeException(ex);
+                        }
                     }
 
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
     @Test
-    public void shouldRestartTwoNodesQuorumOneControllerBehind() {
+    public void shouldRestartTwoNodesQuorumOneControllerBehind() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mock(KafkaAgentClient.class);
@@ -652,12 +748,24 @@ public class KafkaRoller2Test {
                     assertRestartedNodesOrder(1, 2);
 
                     // Verify broker had leader election
-                    Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(2)));
+                    try {
+                        Mockito.verify(kafkaRollerClient, times(1)).tryElectAllPreferredLeaders(eq(nodeRefs.get(2)));
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
 
                     // Verify controller did not have leader election
-                    Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(eq(nodeRefs.get(1)));
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
 
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
@@ -678,14 +786,22 @@ public class KafkaRoller2Test {
 
         doRollingRestart(platformClient, kafkaRollerClient, null, nodeRefs.values(), KafkaRoller2Test::noReasons, EMPTY_CONFIG_SUPPLIER, 1)
                 .whenComplete((r, e) -> {
-                    Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).reconfigureNode(any(), any(), anyBoolean());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                     Mockito.verify(platformClient, never()).restartPod(any(), any());
-                    Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(any());
+                    try {
+                        Mockito.verify(kafkaRollerClient, never()).tryElectAllPreferredLeaders(any());
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }).get();
     }
 
     @Test
-    void shouldThrowFatalExceptionWhenNotReadyAfterRestart() {
+    void shouldThrowFatalExceptionWhenNotReadyAfterRestart() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mockedKafkaAgentClient();
@@ -693,8 +809,8 @@ public class KafkaRoller2Test {
                 .addNodes(platformClient, true, false, 0, 1)
                 .addNodes(platformClient, true, true, 2)
                 .addNodes(platformClient, false, true, 3, 4)
-                .mockNodeState(platformClient, List.of(PlatformClient.PodState.READY, PlatformClient.PodState.NOT_READY), 0)
-                .mockBrokerState(kafkaAgentClient, 0, 1, null) // When PodState is NOT_READY, BrokerState is checked. It is set to < 3 for not ready brokers
+                .mockNotReadyPod(platformClient, 0)
+                .mockBrokerStateNotReady(kafkaAgentClient, 0) // When PodState is NOT_READY, BrokerState is checked. It is set to < 3 for not ready brokers
                 .mockQuorumCheck(kafkaRollerClient, 1, defaultQuorumState)
                 .done();
 
@@ -709,7 +825,7 @@ public class KafkaRoller2Test {
                 ).get());
 
         assertThat(ex.getCause() instanceof KafkaRoller2.FatalException, is(true));
-        assertThat(ex.getCause().getMessage().contains("Error while waiting for restarted pod pool-kafka-0 to become ready"), is(true));
+        assertThat(ex.getCause().getMessage().contains("Error while waiting for restarted pod pool-kafka-0/0 to become ready"), is(true));
 
         assertRestartedNodesOrder(0);
         Mockito.verify(platformClient, never()).restartPod(eq(nodeRefs.get(1)), any());
@@ -721,7 +837,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldThrowFatalExceptionWhenNotReadyNoReason() {
+    void shouldThrowFatalExceptionWhenNotReadyNoReason() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mockedKafkaAgentClient();
@@ -729,7 +845,8 @@ public class KafkaRoller2Test {
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, false, true, 0, 1, 2)
                 .mockNodeState(platformClient, List.of(PlatformClient.PodState.NOT_READY), 0)
-                .mockBrokerState(kafkaAgentClient, 0, 1, null) // setting to < 3 for not ready brokers
+                .mockNotReadyPod(platformClient, 0)
+                .mockBrokerStateNotReady(kafkaAgentClient, 0) // setting to < 3 for not ready brokers
                 .done();
 
         var ex = assertThrows(ExecutionException.class,
@@ -751,7 +868,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartNotRunningWhenDoesNotHaveOldRevision() {
+    void shouldNotRestartNotRunningWhenDoesNotHaveOldRevision() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         var nodeRefs = new MockBuilder()
@@ -777,7 +894,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartWhenQuorumCheckFailed() {
+    void shouldNotRestartWhenQuorumCheckFailed() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 6000L);
@@ -807,7 +924,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartWhenAvailabilityCheckFailed() {
+    void shouldNotRestartWhenAvailabilityCheckFailed() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
 
@@ -835,7 +952,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartCombinedNodesWhenAvailabilityCheckFailed() {
+    void shouldNotRestartCombinedNodesWhenAvailabilityCheckFailed() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
 
@@ -865,19 +982,16 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartBrokerNodeInRecovery() {
+    void shouldNotRestartBrokerNodeInRecovery() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mockedKafkaAgentClient();
-
-        Map<String, Object> recoveryState = new HashMap<>();
-        recoveryState.put("remainingLogsToRecover", 100);
-        recoveryState.put("remainingSegmentsToRecover", 300);
 
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, false, true, 0, 1, 2)
                 .mockNodeState(platformClient, List.of(PlatformClient.PodState.NOT_READY), 2)
-                .mockBrokerState(kafkaAgentClient, 2, 2, recoveryState)
+                .mockNotReadyPod(platformClient, 2)
+                .mockBrokerStateRecovery(kafkaAgentClient, 2)
                 .done();
 
         var ex = assertThrows(ExecutionException.class,
@@ -895,19 +1009,15 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    void shouldNotRestartControllerNodeInRecovery() {
+    void shouldNotRestartControllerNodeInRecovery() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mockedKafkaAgentClient();
 
-        Map<String, Object> recoveryState = new HashMap<>();
-        recoveryState.put("remainingLogsToRecover", 100);
-        recoveryState.put("remainingSegmentsToRecover", 300);
-
         var nodeRefs = new MockBuilder()
                 .addNodes(platformClient, true, false, 0, 1, 2)
                 .mockNodeState(platformClient, List.of(PlatformClient.PodState.NOT_READY), 2)
-                .mockBrokerState(kafkaAgentClient, 2, 2, recoveryState)
+                .mockBrokerStateRecovery(kafkaAgentClient, 2)
                 .done();
 
 
@@ -926,7 +1036,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    public void shouldNotRestartEvenSizedQuorumTwoControllersBehind() {
+    public void shouldNotRestartEvenSizedQuorumTwoControllersBehind() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         Map<Integer, Long> quorumState = Map.of(0, 10_000L, 1, 10_000L, 2, 7000L, 3, 6000L);
@@ -951,7 +1061,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    public void shouldNotRestartControllersWithInvalidTimestamp() {
+    public void shouldNotRestartControllersWithInvalidTimestamp() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         Map<Integer, Long> quorumState = Map.of(0, -1L, 1, 10_000L, 2, -1L);
@@ -976,7 +1086,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    public void shouldNotRollControllersWithInvalidLeader() {
+    public void shouldNotRollControllersWithInvalidLeader() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
 
@@ -1001,7 +1111,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    public void shouldThrowExceptionInitAdminException() {
+    public void shouldThrowExceptionInitAdminException() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         doThrow(new RuntimeException("Failed to create admin client for brokers")).when(kafkaRollerClient).initialiseBrokerAdmin(any());
@@ -1040,7 +1150,11 @@ public class KafkaRoller2Test {
                 1
         ).whenComplete((r, e) -> {
             for (var nodeRef : nodeRefs.values()) {
-                Mockito.verify(kafkaRollerClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                try {
+                    Mockito.verify(kafkaRollerClient, times(1)).reconfigureNode(eq(nodeRef), any(), anyBoolean());
+                } catch (InterruptedException ex) {
+                    throw new RuntimeException(ex);
+                }
                 Mockito.verify(platformClient, never()).restartPod(eq(nodeRef), any());
             }
         }).get();
@@ -1125,7 +1239,7 @@ public class KafkaRoller2Test {
     }
 
     @Test
-    public void shouldRestartInExpectedOrderAndBatchedWithUrp() {
+    public void shouldRestartInExpectedOrderAndBatchedWithUrp() throws InterruptedException {
         PlatformClient platformClient = mockedPlatformClient();
         KafkaRollerClient kafkaRollerClient = mockedKafkaRollerClient();
         KafkaAgentClient kafkaAgentClient = mock(KafkaAgentClient.class);

@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -83,14 +84,13 @@ public class KafkaRoller2 {
                                           boolean allowReconfiguration,
                                           int maxRestartBatchSize,
                                           KubernetesRestartEventPublisher eventPublisher) {
-        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, postOperationTimeoutMs, eventPublisher);
-        Time time = Time.SYSTEM_TIME;
-        final var contexts = nodes.stream().map(node -> RestartContext.start(node, platformClient.kafkaNodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
+        PlatformClient platformClient = new PlatformClientImpl(podOperator, reconciliation.namespace(), reconciliation, postOperationTimeoutMs, pollingIntervalMs, eventPublisher);
+        final var contexts = nodes.stream().map(node -> RestartContext.start(node, platformClient.kafkaNodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace())).collect(Collectors.toList());
 
         KafkaRollerClient kafkaRollerClient = new KafkaRollerClientImpl(reconciliation, coTlsPemIdentity, adminClientProvider);
         KafkaAgentClient kafkaAgentClient = kafkaAgentClientProvider.createKafkaAgentClient(reconciliation, coTlsPemIdentity);
 
-        return new KafkaRoller2(time,
+        return new KafkaRoller2(
                 reconciliation,
                 pollingIntervalMs,
                 postOperationTimeoutMs,
@@ -106,8 +106,7 @@ public class KafkaRoller2 {
     }
 
     // visible for testing
-    static KafkaRoller2 initialise(Time time,
-                                   PlatformClient platformClient,
+    static KafkaRoller2 initialise(PlatformClient platformClient,
                                    KafkaRollerClient kafkaRollerClient,
                                    KafkaAgentClient kafkaAgentClient,
                                    Collection<NodeRef> nodes,
@@ -121,9 +120,9 @@ public class KafkaRoller2 {
                                    long pollingIntervalMs,
                                    int maxRestartBatchSize,
                                    Supplier<BackOff> backOffSupplier) {
-        final var contexts = nodes.stream().map(node -> RestartContext.start(node, platformClient.kafkaNodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace(), time)).collect(Collectors.toList());
+        final var contexts = nodes.stream().map(node -> RestartContext.start(node, platformClient.kafkaNodeRoles(node), predicate, backOffSupplier, podOperator, reconciliation.namespace())).collect(Collectors.toList());
 
-        return new KafkaRoller2(time,
+        return new KafkaRoller2(
                 reconciliation,
                 pollingIntervalMs,
                 postOperationTimeoutMs,
@@ -138,7 +137,6 @@ public class KafkaRoller2 {
         );
     }
 
-    private final Time time;
     private final PlatformClient platformClient;
     private final KafkaRollerClient kafkaRollerClient;
     private final KafkaAgentClient kafkaAgentClient;
@@ -155,7 +153,6 @@ public class KafkaRoller2 {
     /**
      * Constructor for RackRolling instance
      *
-     * @param time                   initial time to set for context
      * @param reconciliation         Reconciliation marker
      * @param pollingIntervalMs      The polling interval in milliseconds for checking node state
      * @param postOperationTimeoutMs The maximum time in milliseconds to wait after a restart or reconfigure
@@ -168,8 +165,7 @@ public class KafkaRoller2 {
      * @param kafkaVersion           Kafka version
      * @param allowReconfiguration   Flag indicting whether reconfiguration is allowed or not
      */
-    public KafkaRoller2(Time time,
-                        Reconciliation reconciliation,
+    public KafkaRoller2(Reconciliation reconciliation,
                         long pollingIntervalMs,
                         long postOperationTimeoutMs,
                         int maxRestartBatchSize,
@@ -180,7 +176,6 @@ public class KafkaRoller2 {
                         Function<Integer, String> kafkaConfigProvider,
                         KafkaVersion kafkaVersion,
                         boolean allowReconfiguration) {
-        this.time = time;
         this.platformClient = platformClient;
         this.kafkaRollerClient = kafkaRollerClient;
         this.kafkaAgentClient = kafkaAgentClient;
@@ -251,6 +246,9 @@ public class KafkaRoller2 {
                         scheduleResult.completeExceptionally(cause);
                         singleExecutor.shutdownNow();
 
+                    } else if (cause instanceof InterruptedException) {
+                        // Let the executor deal with interruption.
+                        Thread.currentThread().interrupt();
                     } else {
                         for (RestartContext restartContext : restartContexts) {
                             if (restartContext.shouldRetry()) {
@@ -317,8 +315,8 @@ public class KafkaRoller2 {
                 LOGGER.debugCr(reconciliation, "Pod {} does not need to be restarted", restartContext.nodeRef());
                 try {
                     LOGGER.debugCr(reconciliation, "Waiting for non-restarted pod {} to become ready", restartContext.nodeRef());
-                    remainingTimeoutMs = awaitReadyState(restartContext, remainingTimeoutMs);
-                } catch (TimeoutException e) {
+                    remainingTimeoutMs = awaitReadiness(restartContext, remainingTimeoutMs);
+                } catch (Exception e) {
                     notReadyNodes.add(restartContext);
                 }
                 LOGGER.debugCr(reconciliation, "Pod {} is now ready", restartContext.nodeRef());
@@ -335,7 +333,7 @@ public class KafkaRoller2 {
     private CompletableFuture<Void> initialiseContexts() {
         // Observe current state and update the contexts
         for (var context : restartContexts) {
-            context.transitionTo(observe(reconciliation, platformClient, kafkaAgentClient, context.nodeRef()), time);
+            context.transitionTo(observe(reconciliation, platformClient, kafkaAgentClient, context.nodeRef()));
             context.setRetryFlag(false);
         }
         return CompletableFuture.completedFuture(null);
@@ -386,27 +384,14 @@ public class KafkaRoller2 {
     }
 
 
-    private long awaitReadyState(RestartContext restartContext, long timeoutMs) throws TimeoutException {
-        LOGGER.infoCr(reconciliation, "Pod {}: Waiting for pod to enter state {}", restartContext.nodeRef(), State.READY);
-        return Alarm.timer(
-                time,
-                timeoutMs,
-                () -> "Failed to reach " + State.READY + " within " + timeoutMs + " ms: " + restartContext
-        ).poll(pollingIntervalMs, () -> {
-            var state = restartContext.transitionTo(observe(reconciliation, platformClient, kafkaAgentClient, restartContext.nodeRef()), time);
-            return state == State.READY;
-        });
-    }
-
-
     private CompletableFuture<Void> waitForLogRecovery() {
         long remainingTimeoutMs = postOperationTimeoutMs;
 
         for (RestartContext context : restartContexts) {
             if (context.state() != State.READY && context.state() != State.NOT_RUNNING) {
                 try {
-                    remainingTimeoutMs = awaitReadyState(context, remainingTimeoutMs);
-                } catch (TimeoutException e) {
+                    remainingTimeoutMs = awaitReadiness(context, remainingTimeoutMs);
+                } catch (Exception e) {
                     if  (context.state() == State.RECOVERING) {
                         context.setRetryFlag(true);
                         //TODO: previously we included remaining logs and segments to recover in the error for the reconciliation but we log a warning for it during observe()
@@ -476,77 +461,6 @@ public class KafkaRoller2 {
         }
     }
 
-    private CompletableFuture<Void> restartPodAndAwaitReadiness(RestartContext restartContext) {
-        try {
-            restart(restartContext);
-        } catch (Exception e) {
-            restartContext.setRetryFlag(true);
-            return CompletableFuture.failedFuture(new RetriableException("Error while trying to restart pod " + restartContext.nodeRef().podName() + " to become ready: " + e));
-        }
-
-        long remainingTimeoutMs = postOperationTimeoutMs;
-        try {
-            remainingTimeoutMs = awaitReadyState(restartContext, remainingTimeoutMs);
-            if (restartContext.currentRoles().broker()) {
-                awaitPreferred(restartContext, remainingTimeoutMs);
-            }
-        } catch (Exception e) {
-            return CompletableFuture.failedFuture(new FatalException("Error while waiting for restarted pod " + restartContext.nodeRef().podName() + " to become ready: " + e));
-        }
-
-        return CompletableFuture.completedFuture(null);
-    }
-
-    private CompletableFuture<Void> restartInParallelAndAwaitReadiness(List<RestartContext> batch) {
-        for (RestartContext restartContext : batch) {
-            try {
-                restart(restartContext);
-            } catch (Exception e) {
-                restartContext.setRetryFlag(true);
-                return CompletableFuture.failedFuture(new RetriableException("Error while trying to restart pod " + restartContext.nodeRef().podName() + " to become ready: " + e));
-            }
-        }
-
-        long remainingTimeoutMs = postOperationTimeoutMs;
-        for (RestartContext restartContext : batch) {
-            try {
-                remainingTimeoutMs = awaitReadyState(restartContext, remainingTimeoutMs);
-                if (restartContext.currentRoles().broker()) {
-                    awaitPreferred(restartContext, remainingTimeoutMs);
-                }
-            } catch (Exception e) {
-                return CompletableFuture.failedFuture(new FatalException("Error while waiting for restarted pod " + restartContext.nodeRef().podName() + " to become ready: " + e));
-            }
-        }
-
-        return CompletableFuture.completedFuture(null);
-    }
-
-    private void restart(RestartContext restartContext) {
-        LOGGER.infoCr(reconciliation, "Pod {}: Restarting", restartContext.nodeRef());
-        platformClient.restartPod(restartContext.nodeRef(), restartContext.reason());
-        restartContext.transitionTo(State.UNKNOWN, time);
-        restartContext.setRestarted(true);
-        LOGGER.infoCr(reconciliation, "Pod {}: Restarted", restartContext.nodeRef());
-    }
-
-    private void awaitPreferred(RestartContext restartContext, long timeoutMs) {
-        // TODO: apply configured delay (via env variable) before triggering leader election.
-        //  This should be probably passed to tryElectAllPreferredLeaders so that delay is only applied
-        //  if there are topic partitions to elect, otherwise no point of delaying the process
-        time.sleep(10000L, 0);
-        LOGGER.debugCr(reconciliation, "Pod {}: Waiting for Kafka broker to be leader of all its preferred replicas", restartContext.nodeRef());
-        try {
-            Alarm.timer(time,
-                            timeoutMs,
-                            () -> "Failed to elect the preferred leader " + restartContext.nodeRef() + " for topic partitions within " + timeoutMs)
-                    .poll(pollingIntervalMs, () -> kafkaRollerClient.tryElectAllPreferredLeaders(restartContext.nodeRef()) == 0);
-        } catch (TimeoutException e) {
-            LOGGER.warnCr(reconciliation, "Timed out waiting for pod " + restartContext.nodeRef() + " to be leader for all its preferred replicas");
-        } catch (Exception e) {
-            LOGGER.warnCr(reconciliation, "Failed to elect preferred replica", e);
-        }
-    }
 
     private CompletableFuture<Void> reconfigureNodes() {
         if (allowReconfiguration) {
@@ -579,7 +493,9 @@ public class KafkaRoller2 {
                         if (diff.canBeUpdatedDynamically()) {
                             try {
                                 //TODO: can we do joint call or has to be done singular?
-                                reconfigureNode(reconciliation, time, kafkaRollerClient, restartContext, diff);
+                                reconfigureNode(reconciliation, kafkaRollerClient, restartContext, diff);
+                            } catch (InterruptedException e) {
+                                return CompletableFuture.failedFuture(e);
                             } catch (Exception e) {
                                 LOGGER.warnCr(reconciliation, "Failed to reconfigure {} due to {} therefore will restart", restartContext.nodeRef(), e);
                                 restartContext.reason().add(RestartReason.CONFIG_CHANGE_REQUIRES_RESTART);
@@ -595,13 +511,12 @@ public class KafkaRoller2 {
     }
 
     private static void reconfigureNode(Reconciliation reconciliation,
-                                        Time time,
                                         KafkaRollerClient kafkaRollerClient,
                                         RestartContext restartContext,
-                                        KafkaConfigurationDiff configDiff) {
+                                        KafkaConfigurationDiff configDiff) throws InterruptedException {
         LOGGER.debugCr(reconciliation, "Pod {}: Reconfiguring", restartContext.nodeRef());
         kafkaRollerClient.reconfigureNode(restartContext.nodeRef(), configDiff, restartContext.currentRoles().broker());
-        restartContext.transitionTo(State.UNKNOWN, time);
+        restartContext.transitionTo(State.UNKNOWN);
         LOGGER.debugCr(reconciliation, "Pod {}: Reconfigured", restartContext.nodeRef());
     }
 
@@ -762,9 +677,152 @@ public class KafkaRoller2 {
 
         Batching batching = new Batching(reconciliation, topicDescriptions);
 
-        var batchToRestart = batching.getBatchedBrokersToRestart(brokersNeedingRestart.stream().map(KafkaRoller2.RestartContext::nodeId).collect(Collectors.toSet()), maxRestartBatchSize);
+        var batchToRestart = batching.getBatchedBrokersToRestart(brokersNeedingRestart.stream().map(RestartContext::nodeId).collect(Collectors.toSet()), maxRestartBatchSize);
 
         return brokersNeedingRestart.stream().filter(c -> batchToRestart.contains(c.nodeId())).toList();
+    }
+
+
+    private void restart(RestartContext restartContext) throws InterruptedException {
+        LOGGER.infoCr(reconciliation, "Pod {}: Restarting", restartContext.nodeRef());
+        await(platformClient.restartPod(restartContext.nodeRef(), restartContext.reason()), postOperationTimeoutMs, e -> new RuntimeException("Error while trying to restart pod " + restartContext.nodeRef));
+        restartContext.setRestarted(true);
+        LOGGER.infoCr(reconciliation, "Pod {}: Restarted", restartContext.nodeRef());
+    }
+
+    private CompletableFuture<Void> restartInParallelAndAwaitReadiness(List<RestartContext> batch) {
+        for (RestartContext context : batch) {
+            try {
+                restart(context);
+            } catch (Exception e) {
+                context.setRetryFlag(true);
+                return CompletableFuture.failedFuture(e);
+            }
+        }
+
+        long remainingTimeoutMs = postOperationTimeoutMs;
+        for (RestartContext context : batch) {
+            try {
+                remainingTimeoutMs = awaitReadiness(context, remainingTimeoutMs);
+                if (context.currentRoles().broker()) {
+                    remainingTimeoutMs = awaitPreferred(context, remainingTimeoutMs);
+                }
+            } catch (InterruptedException e) {
+                return CompletableFuture.failedFuture(e);
+            } catch (Exception e) {
+                return CompletableFuture.failedFuture(new FatalException("Error while waiting for restarted pod " + context.nodeRef + " to become ready", e));
+            }
+        }
+        return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * Synchronously restart the given pod
+     * by deleting it and letting it be recreated by K8s, then synchronously wait for it to be ready.
+     *
+     * @param context    Restart context
+     */
+    private CompletableFuture<Void> restartPodAndAwaitReadiness(RestartContext context) {
+        try {
+            restart(context);
+        } catch (Exception e) {
+            context.setRetryFlag(true);
+            return CompletableFuture.failedFuture(e);
+        }
+
+        try {
+            long remainingTimeoutMs = awaitReadiness(context, postOperationTimeoutMs);
+            if (context.currentRoles().broker()) {
+                awaitPreferred(context, remainingTimeoutMs);
+            }
+        } catch (InterruptedException e) {
+            return CompletableFuture.failedFuture(e);
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(new FatalException("Error while waiting for restarted pod " + context.nodeRef + " to become ready", e));
+        }
+
+        return CompletableFuture.completedFuture(null);
+    }
+
+    private long awaitReadiness(RestartContext context, long timeoutMs) throws InterruptedException {
+        LOGGER.infoCr(reconciliation, "Waiting for pod {} to become ready", context.nodeRef());
+        long time = System.currentTimeMillis();
+        await(platformClient.podReadiness(context.nodeRef), timeoutMs, e -> new io.strimzi.operator.common.TimeoutException("Timeout waiting for pod " + context.nodeRef() + " to become ready within " + timeoutMs + ": " + unwrap(e)));
+
+        long now = System.currentTimeMillis();
+        LOGGER.infoCr(reconciliation, "Pod {} is now ready", context.nodeRef());
+        context.transitionTo(State.READY);
+        return timeoutMs - (now - time);
+    }
+
+    private long awaitPreferred(RestartContext context, long remainingTimeoutMs) {
+        // TODO: apply configured delay (via env variable) before triggering leader election.
+        //  This should be probably passed to tryElectAllPreferredLeaders so that delay is only applied
+        //  if there are topic partitions to elect, otherwise no point of delaying the process
+
+        LOGGER.debugCr(reconciliation, "Pod {}: Waiting for Kafka broker to be leader of all its preferred replicas", context.nodeRef());
+
+        long startTime = System.currentTimeMillis();
+        long deadline = startTime + remainingTimeoutMs;
+        int lastFailedCount = -1;
+
+        while (System.currentTimeMillis() < deadline) {
+            int failedElections;
+            try {
+                failedElections = kafkaRollerClient.tryElectAllPreferredLeaders(context.nodeRef());
+
+                if (failedElections == 0) {
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    LOGGER.debugCr(reconciliation, "Pod {} is now leading all its preferred replicas (took {}ms)", context.nodeRef(), elapsed);
+                    return remainingTimeoutMs - elapsed;
+                }
+
+                if (lastFailedCount != failedElections) {
+                    LOGGER.debugCr(reconciliation, "Pod {}: {} partition(s) still need preferred leader election", context.nodeRef(), failedElections);
+                    lastFailedCount = failedElections;
+                }
+
+                // Sleep before retry, but don't exceed deadline
+                long timeLeft = deadline - System.currentTimeMillis();
+                if (timeLeft > pollingIntervalMs) {
+                    Thread.sleep(pollingIntervalMs);
+                } else if (timeLeft > 0) {
+                    Thread.sleep(timeLeft);
+                }
+            } catch (Exception e) {
+                LOGGER.warnCr(reconciliation, "Error while electing preferred leaders for pod {}", context.nodeRef(), e);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                return Math.max(0, deadline - System.currentTimeMillis());
+            }
+        }
+
+        LOGGER.warnCr(reconciliation, "Failed to elect preferred leaders for pod {} within {} ms", context.nodeRef(), remainingTimeoutMs);
+        return 0;
+    }
+
+    /**
+     * Block waiting for up to the given timeout for the given Future to complete, returning its result.
+     *
+     * @param completableFuture The completableFuture to wait for.
+     * @param timeoutMs         The timeout in milliseconds.
+     * @param exceptionMapper   A function for rethrowing exceptions.
+     * @param <T>               The result type
+     * @param <E>               The exception type
+     * @throws E                    The exception type returned from {@code exceptionMapper}.
+     * @throws InterruptedException If the waiting was interrupted.
+     */
+    private static <T, E extends Exception> void await(CompletableFuture<T> completableFuture, long timeoutMs,
+                                                       Function<Throwable, E> exceptionMapper)
+            throws E, InterruptedException {
+        try {
+            completableFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (ExecutionException e) {
+            throw exceptionMapper.apply(e.getCause());
+        } catch (TimeoutException e) {
+            throw exceptionMapper.apply(e);
+        }
     }
 
     /**
@@ -813,26 +871,23 @@ public class KafkaRoller2 {
                                     Function<Pod, RestartReasons> predicate,
                                     Supplier<BackOff> backOffSupplier,
                                     PodOperator podOperator,
-                                    String namespace,
-                                    Time time) {
+                                    String namespace) {
             Pod pod = podOperator.get(namespace, nodeRef.podName());
             if (pod == null) {
-                return new RestartContext(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(),  RestartReasons.empty(), backOffSupplier.get());
+                return new RestartContext(nodeRef, nodeRoles, State.UNKNOWN, System.currentTimeMillis(),  RestartReasons.empty(), backOffSupplier.get());
             } else {
                 BackOff backOff = backOffSupplier.get();
                 backOff.delayMs();
-                return new RestartContext(nodeRef, nodeRoles, State.UNKNOWN, time.systemTimeMillis(), predicate.apply(pod), backOff);
+                return new RestartContext(nodeRef, nodeRoles, State.UNKNOWN, System.currentTimeMillis(), predicate.apply(pod), backOff);
             }
         }
 
-        State transitionTo(State state, Time time) {
+        void transitionTo(State state) {
             if (this.state() == state) {
-                return state;
+                return;
             }
             this.state = state;
-
-            this.lastTransition = time.systemTimeMillis();
-            return state;
+            this.lastTransition = System.currentTimeMillis();
         }
 
         private NodeRef nodeRef() {
@@ -914,6 +969,10 @@ public class KafkaRoller2 {
          */
         public FatalException(String message) {
             super(message);
+        }
+
+        FatalException(String message, Throwable throwable) {
+            super(message, throwable);
         }
 
     }

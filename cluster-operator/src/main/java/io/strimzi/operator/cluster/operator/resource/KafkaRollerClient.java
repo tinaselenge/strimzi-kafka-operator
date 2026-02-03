@@ -56,7 +56,7 @@ public interface KafkaRollerClient {
      *
      * @return All the topics in the cluster, including internal topics.
      */
-    Collection<TopicListing> listTopics();
+    Collection<TopicListing> listTopics() throws InterruptedException;
 
     /**
      * Describe the topics with the given ids.
@@ -65,7 +65,7 @@ public interface KafkaRollerClient {
      * @param topicIds The topic ids.
      * @return The topic descriptions.
      */
-    List<TopicDescription> describeTopics(List<Uuid> topicIds);
+    List<TopicDescription> describeTopics(List<Uuid> topicIds) throws InterruptedException;
 
 
     /**
@@ -73,14 +73,14 @@ public interface KafkaRollerClient {
      * @param topicNames The names of the topics to get the configs for.
      * @return A map from topic name to its {@code Config}.
      */
-    Map<String, Config> describeTopicConfigs(List<String> topicNames);
+    Map<String, Config> describeTopicConfigs(List<String> topicNames) throws InterruptedException;
 
     /**
      * Describe the metadata quorum info.
      *
      * @return {@code QuorumInfo}.
      */
-    QuorumInfo describeMetadataQuorum();
+    QuorumInfo describeMetadataQuorum() throws InterruptedException;
 
     /**
      * Describe the metadata quorum and return the active controller's id.
@@ -96,7 +96,7 @@ public interface KafkaRollerClient {
      * @param kafkaConfigurationDiff The broker config diff
      * @param isBroker               a boolean value informing if it's a broker node
      */
-    void reconfigureNode(NodeRef nodeRef, KafkaConfigurationDiff kafkaConfigurationDiff, boolean isBroker);
+    void reconfigureNode(NodeRef nodeRef, KafkaConfigurationDiff kafkaConfigurationDiff, boolean isBroker) throws InterruptedException;
 
     /**
      * Try to elect the given server as the leader for all the replicas on the server where it's not already
@@ -104,7 +104,7 @@ public interface KafkaRollerClient {
      * @param nodeRef The node
      * @return The number of replicas on the server which it is not leading, but is preferred leader
      */
-    int tryElectAllPreferredLeaders(NodeRef nodeRef);
+    int tryElectAllPreferredLeaders(NodeRef nodeRef) throws InterruptedException;
 
     /**
      * Return the Kafka broker configs and logger configs for each of the given nodes
@@ -112,7 +112,7 @@ public interface KafkaRollerClient {
      * @param nodeId The nodes to get the configs for
      * @return A map from node id to configs
      */
-    Config describeBrokerConfigs(int nodeId);
+    Config describeBrokerConfigs(int nodeId) throws InterruptedException;
 
     /**
      * Return the Kafka controller configs for each of the given nodes
@@ -120,5 +120,5 @@ public interface KafkaRollerClient {
      * @param nodeId The nodes to get the configs for
      * @return A map from node id to configs
      */
-    Config describeControllerConfigs(int nodeId);
+    Config describeControllerConfigs(int nodeId) throws InterruptedException;
 }

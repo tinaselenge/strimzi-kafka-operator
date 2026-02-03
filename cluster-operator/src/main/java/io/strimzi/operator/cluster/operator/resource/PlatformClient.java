@@ -7,6 +7,8 @@ package io.strimzi.operator.cluster.operator.resource;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReasons;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * Abstraction over the platform (i.e. kubernetes).
  */
@@ -37,12 +39,21 @@ public interface PlatformClient {
     PodState podState(NodeRef nodeRef);
 
     /**
+     * Check pod readiness
+     * @param nodeRef Node reference
+     * @return CompletableFuture that completes when pod reaches readiness or times out
+     * */
+    CompletableFuture<Void> podReadiness(NodeRef nodeRef);
+
+    /**
      * Initiate the restart of the corresponding Kafka server.
      *
      * @param nodeRef The node.
      * @param reasons Reasons for restarting the node to emit as an event
+     *
+     * @return CompletableFuture that completes when pod gets restarted
      */
-    void restartPod(NodeRef nodeRef, RestartReasons reasons);
+    CompletableFuture<Void> restartPod(NodeRef nodeRef, RestartReasons reasons);
 
     /**
      * The current Kafka process roles of the node could differ from the NodeRef which is actually desired roles.

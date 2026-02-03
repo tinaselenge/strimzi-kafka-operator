@@ -16,6 +16,7 @@ import io.strimzi.operator.common.model.Labels;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  *  Implementation of PlatformClient in terms of Kubernetes Pods
@@ -28,13 +29,15 @@ public class PlatformClientImpl implements PlatformClient {
     private final Reconciliation reconciliation;
 
     private final long operationTimeoutMs;
+    private final long pollingIntervalMs;
     private final KubernetesRestartEventPublisher eventPublisher;
 
-    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation, long operationTimeoutMs, KubernetesRestartEventPublisher eventPublisher) {
+    PlatformClientImpl(PodOperator podOps, String namespace, Reconciliation reconciliation, long operationTimeoutMs, long pollingIntervalMs, KubernetesRestartEventPublisher eventPublisher) {
         this.podOps = podOps;
         this.namespace = namespace;
         this.reconciliation = reconciliation;
         this.operationTimeoutMs = operationTimeoutMs;
+        this.pollingIntervalMs = pollingIntervalMs;
         this.eventPublisher = eventPublisher;
     }
 
@@ -80,10 +83,33 @@ public class PlatformClientImpl implements PlatformClient {
     }
 
     @Override
-    public void restartPod(NodeRef nodeRef, RestartReasons reasons) {
+    public CompletableFuture<Void> podReadiness(NodeRef nodeRef) {
+        CompletableFuture<Void> cf = new CompletableFuture<>();
+        podOps.readiness(reconciliation, namespace, nodeRef.podName(), pollingIntervalMs, operationTimeoutMs)
+                .onComplete(ar -> {
+                    if (ar.succeeded()) {
+                        cf.complete(null);
+                    } else {
+                        cf.completeExceptionally(ar.cause());
+                    }
+                });
+        return cf;
+    }
+
+    @Override
+    public CompletableFuture<Void> restartPod(NodeRef nodeRef, RestartReasons reasons) {
+        CompletableFuture<Void> cf = new CompletableFuture<>();
         var pod = podOps.get(namespace, nodeRef.podName());
         podOps.restart(reconciliation, pod, operationTimeoutMs)
-                .onComplete(i -> eventPublisher.publishRestartEvents(reconciliation, pod, reasons));
+                .onComplete(ar -> {
+                    if (ar.succeeded()) {
+                        eventPublisher.publishRestartEvents(reconciliation, pod, reasons);
+                        cf.complete(null);
+                    } else {
+                        cf.completeExceptionally(ar.cause());
+                    }
+                });
+        return cf;
     }
 
     @Override
@@ -99,4 +125,5 @@ public class PlatformClientImpl implements PlatformClient {
             return new KafkaNodeRoles(nodeRef.controller(), nodeRef.broker());
         }
     }
+
 }
