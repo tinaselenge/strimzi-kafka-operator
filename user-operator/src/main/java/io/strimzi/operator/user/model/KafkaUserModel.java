@@ -253,82 +253,56 @@ public class KafkaUserModel {
         );
         this.caCert = clientsCa.currentCaCertBase64();
 
+        CertAndKey existingUserCertAndKey = null;
         if (userSecret != null) {
-            // Secret already exists -> lets verify if it has keys from the same CA
-            String originalCaCrt = clientsCaCertSecret.getData().get("ca.crt");
-            String caCrt = userSecret.getData().get("ca.crt");
-            String userCrt = userSecret.getData().get("user.crt");
-            String userKey = userSecret.getData().get("user.key");
 
             if (userSecret.getMetadata() != null
                     && Annotations.booleanAnnotation(userSecret, Annotations.ANNO_STRIMZI_IO_FORCE_RENEW, false)) {
                 // The user secret has the annotation which forces replacement => we have to generate a new user certificate
                 LOGGER.infoCr(reconciliation, "Certificate for user {} in namespace {} will be renewed due to force-renew annotation", name, namespace);
-                this.userCertAndKey = generateNewCertificate(reconciliation, clientsCa);
-            } else if (originalCaCrt != null
-                    && originalCaCrt.equals(caCrt)
-                    && userCrt != null
-                    && !userCrt.isEmpty()
-                    && userKey != null
-                    && !userKey.isEmpty()) {
-                if (clientsCa.isExpiring(userSecret, "user.crt"))   {
-                    // The certificate exists but is expiring
-                    if (Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))   {
-                        // => if we are in compliance with maintenance window, we renew it
-                        LOGGER.infoCr(reconciliation, "Certificate for user {} in namespace {} is within the renewal period and will be renewed", name, namespace);
-                        this.userCertAndKey = generateNewCertificate(reconciliation, clientsCa);
-                    } else {
-                        // => if we are outside of maintenance window, we reuse it
-                        LOGGER.infoCr(reconciliation, "Certificate for user {} in namespace {} is within the renewal period and will be renewed in the next maintenance window", name, namespace);
-                        this.userCertAndKey = reuseCertificate(reconciliation, clientsCa, userSecret);
-                    }
-                } else {
-                    // The certificate exists and isn't expiring => we just reuse it
-                    this.userCertAndKey = reuseCertificate(reconciliation, clientsCa, userSecret);
-                }
             } else {
-                // User secret exists, but does not seem to contain the complete user certificate => we have to generate a new user certificate
-                this.userCertAndKey = generateNewCertificate(reconciliation, clientsCa);
+                // Secret already exists -> lets verify if it has keys from the same CA
+                String originalCaCrt = clientsCaCertSecret.getData().get("ca.crt");
+                String caCrt = userSecret.getData().get("ca.crt");
+
+                if (originalCaCrt != null && originalCaCrt.equals(caCrt)) {
+                    existingUserCertAndKey = getExistingCertificateAndKey(reconciliation, clientsCa, userSecret, generatePkcs12Stores);
+                }
             }
-        } else {
-            // User secret does not exist yet => we have to generate a new user certificate
-            this.userCertAndKey = generateNewCertificate(reconciliation, clientsCa);
         }
+
+        userCertAndKey = clientsCa.maybeCopyOrGenerateClientCert(reconciliation, name, existingUserCertAndKey, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
     }
 
-    CertAndKey generateNewCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa) {
-        try {
-            return clientsStrimziCa.generateSignedCert(name);
-        } catch (IOException e) {
-            LOGGER.errorCr(reconciliation, "Error generating signed certificate for user {}", name, e);
-            return null;
-        }
-    }
+    private CertAndKey getExistingCertificateAndKey(Reconciliation reconciliation, InternalCa clientsStrimziCa, Secret userSecret, boolean generatePkcs12Stores) {
+        byte[] key = decodeFromSecret(userSecret, "user.key");
+        byte[] cert = decodeFromSecret(userSecret, "user.crt");
+        int caCertGeneration = clientsStrimziCa.caCertGeneration();
 
-    CertAndKey reuseCertificate(Reconciliation reconciliation, InternalCa clientsStrimziCa, Secret userSecret) {
+        if (!generatePkcs12Stores) {
+            return new CertAndKey(key, cert, null, null, null, caCertGeneration);
+        }
+
         String userKeyStore = userSecret.getData().get("user.p12");
         String userKeyStorePassword = userSecret.getData().get("user.password");
 
-        if (userKeyStore != null
-                && !userKeyStore.isEmpty()
-                && userKeyStorePassword != null
-                && !userKeyStorePassword.isEmpty()) {
+        if (userKeyStore != null && !userKeyStore.isEmpty()
+                && userKeyStorePassword != null && !userKeyStorePassword.isEmpty()) {
             return new CertAndKey(
-                    decodeFromSecret(userSecret, "user.key"),
-                    decodeFromSecret(userSecret, "user.crt"),
+                    key,
+                    cert,
                     null,
                     decodeFromSecret(userSecret, "user.p12"),
-                    new String(decodeFromSecret(userSecret, "user.password"), StandardCharsets.US_ASCII));
-        } else {
-            // coming from an older operator version, the user secret exists but without keystore and password
-            try {
-                return clientsStrimziCa.addKeyAndCertToKeyStore(name,
-                        decodeFromSecret(userSecret, "user.key"),
-                        decodeFromSecret(userSecret, "user.crt"));
-            } catch (IOException e) {
-                LOGGER.errorCr(reconciliation, "Error generating the keystore for user {}", name, e);
-                return null;
-            }
+                    new String(decodeFromSecret(userSecret, "user.password"), StandardCharsets.US_ASCII),
+                    caCertGeneration);
+        }
+
+        // PKCS12 stores should be generated because they are missing from the secret
+        try {
+            return clientsStrimziCa.generatePkcs12Store(name, key, cert, caCertGeneration);
+        } catch (IOException e) {
+            LOGGER.errorCr(reconciliation, "Error generating the keystore for user {}", name, e);
+            return null;
         }
     }
 
