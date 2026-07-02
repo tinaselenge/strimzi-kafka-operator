@@ -25,6 +25,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.PKIXParameters;
 import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -192,5 +193,19 @@ public class CaUtils {
         }
         subject.withCommonName(commonName);
         return subject.build();
+    }
+
+    /**
+     * Convert an int to a fabric8 Duration.
+     *
+     * Since the constructor only takes a java.time.Duration the checkstyle
+     * warning for qualified class names needs to be suppressed.
+     *
+     * @param days int of days
+     * @return fabric8 duration representing the days
+     */
+    @SuppressWarnings("NoFullyQualifiedClassNames")
+    public static io.fabric8.kubernetes.api.model.Duration convertToFabric8Duration(int days) {
+        return new io.fabric8.kubernetes.api.model.Duration(Duration.ofDays(days));
     }
 }

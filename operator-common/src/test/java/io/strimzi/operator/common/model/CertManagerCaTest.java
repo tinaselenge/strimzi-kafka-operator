@@ -32,13 +32,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static io.strimzi.operator.common.model.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
 import static io.strimzi.operator.common.model.Ca.CA_CRT;
+import static io.strimzi.operator.common.model.CaUtils.convertToFabric8Duration;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -229,8 +229,8 @@ public class CertManagerCaTest {
                     assertThat(certificate.getSpec().getSubject().getOrganizations().size(), is(1));
                     assertThat(certificate.getSpec().getSubject().getOrganizations().getFirst(), is("io.strimzi"));
 
-                    assertThat(certificate.getSpec().getDuration(), is(new io.fabric8.kubernetes.api.model.Duration(Duration.ofDays(VALIDITY_DAYS))));
-                    assertThat(certificate.getSpec().getRenewBefore(), is(new io.fabric8.kubernetes.api.model.Duration(Duration.ofDays(RENEWAL_DAYS))));
+                    assertThat(certificate.getSpec().getDuration(), is(convertToFabric8Duration(VALIDITY_DAYS)));
+                    assertThat(certificate.getSpec().getRenewBefore(), is(convertToFabric8Duration(RENEWAL_DAYS)));
 
                     assertThat(certificate.getSpec().getDnsNames().size(), is(1));
                     assertThat(certificate.getSpec().getDnsNames().getFirst(), is("mock-component.namespace.local"));
