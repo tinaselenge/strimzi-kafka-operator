@@ -119,6 +119,64 @@ public class InternalCa extends Ca {
         return new HashMap<>();
     }
 
+    /**
+     * Generates or reuses a single certificate signed by this Cluster CA.
+     * Used for components that only act as clients, like Entity Operators and Kafka Exporter.
+     *
+     * @param reconciliation                        Reconciliation marker
+     * @param commonName                            Common Name for the certificate
+     * @param existingCertAndKey                    Existing certificate (or null if none exists)
+     * @param isMaintenanceTimeWindowsSatisfied     Whether we are in a maintenance window
+     *
+     * @return CertAndKey object containing the certificate and key with CA generation set
+     */
+    public CertAndKey maybeCopyOrGenerateClientCert(
+            Reconciliation reconciliation,
+            String commonName,
+            CertAndKey existingCertAndKey,
+            boolean isMaintenanceTimeWindowsSatisfied
+    ) {
+        List<String> reasons = new ArrayList<>();
+
+        if (existingCertAndKey == null) {
+            reasons.add("certificate doesn't exist yet");
+        } else if (hasCaCertGenerationChanged(existingCertAndKey.caCertGeneration(), commonName)) {
+            reasons.add("certificate has old cert generation");
+        } else {
+            // Certificate exists and CA generation matches - check if renewal is needed
+            if (isExpiring(existingCertAndKey.cert()) && isMaintenanceTimeWindowsSatisfied) {
+                reasons.add("certificate is expiring");
+            }
+        }
+
+        CertAndKey certAndKey = null;
+        if (!reasons.isEmpty()) {
+            LOGGER.infoCr(reconciliation, "Certificate for component {} needs to be regenerated because: {}", commonName, String.join(", ", reasons));
+
+            try {
+                String org = caRole.equals(CaRole.CLIENTS_CA) ? null : InternalCa.IO_STRIMZI;
+                certAndKey = getSignedCert(commonName, org);
+            } catch (IOException e) {
+                LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
+            }
+
+            LOGGER.debugCr(reconciliation, "End generating certificates");
+        } else {
+            certAndKey = existingCertAndKey;
+        }
+
+        return certAndKey;
+    }
+
+    /**
+     * It checks if the current CA certificate generation is changed compared to the one
+     * that signed the CertAndKey.
+     */
+    private boolean hasCaCertGenerationChanged(int certAndKeyCaCertGeneration, String podName) {
+        LOGGER.debugOp("Pod {} generation anno = {}, current CA generation = {}", podName, certAndKeyCaCertGeneration, caCertGeneration());
+        return certAndKeyCaCertGeneration != caCertGeneration;
+    }
+
     private static void delete(Reconciliation reconciliation, File file) {
         if (file != null && !file.delete()) {
             LOGGER.warnCr(reconciliation, "{} cannot be deleted", file.getName());
@@ -126,46 +184,37 @@ public class InternalCa extends Ca {
     }
 
     /**
-     * Adds a certificate into a PKCS12 keystore
+     * Generates a PKCS12 keystore for an existing key and certificate.
      *
-     * @param alias     Alias under which it should be stored in the PKCS12 store
-     * @param key       Private key
-     * @param cert      Public key
+     * @param alias                     Alias under which it should be stored in the PKCS12 store
+     * @param key                       Private key
+     * @param cert                      Public key
+     * @param caCertGeneration          Generation number of the CA that signed this certificate
      *
-     * @return  PKCS12 store with the certificate
+     * @return  CertAndKey with the certificate and PKCS12 store
      *
      * @throws IOException  Throws an IOException if something fails when working with the files
      */
-    public CertAndKey addKeyAndCertToKeyStore(String alias, byte[] key, byte[] cert) throws IOException {
+    public CertAndKey generatePkcs12Store(String alias, byte[] key, byte[] cert, int caCertGeneration) throws IOException {
         try {
             File keyFile = Files.createTempFile("tls", "key").toFile();
             File certFile = Files.createTempFile("tls", "cert").toFile();
-            File keyStoreFile = null;
+            File keyStoreFile = Files.createTempFile("tls", "p12").toFile();
 
             try {
                 Files.write(keyFile.toPath(), key);
                 Files.write(certFile.toPath(), cert);
 
-                if (caConfig.isGeneratePkcs12Stores()) {
-                    keyStoreFile = Files.createTempFile("tls", "p12").toFile();
+                String keyStorePassword = passwordGenerator.generate();
+                certIssuer.addKeyAndCertToKeyStore(keyFile, certFile, alias, keyStoreFile, keyStorePassword);
 
-                    String keyStorePassword = passwordGenerator.generate();
-                    certIssuer.addKeyAndCertToKeyStore(keyFile, certFile, alias, keyStoreFile, keyStorePassword);
-
-                    return new CertAndKey(
-                            Files.readAllBytes(keyFile.toPath()),
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            Files.readAllBytes(keyStoreFile.toPath()),
-                            keyStorePassword);
-                } else {
-                    return new CertAndKey(
-                            Files.readAllBytes(keyFile.toPath()),
-                            Files.readAllBytes(certFile.toPath()),
-                            null,
-                            null,
-                            null);
-                }
+                return new CertAndKey(
+                        Files.readAllBytes(keyFile.toPath()),
+                        Files.readAllBytes(certFile.toPath()),
+                        null,
+                        Files.readAllBytes(keyStoreFile.toPath()),
+                        keyStorePassword,
+                        caCertGeneration);
             } finally {
                 delete(reconciliation, keyFile);
                 delete(reconciliation, certFile);
@@ -230,17 +279,6 @@ public class InternalCa extends Ca {
         } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException | InvalidKeySpecException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    /**
-     * Generates a certificate signed by this CA
-     *
-     * @param commonName The CN of the certificate to be generated.
-     * @return A CompletionStage which completes with the newly generated certificate CertAndKey
-     * @throws IOException If the cert could not be generated.
-     */
-    public CertAndKey generateSignedCert(String commonName) throws IOException {
-        return generateSignedCert(CaUtils.getSubject(commonName, null));
     }
 
     /**

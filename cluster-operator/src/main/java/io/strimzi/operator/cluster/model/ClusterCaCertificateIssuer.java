@@ -521,17 +521,18 @@ public final class ClusterCaCertificateIssuer {
      * @return  List of certificate Subject Alternate Names
      */
     private static List<String> getSubjectAltNames(Reconciliation reconciliation, byte[] certificate) {
-        List<String> subjectAltNames = null;
+        List<String> subjectAltNames = new ArrayList<>();
 
         try {
             X509Certificate cert = CaUtils.x509Certificate(certificate);
             Collection<List<?>> altNames = cert.getSubjectAlternativeNames();
-            subjectAltNames = altNames.stream()
-                    .filter(name -> name.get(1) instanceof String)
-                    .map(item -> (String) item.get(1))
-                    .collect(Collectors.toList());
+            if (altNames != null) {
+                subjectAltNames = altNames.stream()
+                        .filter(name -> name.get(1) instanceof String)
+                        .map(item -> (String) item.get(1))
+                        .collect(Collectors.toList());
+            }
         } catch (CertificateException | RuntimeException e) {
-            // TODO: We should mock the certificates properly so that this doesn't fail in tests (not now => long term :-o)
             LOGGER.debugCr(reconciliation, "Failed to parse existing certificate", e);
         }
 
