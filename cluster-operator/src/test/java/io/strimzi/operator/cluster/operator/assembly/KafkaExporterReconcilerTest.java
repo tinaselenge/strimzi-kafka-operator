@@ -90,7 +90,6 @@ public class KafkaExporterReconcilerTest {
             Reconciliation.DUMMY_RECONCILIATION,
             Ca.CaRole.CLUSTER_CA,
             null,
-            null,
             new CaConfig(CertificateAuthority.DEFAULT_CERTS_VALIDITY_DAYS, CertificateAuthority.DEFAULT_CERTS_RENEWAL_DAYS, false, false, CertificateManagerType.CERT_MANAGER_IO),
             null,
             null,

@@ -39,7 +39,7 @@ import static io.strimzi.operator.common.ca.Ca.CA_CRT;
  */
 public class CertManagerCaProvider extends CaProvider {
     private final SecretOperator secretOperator;
-    private final Secret cluserOperatorSecret;
+    private final Secret clusterOperatorSecret;
     private final CertManager certManagerConfig;
     private final CertificateAuthority certificateAuthority;
     private final CertManagerCertificateOperator certificateOperator;
@@ -64,7 +64,7 @@ public class CertManagerCaProvider extends CaProvider {
                                  ) {
         super(reconciliation, caRole, caConfig, kafkaCr, existingCaCertSecret, null);
         this.secretOperator = secretOperator;
-        this.cluserOperatorSecret = clusterOperatorSecret;
+        this.clusterOperatorSecret = clusterOperatorSecret;
         this.certManagerConfig = certManagerConfig;
         this.certificateAuthority = switch (caRole) {
             case CLUSTER_CA -> kafkaCr.getSpec().getClusterCa();
@@ -75,13 +75,16 @@ public class CertManagerCaProvider extends CaProvider {
 
     @Override
     public CompletionStage<Ca> createCa() {
+        if (existingCaCertSecret == null)   {
+            throw new InvalidResourceException(caRole.name() + " should not be generated, but the cert secret were not found.");
+        }
+        validateUserCaCertChain(existingCaCertSecret.getData());
         return getCaCertForCertManager()
                 .thenApply(newCaCertAsBase64 -> {
                     IssuerRef issuerRef = certificateAuthority != null && certificateAuthority.getCertManager() != null
                             ? certificateAuthority.getCertManager().getIssuerRef() : null;
                     CertManagerCa certManagerCa = new CertManagerCa(reconciliation, Ca.CaRole.CLUSTER_CA,
                             existingCaCertSecret,
-                            existingCaKeySecret,
                             caConfig,
                             certificateOperator,
                             secretOperator,
@@ -99,7 +102,7 @@ public class CertManagerCaProvider extends CaProvider {
                     certManagerCa.createOrUpdateCa(
                             newCaCertAsBase64,
                             Annotations.stringAnnotation(existingCaCertSecret, Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, ""),
-                            CaUtils.cert(cluserOperatorSecret, "cluster-operator.crt")
+                            CaUtils.cert(clusterOperatorSecret, "cluster-operator.crt")
                     );
                     ca = certManagerCa;
                     return ca;
@@ -108,7 +111,7 @@ public class CertManagerCaProvider extends CaProvider {
 
     @Override
     public CompletionStage<Secret> reconcileCaSecrets() {
-        caCertSecret = createCertManagerCaCertSecret(caRole, ca.caCertData(),
+        Secret caCertSecret = createCertManagerCaCertSecret(caRole, ca.caCertData(),
                 ca.caCertGeneration(), ca.caKeyGeneration());
         CompletableFuture<Secret> future = new CompletableFuture<>();
         secretOperator.reconcile(reconciliation, reconciliation.namespace(), caCertSecret.getMetadata().getName(), caCertSecret)

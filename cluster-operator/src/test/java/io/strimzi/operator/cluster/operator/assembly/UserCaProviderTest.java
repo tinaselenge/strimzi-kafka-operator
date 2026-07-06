@@ -115,16 +115,16 @@ public class UserCaProviderTest {
 
         UserCaProvider clusterCaProvider = new UserCaProvider(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, CA_CONFIG, KAFKA, null, null, initialClusterCaCertSecret, initialClusterCaKeySecret);
         clusterCaProvider.createCa().toCompletableFuture().join();
-        assertThat(clusterCaProvider.caCertSecret, is(initialClusterCaCertSecret));
-        assertThat(clusterCaProvider.caKeySecret, is(initialClusterCaKeySecret));
+        Secret clusterCaCertSecret = clusterCaProvider.reconcileCaSecrets().toCompletableFuture().join();
+        assertThat(clusterCaCertSecret, is(initialClusterCaCertSecret));
 
         Secret initialClientsCaKeySecret = ResourceUtils.createInitialCaKeySecret(NAMESPACE, NAME, KafkaResources.clientsCaKeySecretName(NAME), caKey);
         Secret initialClientsCaCertSecret = ResourceUtils.createInitialCaCertSecret(NAMESPACE, NAME, KafkaResources.clientsCaCertificateSecretName(NAME), validCombinedPem, null, null);
 
         UserCaProvider clientsCaProvider = new UserCaProvider(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, CA_CONFIG, KAFKA, null, null, initialClientsCaCertSecret, initialClientsCaKeySecret);
         clientsCaProvider.createCa().toCompletableFuture().join();
-        assertThat(clientsCaProvider.caCertSecret, is(initialClientsCaCertSecret));
-        assertThat(clientsCaProvider.caKeySecret, is(initialClientsCaKeySecret));
+        Secret clientsCaCertSecret = clientsCaProvider.reconcileCaSecrets().toCompletableFuture().join();
+        assertThat(clientsCaCertSecret, is(initialClientsCaCertSecret));
     }
 
     @Test

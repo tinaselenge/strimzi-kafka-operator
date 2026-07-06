@@ -51,7 +51,6 @@ public class CertManagerCa extends Ca {
      * @param reconciliation        Reconciliation marker
      * @param caRole                Ca role
      * @param caCertSecret          Kubernetes Secret where the CA public key is stored
-     * @param caKeySecret           Kubernetes Secret where the CA private key is stored
      * @param caConfig              Certificate Authority configuration
      * @param certManagerCertificateOperator cert-manager Certificate operator
      * @param secretOperator Secret operator
@@ -62,14 +61,13 @@ public class CertManagerCa extends Ca {
     public CertManagerCa(Reconciliation reconciliation,
                          CaRole caRole,
                          Secret caCertSecret,
-                         Secret caKeySecret,
                          CaConfig caConfig,
                          CertManagerCertificateOperator certManagerCertificateOperator,
                          SecretOperator secretOperator,
                          OwnerReference ownerReference,
                          Labels labels,
                          IssuerRef issuerRef) {
-        super(reconciliation, caRole, caCertSecret, caKeySecret, caConfig);
+        super(reconciliation, caRole, caCertSecret, null, caConfig);
         this.certManagerCertificateOperator = certManagerCertificateOperator;
         this.secretOperator = secretOperator;
         this.ownerReference = ownerReference;
@@ -83,21 +81,6 @@ public class CertManagerCa extends Ca {
             return Annotations.intAnnotation(caCertSecret, ANNO_STRIMZI_IO_CA_KEY_GENERATION, INIT_GENERATION);
         }
         return INIT_GENERATION;
-    }
-
-    @Override
-    protected Map<String, String> initCaCertData(Secret caCertSecret) {
-        if (caCertSecret != null) {
-            validateUserCaCertChain(caCertSecret.getData());
-            return caCertSecret.getData();
-        }
-        return new HashMap<>();
-    }
-
-    @Override
-    protected Map<String, String> initCaKeyData(Secret caKeySecret) {
-        // Cert-manager: NO key data (cert-manager manages the keys)
-        return new HashMap<>();
     }
 
     /**

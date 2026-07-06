@@ -99,8 +99,8 @@ import static org.mockito.Mockito.when;
  * The test cases use a mock CaReconciler class to capture when Kafka pods and
  * other deployment (Kafka Exporter etc) are rolled.
  * <p>
- * Use CaReconcilerCertManagerTest for testing rolling updates after Cert Manager provided CA Secrets are reconciled.
- * Use CaReconcilerReconcileCasTest for testing the reconcileCas method in isolation.
+ * The tests for creating or updating the CA certs and reconciling the CA cert
+ * Secrets are in the test class for each CaProvider.
  */
 @ExtendWith(VertxExtension.class)
 public class CaReconcilerTest {

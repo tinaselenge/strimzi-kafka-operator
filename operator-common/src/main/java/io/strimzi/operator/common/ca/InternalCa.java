@@ -12,7 +12,6 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.PasswordGenerator;
 
 import java.io.File;
@@ -54,11 +53,6 @@ public class InternalCa extends Ca {
      */
     public static final String CA_STORE_PASSWORD = SecretEntry.P12_KEYSTORE_PASSWORD.asKey(CA_SECRET_PREFIX);
 
-    /**
-     * Initial generation used for the CAs
-     */
-    public static final int INIT_GENERATION = 0;
-
     private final PasswordGenerator passwordGenerator;
     private final CertIssuer certIssuer;
 
@@ -67,7 +61,7 @@ public class InternalCa extends Ca {
      *
      * @param reconciliation    Reconciliation marker
      * @param caRole            Ca Role
-     * @param certIssuer       Certificate manager instance
+     * @param certIssuer        Certificate manager instance
      * @param passwordGenerator Password generator instance
      * @param caCertSecret      Kubernetes Secret where the CA public key is stored
      * @param caKeySecret       Kubernetes Secret where the CA private key is stored
@@ -80,45 +74,16 @@ public class InternalCa extends Ca {
                       Secret caKeySecret,
                       CaConfig caConfig) {
         super(reconciliation, caRole, caCertSecret, caKeySecret, caConfig);
-        boolean isGenerateCa = caConfig.isGenerateCa();
-        if (!isGenerateCa && (caCertSecret == null || caKeySecret == null))   {
-            throw new InvalidResourceException(caName() + " should not be generated, but the secrets were not found.");
-        }
-
         this.certIssuer = certIssuer;
         this.passwordGenerator = passwordGenerator;
     }
 
     @Override
     protected int initCaKeyGeneration(Secret caKeySecret, Secret caCertSecret) {
-        // Strimzi: read from KEY secret
         if (caKeySecret != null) {
             return Annotations.intAnnotation(caKeySecret, ANNO_STRIMZI_IO_CA_KEY_GENERATION, INIT_GENERATION);
         }
         return INIT_GENERATION;
-    }
-
-    @Override
-    protected Map<String, String> initCaCertData(Secret caCertSecret) {
-        // Strimzi: either generate or validate user-provided
-        if (caConfig.isGenerateCa()) {
-            return caCertSecret == null ? new HashMap<>() : caCertSecret.getData();
-        } else if (caCertSecret != null) {
-            validateUserCaCertChain(caCertSecret.getData());
-            return caCertSecret.getData();
-        }
-        return new HashMap<>();
-    }
-
-    @Override
-    protected Map<String, String> initCaKeyData(Secret caKeySecret) {
-        // Strimzi: copy key data from secret
-        if (caConfig.isGenerateCa()) {
-            return caKeySecret == null ? new HashMap<>() : caKeySecret.getData();
-        } else if (caKeySecret != null) {
-            return Map.of(CA_KEY, caKeySecret.getData().get(CA_KEY));
-        }
-        return new HashMap<>();
     }
 
     /**
@@ -331,16 +296,6 @@ public class InternalCa extends Ca {
     }
 
     /**
-     * Whether Ca has been generated
-     *
-     * @return  True when the CA certificate has been generated.
-     */
-    public boolean isGenerateCa()  {
-        return caConfig.isGenerateCa();
-    }
-
-
-    /**
      * Returns whether the certificate is expiring or not
      *
      * @param certificate Byte array with the certificate
@@ -358,8 +313,6 @@ public class InternalCa extends Ca {
     }
 
     /**
-     * Create or update CA data when Strimzi is managing CA.
-     * <p>
      * Create the CA data if they don't exist, otherwise if within the renewal period then either renew
      * the CA cert or replace the CA cert and key, according to the configured policy. After calling this method
      * {@link #certsRemoved()} will return whether expired secrets were removed from the Secret.
@@ -368,11 +321,11 @@ public class InternalCa extends Ca {
      * @param forceReplace Flag indicating whether to do a force replace
      * @param forceRenew Flag indicating whether to do a force renew
      */
-    public void createOrUpdateStrimziManagedCa(boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
+    public void createRenewOrReplace(boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
         X509Certificate currentCert = currentCaCertX509();
         Map<String, String> certData;
         Map<String, String> keyData;
-        this.renewalType = shouldCreateOrRenewStrimziManagedCa(currentCert, maintenanceWindowSatisfied, forceReplace, forceRenew);
+        this.renewalType = shouldCreateOrRenew(currentCert, maintenanceWindowSatisfied, forceReplace, forceRenew);
         LOGGER.debugCr(reconciliation, "{} renewalType {}", this, renewalType);
 
         switch (renewalType) {
@@ -437,7 +390,7 @@ public class InternalCa extends Ca {
             .withOrganizationName(IO_STRIMZI).build();
     }
 
-    private RenewalType shouldCreateOrRenewStrimziManagedCa(X509Certificate currentCert, boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
+    private RenewalType shouldCreateOrRenew(X509Certificate currentCert, boolean maintenanceWindowSatisfied, boolean forceReplace, boolean forceRenew) {
         String reason = null;
         RenewalType renewalType = RenewalType.NOOP;
         if (caKeyData.get(CA_KEY) == null) {
@@ -495,7 +448,7 @@ public class InternalCa extends Ca {
     @Override
     public void maybeDeleteOldCerts() {
         // the operator doesn't have to touch Secret provided by the user with his own custom CA certificate
-        if (isGenerateCa()) {
+        if (caConfig.isGenerateCa()) {
             deleteOldCerts();
         }
     }

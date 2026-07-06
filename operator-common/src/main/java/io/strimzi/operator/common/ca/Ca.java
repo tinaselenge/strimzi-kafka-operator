@@ -19,7 +19,7 @@ import java.time.chrono.IsoChronology;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.SignStyle;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -302,9 +302,9 @@ public abstract class Ca {
         this.caRole = caRole;
         this.caConfig = caConfig;
         this.caCertGeneration = initCaCertGeneration(caCertSecret);
-        this.caCertData = initCaCertData(caCertSecret);
+        this.caCertData = caCertSecret == null ? new HashMap<>() : caCertSecret.getData();
         this.caKeyGeneration = initCaKeyGeneration(caKeySecret, caCertSecret);
-        this.caKeyData = initCaKeyData(caKeySecret);
+        this.caKeyData = caKeySecret == null ? new HashMap<>() : Map.of(CA_KEY, caKeySecret.getData().get(CA_KEY));
         this.renewalType = RenewalType.NOOP;
         this.clock = Clock.systemUTC();
     }
@@ -352,36 +352,14 @@ public abstract class Ca {
         return INIT_GENERATION;
     }
 
-    protected abstract int initCaKeyGeneration(Secret caKeySecret, Secret caCertSecret);
-    protected abstract Map<String, String> initCaCertData(Secret caCertSecret);
-    protected abstract Map<String, String> initCaKeyData(Secret caKeySecret);
-
     /**
-     * Validates whether each of the user provided CA certs has a valid chain. Any intermediate CAs should be provided first,
-     * in order, with the root CA being the last certificate.
+     * Extracts the CA key generation from the CA cert or CA key Secret
      *
-     * @param userCaCertData The CA cert data provided by the user.
+     * @param caKeySecret CA cert Secret
+     * @param caCertSecret CA key Secret
+     * @return CA key generation
      */
-    protected void validateUserCaCertChain(Map<String, String> userCaCertData) {
-        userCaCertData.entrySet()
-                .stream()
-                .filter(entry -> SecretEntry.CRT.matchesType(entry.getKey()))
-                .forEach(entry -> {
-                    List<X509Certificate> certChain = CaUtils.extractCertChain(entry.getKey(), Util.decodeBytesFromBase64(entry.getValue()));
-                    if (certChain.isEmpty()) {
-                        LOGGER.errorCr(reconciliation, "{} certificate chain in {} is empty", caName(), entry.getKey());
-                        throw new RuntimeException("Failed to validate User supplied " + caName() + " cert chain in " + entry.getKey());
-                    } else if (certChain.size() == 1) {
-                        LOGGER.debugCr(reconciliation, "{} certificate {} contains a single certificate", caName(), entry.getKey());
-                        return;
-                    }
-                    if (!CaUtils.certIsTrusted(reconciliation, certChain.subList(0, certChain.size() - 1), certChain.getLast())) {
-                        String errorMessage = "User supplied " + caName() + " cert chain " + entry.getKey() + " is not valid. Certificates must be provided in the correct order.";
-                        LOGGER.errorCr(reconciliation, errorMessage);
-                        throw new RuntimeException(errorMessage);
-                    }
-                });
-    }
+    protected abstract int initCaKeyGeneration(Secret caKeySecret, Secret caCertSecret);
 
     /**
      * Gets the CA certificate data, which contains both the current CA cert and also previous, still valid certs.

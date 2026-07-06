@@ -62,7 +62,7 @@ public class InternalCaProvider extends CaProvider {
     @Override
     public CompletionStage<Ca> createCa() {
         InternalCa internalCa = new InternalCa(reconciliation, caRole, certIssuer, passwordGenerator, existingCaCertSecret, existingCaKeySecret, caConfig);
-        internalCa.createOrUpdateStrimziManagedCa(Util.isMaintenanceTimeWindowsSatisfied(reconciliation, kafkaCr.getSpec().getMaintenanceTimeWindows(), clock.instant()),
+        internalCa.createRenewOrReplace(Util.isMaintenanceTimeWindowsSatisfied(reconciliation, kafkaCr.getSpec().getMaintenanceTimeWindows(), clock.instant()),
                 isForceReplace(existingCaKeySecret),
                 isForceRenew(existingCaCertSecret));
         ca = internalCa;
@@ -71,8 +71,8 @@ public class InternalCaProvider extends CaProvider {
 
     @Override
     public CompletionStage<Secret> reconcileCaSecrets() {
-        caKeySecret = createCaKeySecret();
-        caCertSecret = createCaCertSecret();
+        Secret caKeySecret = createCaKeySecret();
+        Secret caCertSecret = createCaCertSecret();
 
         CompletableFuture<ReconcileResult<Secret>> caCertSecretFuture = secretOperator.reconcile(reconciliation, reconciliation.namespace(),
                 caCertSecret.getMetadata().getName(), caCertSecret).toCompletableFuture();

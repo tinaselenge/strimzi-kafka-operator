@@ -40,8 +40,6 @@ public abstract class CaProvider {
     protected final Map<String, String> caLabels;
     protected final Secret existingCaCertSecret;
     protected final Secret existingCaKeySecret;
-    protected Secret caCertSecret;
-    protected Secret caKeySecret;
     protected Ca ca;
 
     protected static final ReconciliationLogger LOGGER = ReconciliationLogger.create(CaProvider.class);
@@ -64,24 +62,6 @@ public abstract class CaProvider {
         this.caLabels = Labels.generateDefaultLabels(kafkaCr, Labels.APPLICATION_NAME, "certificate-authority", AbstractModel.STRIMZI_CLUSTER_OPERATOR_NAME).toMap();
         this.existingCaCertSecret = existingCaCertSecret;
         this.existingCaKeySecret = existingCaKeySecret;
-    }
-
-    /**
-     * Gets the CA certificate secret.
-     *
-     * @return The CA certificate secret
-     */
-    public Secret getCaCertSecret() {
-        return caCertSecret;
-    }
-
-    /**
-     * Gets the CA key secret.
-     *
-     * @return The CA key secret
-     */
-    public Secret getCaKeySecret() {
-        return caKeySecret;
     }
 
     /**

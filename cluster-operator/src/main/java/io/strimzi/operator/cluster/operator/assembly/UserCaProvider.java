@@ -49,15 +49,12 @@ public class UserCaProvider extends CaProvider {
             throw new InvalidResourceException(caRole.name() + " should not be generated, but the secrets were not found.");
         }
         validateUserCaCertChain(existingCaCertSecret.getData());
-        caCertSecret = existingCaCertSecret;
-        caKeySecret = existingCaKeySecret;
-        ca = new InternalCa(reconciliation, caRole, certIssuer, passwordGenerator, caCertSecret, caKeySecret, caConfig);
-        return CompletableFuture.completedStage(ca);
+        return CompletableFuture.completedStage(new InternalCa(reconciliation, caRole, certIssuer, passwordGenerator, existingCaCertSecret, existingCaKeySecret, caConfig));
     }
 
     @Override
     public CompletionStage<Secret> reconcileCaSecrets() {
-        return CompletableFuture.completedStage(caCertSecret);
+        return CompletableFuture.completedStage(existingCaCertSecret);
     }
 
 

@@ -37,7 +37,7 @@ public class ClusterCaTest {
 
         InternalCa clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(clock), new PasswordGenerator(10, "a", "a"), null, null, CaConfig.createDefault());
         clusterCa.setClock(clock);
-        clusterCa.createOrUpdateStrimziManagedCa(true, false, false);
+        clusterCa.createRenewOrReplace(true, false, false);
         assertThat(clusterCa.caCertData().size(), is(3));
 
         // ... simulated at the following time, with expire at 365 days later (by default)
@@ -47,7 +47,7 @@ public class ClusterCaTest {
         clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(clock), new PasswordGenerator(10, "a", "a"), buildCertSecret(clusterCa), buildKeySecret(clusterCa), CaConfig.createDefault());
         clusterCa.setClock(clock);
         // force key replacement so certificate renewal ...
-        clusterCa.createOrUpdateStrimziManagedCa(true, true, false);
+        clusterCa.createRenewOrReplace(true, true, false);
         assertThat(clusterCa.caCertData().size(), is(4));
         assertThat(clusterCa.caCertData().containsKey("ca-2023-03-23T09-00-00Z.crt"), is(true));
 
@@ -57,7 +57,7 @@ public class ClusterCaTest {
 
         clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(), new PasswordGenerator(10, "a", "a"), buildCertSecret(clusterCa), buildKeySecret(clusterCa), CaConfig.createDefault());
         clusterCa.setClock(clock);
-        clusterCa.createOrUpdateStrimziManagedCa(true, false, false);
+        clusterCa.createRenewOrReplace(true, false, false);
         assertThat(clusterCa.caCertData().size(), is(3));
         assertThat(clusterCa.caCertData().containsKey("ca-2023-03-23T09-00-00Z.crt"), is(false));
     }
@@ -70,7 +70,7 @@ public class ClusterCaTest {
 
         InternalCa clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(clock), new PasswordGenerator(10, "a", "a"), null, null, CaConfig.createDefault());
         clusterCa.setClock(clock);
-        clusterCa.createOrUpdateStrimziManagedCa(true, false, false);
+        clusterCa.createRenewOrReplace(true, false, false);
 
         // check certificate expiration out of the renewal period, certificate is not expiring
         instantExpected = "2023-02-15T09:00:00Z";
@@ -93,7 +93,7 @@ public class ClusterCaTest {
 
         InternalCa clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(clock), new PasswordGenerator(10, "a", "a"), null, null, CaConfig.createDefault());
         clusterCa.setClock(clock);
-        clusterCa.createOrUpdateStrimziManagedCa(true, false, false);
+        clusterCa.createRenewOrReplace(true, false, false);
         assertThat(clusterCa.caCertData().size(), is(3));
 
         // ... simulated at the following time, with expire at 365 days later (by default)
@@ -103,7 +103,7 @@ public class ClusterCaTest {
         clusterCa = new InternalCa(Reconciliation.DUMMY_RECONCILIATION, Ca.CaRole.CLUSTER_CA, new OpenSslCertIssuer(clock), new PasswordGenerator(10, "a", "a"), buildCertSecret(clusterCa), buildKeySecret(clusterCa), CaConfig.createDefault());
         clusterCa.setClock(clock);
         // force key replacement so certificate renewal ...
-        clusterCa.createOrUpdateStrimziManagedCa(true, true, false);
+        clusterCa.createRenewOrReplace(true, true, false);
         assertThat(clusterCa.caCertData().size(), is(4));
         assertThat(clusterCa.caCertData().containsKey("ca-2023-03-23T09-00-00Z.crt"), is(true));
 

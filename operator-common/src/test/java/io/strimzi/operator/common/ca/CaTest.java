@@ -82,7 +82,7 @@ class CaTest {
     @Test
     @DisplayName("Should return certificate expiration date as epoch when certificate is present")
     void shouldReturnCertificateExpirationDateEpoch() {
-        ca.createOrUpdateStrimziManagedCa(true, false, false);
+        ca.createRenewOrReplace(true, false, false);
 
         Instant inOneYear = Clock.offset(now, oneYear).instant();
         long expectedEpoch = inOneYear.truncatedTo(ChronoUnit.SECONDS).toEpochMilli();
@@ -93,10 +93,10 @@ class CaTest {
     @Test
     @DisplayName("Should result in NOOP when CA key and certificate already exist and are valid")
     void shouldNoopWhenCaAlreadyExists() {
-        ca.createOrUpdateStrimziManagedCa(true, false, false);
+        ca.createRenewOrReplace(true, false, false);
         assertTrue(ca.keyCreated(), "First call should create the CA");
 
-        ca.createOrUpdateStrimziManagedCa(true, false, false);
+        ca.createRenewOrReplace(true, false, false);
         assertFalse(ca.certRenewed(), "Second call should not renew the certificate");
         assertFalse(ca.keyReplaced(), "Second call should not replace the key");
         assertFalse(ca.keyCreated(), "Second call should not create a new key");
