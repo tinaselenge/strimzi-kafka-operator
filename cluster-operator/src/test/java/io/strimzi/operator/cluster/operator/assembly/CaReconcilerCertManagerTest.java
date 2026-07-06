@@ -46,7 +46,7 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.TimeoutException;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
@@ -78,7 +78,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static io.strimzi.operator.common.model.InternalCa.CA_CRT;
+import static io.strimzi.operator.common.ca.InternalCa.CA_CRT;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.aMapWithSize;
@@ -835,16 +835,15 @@ public class CaReconcilerCertManagerTest {
                                            List<Secret> secrets,
                                            List<Pod> controllerPods,
                                            List<Pod> brokerPods) {
-        io.strimzi.operator.common.operator.resource.concurrent.SecretOperator concurrentSecretOps = supplier.concurrentSecretOperator;
-        when(concurrentSecretOps.getAsync(eq(NAMESPACE), eq(USER_PROVIDED_CLUSTER_CA_SECRET_NAME))).thenReturn(CompletableFuture.completedFuture(userClusterCaCertSecret));
-        when(concurrentSecretOps.getAsync(eq(NAMESPACE), eq(USER_PROVIDED_CLIENTS_CA_SECRET_NAME))).thenReturn(CompletableFuture.completedFuture(userClientsCaCertSecret));
-        when(concurrentSecretOps.reconcile(any(), any(), any(), any(Secret.class))).thenAnswer(i -> CompletableFuture.completedFuture(i.getArgument(3)));
-
         SecretOperator secretOps = supplier.secretOperations;
+        when(secretOps.getAsync(eq(NAMESPACE), eq(USER_PROVIDED_CLUSTER_CA_SECRET_NAME))).thenReturn(CompletableFuture.completedFuture(userClusterCaCertSecret));
+        when(secretOps.getAsync(eq(NAMESPACE), eq(USER_PROVIDED_CLIENTS_CA_SECRET_NAME))).thenReturn(CompletableFuture.completedFuture(userClientsCaCertSecret));
+        when(secretOps.reconcile(any(), any(), any(), any(Secret.class))).thenAnswer(i -> CompletableFuture.completedFuture(i.getArgument(3)));
+
         when(secretOps.getAsync(eq(NAMESPACE), eq(KafkaResources.clusterOperatorCertsSecretName(NAME) + "-cm"))).thenReturn(CompletableFuture.completedFuture(clusterOperatorCMSecret));
         when(secretOps.getAsync(eq(NAMESPACE), eq(KafkaResources.clusterOperatorCertsSecretName(NAME)))).thenReturn(CompletableFuture.completedFuture(clusterOperatorSecret));
         when(secretOps.listAsync(eq(NAMESPACE), any(Labels.class))).thenReturn(CompletableFuture.completedFuture(secrets));
-        when(secretOps.reconcile(any(), eq(NAMESPACE), any(), any(Secret.class))).thenReturn(CompletableFuture.completedFuture(null));
+//        when(secretOps.reconcile(any(), eq(NAMESPACE), any(), any(Secret.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         CertManagerCertificateOperator certManagerCertificateOperator = supplier.certManagerCertificateOperator;
 

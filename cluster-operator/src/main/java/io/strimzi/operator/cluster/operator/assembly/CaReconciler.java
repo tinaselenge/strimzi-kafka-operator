@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.api.kafka.model.common.CertificateManagerType;
+import io.strimzi.api.kafka.model.common.certmanager.CertManager;
 import io.strimzi.api.kafka.model.kafka.Kafka;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.api.kafka.model.kafka.cruisecontrol.CruiseControlResources;
@@ -42,8 +43,8 @@ import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.auth.PemAuthIdentity;
 import io.strimzi.operator.common.auth.PemTrustSet;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
@@ -82,7 +83,7 @@ public class CaReconciler {
     private final List<String> maintenanceWindows;
     private final OwnerReference ownerRef;
     private final CaConfig clusterCaConfig;
-    private io.strimzi.api.kafka.model.common.certmanager.CertManager clusterCaCertManager;
+    private CertManager clusterCaCertManager;
     private final CaConfig clientsCaConfig;
     private final Labels clusterOperatorSecretLabels;
     private final Labels trustBundleLabels;
@@ -300,7 +301,7 @@ public class CaReconciler {
         String componentName = "cluster-operator";
         CertAndKey oldCertAndKey = CertUtils.keyStoreCertAndKey(coSecret, componentName, Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION);
 
-        return Future.fromCompletionStage(ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCert(
+        return VertxUtil.toFuture(ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCert(
                         reconciliation,
                         componentName,
                         clusterCa,

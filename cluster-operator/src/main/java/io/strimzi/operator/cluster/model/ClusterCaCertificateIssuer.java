@@ -11,10 +11,10 @@ import io.strimzi.certs.IpAndDnsValidation;
 import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaUtils;
-import io.strimzi.operator.common.model.CertManagerCa;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertManagerCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.InvalidResourceException;
 
 import java.io.File;
@@ -36,8 +36,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static io.strimzi.operator.cluster.model.CertManagerUtils.certManagerCertUpdated;
-import static io.strimzi.operator.common.model.CaUtils.certIsTrusted;
-import static io.strimzi.operator.common.model.CaUtils.extractCertChain;
+import static io.strimzi.operator.common.ca.CaUtils.certIsTrusted;
+import static io.strimzi.operator.common.ca.CaUtils.extractCertChain;
 
 /**
  * Represents the Cluster CA
@@ -368,49 +368,10 @@ public final class ClusterCaCertificateIssuer {
             boolean isMaintenanceTimeWindowsSatisfied
     ) {
         return switch (ca) {
-            case InternalCa internalCa -> CompletableFuture.completedFuture(maybeCopyOrGenerateClientCertWithInternalCa(reconciliation, commonName, internalCa, existingCertAndKey, isMaintenanceTimeWindowsSatisfied));
+            case InternalCa internalCa -> CompletableFuture.completedFuture(internalCa.maybeCopyOrGenerateClientCert(reconciliation, commonName, existingCertAndKey, isMaintenanceTimeWindowsSatisfied));
             case CertManagerCa certManagerCa -> maybeCopyOrGenerateClientCertWithCertManagerCa(reconciliation, commonName, certManagerCa, existingCertAndKey);
             default -> CompletableFuture.failedStage(new InvalidResourceException("Unable to generate server certificate for unknown type of CA {}" + ca));
         };
-    }
-
-
-    /* test */ static CertAndKey maybeCopyOrGenerateClientCertWithInternalCa(
-            Reconciliation reconciliation,
-            String commonName,
-            InternalCa ca,
-            CertAndKey existingCertAndKey,
-            boolean isMaintenanceTimeWindowsSatisfied
-    ) {
-        List<String> reasons = new ArrayList<>();
-
-        if (existingCertAndKey == null) {
-            reasons.add("certificate doesn't exist yet");
-        } else if (hasCaCertGenerationChanged(existingCertAndKey.caCertGeneration(), ca, commonName)) {
-            reasons.add("certificate has old cert generation");
-        } else {
-            // Certificate exists and CA generation matches - check if renewal is needed
-            if (ca.isExpiring(existingCertAndKey.cert()) && isMaintenanceTimeWindowsSatisfied) {
-                reasons.add("certificate is expiring");
-            }
-        }
-
-        CertAndKey certAndKey = null;
-        if (!reasons.isEmpty()) {
-            LOGGER.infoCr(reconciliation, "Certificate for component {} needs to be regenerated because: {}", commonName, String.join(", ", reasons));
-
-            try {
-                certAndKey = ca.getSignedCert(commonName, InternalCa.IO_STRIMZI);
-            } catch (IOException e) {
-                LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
-            }
-
-            LOGGER.debugCr(reconciliation, "End generating certificates");
-        } else {
-            certAndKey = existingCertAndKey;
-        }
-
-        return certAndKey;
     }
 
 

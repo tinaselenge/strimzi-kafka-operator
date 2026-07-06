@@ -7,8 +7,8 @@ package io.strimzi.operator.cluster.model;
 import io.strimzi.certs.CertAndKey;
 import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.InternalCa;
-import io.strimzi.operator.common.model.CaConfig;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.vertx.junit5.VertxExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -56,7 +56,7 @@ public class InternalClusterCaRenewalTest {
 
     // Certificate used for expiration tests where actual expiration is needed. This certificate expires on 27th March 2023.
     // But with correct configuration or renewal days before expiration, it can be used to trigger expiration,
-    private final static String EXPIRED_DUMMY_CERT= "-----BEGIN CERTIFICATE-----\n" +
+    private final static String EXPIRED_DUMMY_CERT = "-----BEGIN CERTIFICATE-----\n" +
             "MIIECTCCAfGgAwIBAgIUAw8AFcPvJkD5ijYTuT5KBt6sUX4wDQYJKoZIhvcNAQEN\n" +
             "BQAwLTETMBEGA1UECgwKaW8uc3RyaW16aTEWMBQGA1UEAwwNY2xpZW50cy1jYSB2\n" +
             "MDAeFw0yMjAzMjcxNTQyNTBaFw0yMzAzMjcxNTQyNTBaMA8xDTALBgNVBAMMBHVz\n" +
@@ -449,10 +449,9 @@ public class InternalClusterCaRenewalTest {
     public void testRenewalOfDeploymentCertificateWithNullCertAndKey() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        CertAndKey newCert = ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCertWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateClientCert(
                 Reconciliation.DUMMY_RECONCILIATION,
                 "deployment",
-                mockedCa,
                 null,
                 true
         );
@@ -469,10 +468,9 @@ public class InternalClusterCaRenewalTest {
 
         CertAndKey initialCert = new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        CertAndKey newCert = ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCertWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateClientCert(
                 Reconciliation.DUMMY_RECONCILIATION,
                 "deployment",
-                mockedCa,
                 initialCert,
                 true
         );
@@ -488,10 +486,9 @@ public class InternalClusterCaRenewalTest {
 
         CertAndKey initialCert = new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        CertAndKey newCert = ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCertWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateClientCert(
                 Reconciliation.DUMMY_RECONCILIATION,
                 "deployment",
-                mockedCa,
                 initialCert,
                 true
         );
@@ -507,10 +504,9 @@ public class InternalClusterCaRenewalTest {
 
         CertAndKey initialCert = new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        CertAndKey newCert = ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCertWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateClientCert(
                 Reconciliation.DUMMY_RECONCILIATION,
                 "deployment",
-                mockedCa,
                 initialCert,
                 false
         );
@@ -527,10 +523,9 @@ public class InternalClusterCaRenewalTest {
         CertAndKey initialCert = new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8),
                 null, "old-keystore".getBytes(), "old-password");
 
-        CertAndKey newCert = ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCertWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateClientCert(
                 Reconciliation.DUMMY_RECONCILIATION,
                 "deployment",
-                mockedCa,
                 initialCert,
                 true
         );
@@ -544,10 +539,9 @@ public class InternalClusterCaRenewalTest {
 
     public static class MockedClusterCa extends InternalCa {
         private final AtomicInteger invocationCount = new AtomicInteger(0);
-        private int caCertGeneration;
 
         public MockedClusterCa() {
-            super(Reconciliation.DUMMY_RECONCILIATION, null, null, null, null, null, CaConfig.createDefault());
+            super(Reconciliation.DUMMY_RECONCILIATION, CaRole.CLUSTER_CA, null, null, null, null, CaConfig.createDefault());
         }
 
         @Override
@@ -578,13 +572,8 @@ public class InternalClusterCaRenewalTest {
             );
         }
 
-        @Override
-        public int caCertGeneration() {
-            return caCertGeneration;
-        }
-
         public void setCaCertGeneration(int value) {
-            caCertGeneration = value;
+            this.caCertGeneration = value;
         }
     }
 }

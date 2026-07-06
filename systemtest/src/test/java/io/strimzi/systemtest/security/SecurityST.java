@@ -26,7 +26,7 @@ import io.strimzi.api.kafka.model.kafka.listener.KafkaListenerAuthenticationTls;
 import io.strimzi.api.kafka.model.kafka.listener.KafkaListenerType;
 import io.strimzi.api.kafka.model.user.acl.AclOperation;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.systemtest.AbstractST;
 import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;

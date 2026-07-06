@@ -21,8 +21,8 @@ import io.strimzi.operator.cluster.TestUtils;
 import io.strimzi.operator.cluster.model.AbstractModel;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 import io.strimzi.test.ReadWriteUtils;
@@ -50,10 +50,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-import static io.strimzi.operator.common.model.Ca.CA_CRT;
-import static io.strimzi.operator.common.model.Ca.CA_KEY;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE_PASSWORD;
+import static io.strimzi.operator.common.ca.Ca.CA_CRT;
+import static io.strimzi.operator.common.ca.Ca.CA_KEY;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE_PASSWORD;
 import static java.util.Collections.singleton;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
@@ -942,8 +942,8 @@ public class InternalCaProviderTest {
         assertThat(clientsCaCertSecret.getMetadata().getOwnerReferences(), hasSize(1));
         assertThat(clientsCaKeySecret.getMetadata().getOwnerReferences(), hasSize(1));
 
-        io.strimzi.operator.cluster.TestUtils.checkOwnerReference(clientsCaCertSecret, kafka);
-        io.strimzi.operator.cluster.TestUtils.checkOwnerReference(clientsCaKeySecret, kafka);
+        TestUtils.checkOwnerReference(clientsCaCertSecret, kafka);
+        TestUtils.checkOwnerReference(clientsCaKeySecret, kafka);
     }
 
     @Test
@@ -966,7 +966,7 @@ public class InternalCaProviderTest {
         assertThat(captorSecrets.clientsCaCert().getMetadata().getOwnerReferences(), hasSize(0));
         assertThat(captorSecrets.clientsCaKey().getMetadata().getOwnerReferences(), hasSize(0));
 
-        io.strimzi.operator.cluster.TestUtils.checkOwnerReference(captorSecrets.clusterCaCert(), kafka);
+        TestUtils.checkOwnerReference(captorSecrets.clusterCaCert(), kafka);
         TestUtils.checkOwnerReference(captorSecrets.clusterCaKey(), kafka);
     }
 }

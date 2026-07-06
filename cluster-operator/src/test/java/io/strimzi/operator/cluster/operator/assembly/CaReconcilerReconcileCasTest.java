@@ -28,8 +28,8 @@ import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaUtils;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaUtils;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
@@ -77,10 +77,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static io.strimzi.operator.common.model.InternalCa.CA_CRT;
-import static io.strimzi.operator.common.model.InternalCa.CA_KEY;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE_PASSWORD;
+import static io.strimzi.operator.common.ca.InternalCa.CA_CRT;
+import static io.strimzi.operator.common.ca.InternalCa.CA_KEY;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE_PASSWORD;
 import static java.util.Collections.singleton;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
@@ -184,8 +184,8 @@ public class CaReconcilerReconcileCasTest {
             return secrets.stream()
                     .filter(s -> s.getMetadata().getName().equals(secretName))
                     .findFirst()
-                    .map(Future::succeededFuture)
-                    .orElse(Future.succeededFuture(null));
+                    .map(CompletableFuture::completedFuture)
+                    .orElse(CompletableFuture.completedFuture(null));
         });
 
         when(secretOps.reconcile(any(), eq(NAMESPACE), any(), any())).thenAnswer(i -> CompletableFuture.completedFuture(ReconcileResult.created(i.getArgument(0))));

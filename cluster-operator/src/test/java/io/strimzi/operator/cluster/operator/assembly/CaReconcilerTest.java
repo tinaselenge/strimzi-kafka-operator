@@ -39,7 +39,7 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.StrimziPodSetOpe
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -76,9 +76,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static io.strimzi.operator.common.model.InternalCa.CA_CRT;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE;
-import static io.strimzi.operator.common.model.InternalCa.CA_STORE_PASSWORD;
+import static io.strimzi.operator.common.ca.InternalCa.CA_CRT;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE;
+import static io.strimzi.operator.common.ca.InternalCa.CA_STORE_PASSWORD;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.aMapWithSize;
@@ -280,9 +280,8 @@ public class CaReconcilerTest {
                     ArgumentCaptor<Secret> clientsCaCert = ArgumentCaptor.forClass(Secret.class);
 
                     // Cluster CA should be reconciled twice, once initially, then when removing the old cert. Clients CA is only reconciled once
-                    verify(supplier.secretOperations, times(1)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
-                    verify(supplier.concurrentSecretOperator, times(1)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
-                    verify(supplier.concurrentSecretOperator, times(1)).reconcile(any(), eq(NAMESPACE), eq(KafkaResources.clientsCaCertificateSecretName(NAME)), clientsCaCert.capture());
+                    verify(supplier.secretOperations, times(2)).reconcile(any(), eq(NAMESPACE), eq(AbstractModel.clusterCaCertSecretName(NAME)), clusterCaCert.capture());
+                    verify(supplier.secretOperations, times(1)).reconcile(any(), eq(NAMESPACE), eq(KafkaResources.clientsCaCertificateSecretName(NAME)), clientsCaCert.capture());
 
 
                     //getValue() returns the latest captured value

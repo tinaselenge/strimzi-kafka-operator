@@ -6,8 +6,8 @@ package io.strimzi.operator.common.auth;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.CaUtils;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.InternalCa;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

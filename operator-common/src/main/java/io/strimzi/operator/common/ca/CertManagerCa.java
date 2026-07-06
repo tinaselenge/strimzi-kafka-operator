@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.common.model;
+package io.strimzi.operator.common.ca;
 
 import io.fabric8.certmanager.api.model.v1.Certificate;
 import io.fabric8.certmanager.api.model.v1.CertificateBuilder;
@@ -14,6 +14,7 @@ import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 
@@ -31,11 +32,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
-
-import static io.strimzi.operator.common.model.CaUtils.certIsTrusted;
-import static io.strimzi.operator.common.model.CaUtils.convertToFabric8Duration;
-import static io.strimzi.operator.common.model.CaUtils.extractCertChain;
-
 
 /**
  * A Certificate Authority managed by cert-manager
@@ -204,7 +200,7 @@ public class CertManagerCa extends Ca {
                     if (existingCert == null) {
                         return newCertAndKey;
                     } else if (certManagerCertUpdated(existingCert, newCertAndKey)) {
-                        if (certIsTrusted(reconciliation, extractCertChain(entityName, newCertAndKey.cert()), currentCaCertX509())) {
+                        if (CaUtils.certIsTrusted(reconciliation, CaUtils.extractCertChain(entityName, newCertAndKey.cert()), currentCaCertX509())) {
                             LOGGER.infoCr(reconciliation, "New certificate for {}/{}", reconciliation.namespace(), entityName);
                             return newCertAndKey;
                         } else {
@@ -263,8 +259,8 @@ public class CertManagerCa extends Ca {
                     .withEncoding("PKCS8")
                     .withSize(2048)
                 .endPrivateKey()
-                .withDuration(convertToFabric8Duration(validityDays))
-                .withRenewBefore(convertToFabric8Duration(renewalDays))
+                .withDuration(CaUtils.convertToFabric8Duration(validityDays))
+                .withRenewBefore(CaUtils.convertToFabric8Duration(renewalDays))
                 .withIsCA(false)
                 .withNewSubject()
                     .withOrganizations(subject.organizationName())

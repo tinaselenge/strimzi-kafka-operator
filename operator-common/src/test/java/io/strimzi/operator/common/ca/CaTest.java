@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.common.model;
+package io.strimzi.operator.common.ca;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
@@ -12,6 +12,7 @@ import io.strimzi.certs.CertIssuer;
 import io.strimzi.certs.OpenSslCertIssuer;
 import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

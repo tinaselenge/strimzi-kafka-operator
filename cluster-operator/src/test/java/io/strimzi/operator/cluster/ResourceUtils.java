@@ -50,8 +50,8 @@ import io.strimzi.operator.common.MicrometerMetricsProvider;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.auth.PemAuthIdentity;
 import io.strimzi.operator.common.auth.PemTrustSet;
-import io.strimzi.operator.common.model.CaUtils;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.CrdOperator;
@@ -389,7 +389,6 @@ public class ResourceUtils {
                 mock(KubernetesRestartEventPublisher.class),
                 new MockSharedEnvironmentProvider(),
                 mock(BrokersInUseCheck.class),
-                mock(io.strimzi.operator.common.operator.resource.concurrent.SecretOperator.class),
                 mock(CertManagerCertificateOperator.class));
 
         when(supplier.secretOperations.getAsync(any(), any())).thenReturn(CompletableFuture.completedFuture(null));

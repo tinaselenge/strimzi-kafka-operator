@@ -36,10 +36,10 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.PodDisruptionBud
 import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceAccountOperator;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.CertManagerCa;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.CertManagerCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;

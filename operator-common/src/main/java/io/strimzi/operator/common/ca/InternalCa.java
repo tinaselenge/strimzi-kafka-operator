@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.common.model;
+package io.strimzi.operator.common.ca;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.certs.CertAndKey;
@@ -12,6 +12,8 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.InvalidResourceException;
+import io.strimzi.operator.common.model.PasswordGenerator;
 
 import java.io.File;
 import java.io.IOException;

@@ -12,9 +12,9 @@ import io.strimzi.operator.cluster.model.AbstractModel;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -25,14 +25,32 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-import static io.strimzi.operator.common.model.Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION;
+import static io.strimzi.operator.common.ca.Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION;
 
+/**
+ * CA provider for Strimzi-managed internal CAs.
+ * Handles creation and reconciliation of self-signed CA certificates.
+ */
 public class InternalCaProvider extends CaProvider {
     private final SecretOperator secretOperator;
     private final CertIssuer certIssuer;
     private final PasswordGenerator passwordGenerator;
     private final Clock clock;
 
+    /**
+     * Constructor.
+     *
+     * @param reconciliation        Reconciliation marker
+     * @param caRole                The role of this CA
+     * @param caConfig              CA configuration
+     * @param kafkaCr               The Kafka custom resource
+     * @param secretOperator        Secret operator for managing secrets
+     * @param certIssuer            Certificate issuer
+     * @param passwordGenerator     Password generator
+     * @param clock                 Clock for time-based operations
+     * @param existingCaCertSecret  Existing CA certificate secret
+     * @param existingCaKeySecret   Existing CA key secret
+     */
     public InternalCaProvider(Reconciliation reconciliation, Ca.CaRole caRole, CaConfig caConfig, Kafka kafkaCr, SecretOperator secretOperator, CertIssuer certIssuer, PasswordGenerator passwordGenerator, Clock clock, Secret existingCaCertSecret, Secret existingCaKeySecret) {
         super(reconciliation, caRole, caConfig, kafkaCr, existingCaCertSecret, existingCaKeySecret);
         this.secretOperator = secretOperator;
@@ -88,7 +106,7 @@ public class InternalCaProvider extends CaProvider {
         if (((InternalCa) ca).postponed() && Annotations.hasAnnotation(existingCaCertSecret, Annotations.ANNO_STRIMZI_IO_FORCE_RENEW))   {
             certAnnotations.put(Annotations.ANNO_STRIMZI_IO_FORCE_RENEW, Annotations.stringAnnotation(existingCaCertSecret, Annotations.ANNO_STRIMZI_IO_FORCE_RENEW, "false"));
         }
-        String caCertSecretName = switch(caRole) {
+        String caCertSecretName = switch (caRole) {
             case CLUSTER_CA -> AbstractModel.clusterCaCertSecretName(reconciliation.name());
             case CLIENTS_CA -> KafkaResources.clientsCaCertificateSecretName(reconciliation.name());
         };
@@ -104,7 +122,7 @@ public class InternalCaProvider extends CaProvider {
                 && Annotations.hasAnnotation(existingCaKeySecret, Annotations.ANNO_STRIMZI_IO_FORCE_REPLACE))   {
             keyAnnotations.put(Annotations.ANNO_STRIMZI_IO_FORCE_REPLACE, Annotations.stringAnnotation(existingCaKeySecret, Annotations.ANNO_STRIMZI_IO_FORCE_REPLACE, "false"));
         }
-        String caKeySecretName = switch(caRole) {
+        String caKeySecretName = switch (caRole) {
             case CLUSTER_CA -> AbstractModel.clusterCaKeySecretName(reconciliation.name());
             case CLIENTS_CA -> KafkaResources.clientsCaKeySecretName(reconciliation.name());
         };

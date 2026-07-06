@@ -13,9 +13,9 @@ import io.strimzi.operator.cluster.model.AbstractModel;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.CaUtils;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.CaUtils;
 import io.strimzi.operator.common.model.Labels;
 
 import java.security.cert.X509Certificate;
@@ -24,10 +24,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
-import static io.strimzi.operator.common.model.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
+import static io.strimzi.operator.common.ca.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
+/**
+ * Abstract base class for Certificate Authority (CA) providers.
+ * Provides common functionality for managing CA certificates and secrets.
+ */
 public abstract class CaProvider {
     protected final Reconciliation reconciliation;
     protected final Ca.CaRole caRole;
@@ -42,6 +46,16 @@ public abstract class CaProvider {
 
     protected static final ReconciliationLogger LOGGER = ReconciliationLogger.create(CaProvider.class);
 
+    /**
+     * Constructor.
+     *
+     * @param reconciliation        Reconciliation marker
+     * @param caRole                The role of this CA
+     * @param caConfig              CA configuration
+     * @param kafkaCr               The Kafka custom resource
+     * @param existingCaCertSecret  Existing CA certificate secret
+     * @param existingCaKeySecret   Existing CA key secret
+     */
     public CaProvider(Reconciliation reconciliation, Ca.CaRole caRole, CaConfig caConfig, Kafka kafkaCr, Secret existingCaCertSecret, Secret existingCaKeySecret) {
         this.reconciliation = reconciliation;
         this.caRole = caRole;
@@ -52,15 +66,36 @@ public abstract class CaProvider {
         this.existingCaKeySecret = existingCaKeySecret;
     }
 
+    /**
+     * Gets the CA certificate secret.
+     *
+     * @return The CA certificate secret
+     */
     public Secret getCaCertSecret() {
         return caCertSecret;
     }
 
+    /**
+     * Gets the CA key secret.
+     *
+     * @return The CA key secret
+     */
     public Secret getCaKeySecret() {
         return caKeySecret;
     }
 
+    /**
+     * Creates or loads the CA instance.
+     *
+     * @return CompletionStage that completes with the CA instance
+     */
     public abstract CompletionStage<Ca> createCa();
+
+    /**
+     * Reconciles the CA secrets with the Kubernetes cluster.
+     *
+     * @return CompletionStage that completes with the reconciled CA certificate secret
+     */
     public abstract CompletionStage<Secret> reconcileCaSecrets();
 
     /**

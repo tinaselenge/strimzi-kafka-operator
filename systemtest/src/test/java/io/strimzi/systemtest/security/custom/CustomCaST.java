@@ -17,7 +17,7 @@ import io.strimzi.api.kafka.model.common.CertificateAuthority;
 import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.api.kafka.model.user.KafkaUser;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.systemtest.AbstractST;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;
 import io.strimzi.systemtest.docs.TestDocsLabels;

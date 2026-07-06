@@ -2,7 +2,7 @@
  * Copyright Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.common.model;
+package io.strimzi.operator.common.ca;
 
 import io.fabric8.certmanager.api.model.v1.Certificate;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -18,6 +18,7 @@ import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.TimeoutException;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertIssuer;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
@@ -36,9 +37,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-import static io.strimzi.operator.common.model.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
-import static io.strimzi.operator.common.model.Ca.CA_CRT;
-import static io.strimzi.operator.common.model.CaUtils.convertToFabric8Duration;
+import static io.strimzi.operator.common.ca.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
+import static io.strimzi.operator.common.ca.Ca.CA_CRT;
+import static io.strimzi.operator.common.ca.CaUtils.convertToFabric8Duration;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertNull;

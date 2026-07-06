@@ -50,7 +50,7 @@ import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderCon
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.cruisecontrol.CruiseControlApiProperties;
@@ -71,11 +71,11 @@ import java.util.concurrent.CompletionStage;
 import static io.strimzi.api.kafka.model.common.template.DeploymentStrategy.ROLLING_UPDATE;
 import static io.strimzi.operator.cluster.model.cruisecontrol.CruiseControlConfiguration.CRUISE_CONTROL_DEFAULT_ANOMALY_DETECTION_GOALS;
 import static io.strimzi.operator.cluster.model.cruisecontrol.CruiseControlConfiguration.CRUISE_CONTROL_GOALS;
-import static java.lang.String.format;
 
 /**
  * Cruise Control model
  */
+@SuppressWarnings({"checkstyle:ClassFanOutComplexity"})
 public class CruiseControl extends AbstractModel implements SupportsMetrics, SupportsLogging {
     /**
      * Type of the component which this model class represents. It is used for labeling and naming purposes.
@@ -494,7 +494,7 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
         peers.add(clusterOperatorPeer);
 
         if (topicOperatorEnabled) {
-            NetworkPolicyPeer entityOperatorPeer = NetworkPolicyUtils.createPeer(Map.of(Labels.STRIMZI_NAME_LABEL, format("%s-entity-operator", cluster)),
+            NetworkPolicyPeer entityOperatorPeer = NetworkPolicyUtils.createPeer(Map.of(Labels.STRIMZI_NAME_LABEL, String.format("%s-entity-operator", cluster)),
                 NetworkPolicyUtils.clusterOperatorNamespaceSelector(namespace, operatorNamespace, operatorNamespaceLabels));
             peers.add(entityOperatorPeer);
         }

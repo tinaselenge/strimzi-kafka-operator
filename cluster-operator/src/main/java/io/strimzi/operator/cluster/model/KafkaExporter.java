@@ -34,7 +34,7 @@ import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProvi
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.plugin.security.profiles.PodSecurityProviderContext;
 
 import java.util.ArrayList;

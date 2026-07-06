@@ -10,8 +10,8 @@ import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.certs.CertAndKey;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaUtils;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaUtils;
 import io.strimzi.operator.common.model.Labels;
 
 import java.security.cert.CertificateException;

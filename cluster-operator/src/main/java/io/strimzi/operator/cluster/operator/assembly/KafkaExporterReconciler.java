@@ -22,8 +22,8 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceAccountOp
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 import io.vertx.core.Future;
 

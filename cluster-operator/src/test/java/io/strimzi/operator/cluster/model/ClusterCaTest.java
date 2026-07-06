@@ -10,9 +10,9 @@ import io.strimzi.api.kafka.model.common.CertificateAuthorityBuilder;
 import io.strimzi.certs.OpenSslCertIssuer;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.InternalCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import org.junit.jupiter.api.Test;
 

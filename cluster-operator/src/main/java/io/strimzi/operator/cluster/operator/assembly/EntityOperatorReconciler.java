@@ -28,7 +28,7 @@ import io.strimzi.operator.common.InvalidConfigurationException;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 import io.vertx.core.Future;

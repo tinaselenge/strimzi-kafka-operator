@@ -29,7 +29,7 @@ import io.strimzi.operator.cluster.model.logging.LoggingModel;
 import io.strimzi.operator.cluster.model.logging.SupportsLogging;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.ca.Ca;
 
 import java.util.ArrayList;
 import java.util.Collections;

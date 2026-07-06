@@ -16,10 +16,10 @@ import io.strimzi.operator.cluster.model.CertUtils;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.CaConfig;
-import io.strimzi.operator.common.model.CaUtils;
-import io.strimzi.operator.common.model.CertManagerCa;
+import io.strimzi.operator.common.ca.Ca;
+import io.strimzi.operator.common.ca.CaConfig;
+import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertManagerCa;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -30,9 +30,13 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-import static io.strimzi.operator.common.model.Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION;
-import static io.strimzi.operator.common.model.Ca.CA_CRT;
+import static io.strimzi.operator.common.ca.Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION;
+import static io.strimzi.operator.common.ca.Ca.CA_CRT;
 
+/**
+ * CA provider for cert-manager integration.
+ * Manages CAs using external cert-manager for certificate issuance.
+ */
 public class CertManagerCaProvider extends CaProvider {
     private final SecretOperator secretOperator;
     private final Secret cluserOperatorSecret;
@@ -40,6 +44,19 @@ public class CertManagerCaProvider extends CaProvider {
     private final CertificateAuthority certificateAuthority;
     private final CertManagerCertificateOperator certificateOperator;
 
+    /**
+     * Constructor.
+     *
+     * @param reconciliation            Reconciliation marker
+     * @param caRole                    The role of this CA
+     * @param caConfig                  CA configuration
+     * @param kafkaCr                   The Kafka custom resource
+     * @param existingCaCertSecret      Existing CA certificate secret
+     * @param secretOperator            Secret operator for managing secrets
+     * @param clusterOperatorSecret     Cluster operator secret
+     * @param certManagerConfig         cert-manager configuration
+     * @param certificateOperator       Certificate operator
+     */
     public CertManagerCaProvider(Reconciliation reconciliation, Ca.CaRole caRole, CaConfig caConfig, Kafka kafkaCr,
                                  Secret existingCaCertSecret, SecretOperator secretOperator,
                                  Secret clusterOperatorSecret, CertManager certManagerConfig,

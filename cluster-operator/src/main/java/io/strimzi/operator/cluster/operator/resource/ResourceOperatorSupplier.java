@@ -49,8 +49,8 @@ import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.DefaultAdminClientProvider;
 import io.strimzi.operator.common.MetricsProvider;
 import io.strimzi.operator.common.featuregates.FeatureGates;
-import io.strimzi.operator.common.operator.resource.concurrent.CrdOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
+import io.strimzi.operator.common.operator.resource.concurrent.CrdOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 
 import java.util.concurrent.Executor;
@@ -231,11 +231,6 @@ public class ResourceOperatorSupplier {
     public final BrokersInUseCheck brokersInUseCheck;
 
     /**
-     * Concurrent Secret operator
-     */
-    public final io.strimzi.operator.common.operator.resource.concurrent.SecretOperator concurrentSecretOperator;
-
-    /**
      * cert-manager Certificate operator
      */
     public final CertManagerCertificateOperator certManagerCertificateOperator;
@@ -335,7 +330,6 @@ public class ResourceOperatorSupplier {
                 restartEventPublisher,
                 new DefaultSharedEnvironmentProvider(),
                 new BrokersInUseCheck(),
-                new io.strimzi.operator.common.operator.resource.concurrent.SecretOperator(asyncExecutor, client),
                 new CertManagerCertificateOperator(asyncExecutor, client));
     }
 
@@ -376,7 +370,6 @@ public class ResourceOperatorSupplier {
      * @param restartEventsPublisher                Kubernetes Events publisher
      * @param sharedEnvironmentProvider             Shared environment provider
      * @param brokersInUseCheck                     Broker scale down operations
-     * @param concurrentSecretOperator              Secret Operator for cert-manager
      * @param certManagerCertificateOperator        cert-manager Certificate operator
      */
     @SuppressWarnings({"checkstyle:ParameterNumber"})
@@ -414,7 +407,6 @@ public class ResourceOperatorSupplier {
                                     KubernetesRestartEventPublisher restartEventsPublisher,
                                     SharedEnvironmentProvider sharedEnvironmentProvider,
                                     BrokersInUseCheck brokersInUseCheck,
-                                    io.strimzi.operator.common.operator.resource.concurrent.SecretOperator concurrentSecretOperator,
                                     CertManagerCertificateOperator certManagerCertificateOperator) {
         this.serviceOperations = serviceOperations;
         this.routeOperations = routeOperations;
@@ -450,7 +442,6 @@ public class ResourceOperatorSupplier {
         this.restartEventsPublisher = restartEventsPublisher;
         this.sharedEnvironmentProvider = sharedEnvironmentProvider;
         this.brokersInUseCheck = brokersInUseCheck;
-        this.concurrentSecretOperator = concurrentSecretOperator;
         this.certManagerCertificateOperator = certManagerCertificateOperator;
     }
 }
