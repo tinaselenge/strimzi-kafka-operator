@@ -294,7 +294,7 @@ public class EntityUserOperator extends AbstractModel implements SupportsLogging
     public CompletionStage<Secret> generateCertificatesSecret(Ca clusterCa, Secret existingSecret, boolean isMaintenanceTimeWindowsSatisfied) {
         CertAndKey existingCertAndKey = CertUtils.keyStoreCertAndKey(existingSecret, EntityOperator.COMPONENT_TYPE, clusterCa.caCertGenerationAnnotation());
 
-        return ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCert(reconciliation, componentName, clusterCa, existingCertAndKey, isMaintenanceTimeWindowsSatisfied)
+        return clusterCa.maybeCopyOrGenerateClientCert(reconciliation, componentName, existingCertAndKey, isMaintenanceTimeWindowsSatisfied)
                 .thenApply(updatedCert -> {
                     Map<String, String> secretData = CertUtils.buildSecretData(EntityOperator.COMPONENT_TYPE, updatedCert);
                     return ModelUtils.createSecret(

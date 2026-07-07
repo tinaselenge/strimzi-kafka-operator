@@ -137,13 +137,13 @@ class CaTest {
             D0z+vgrfionoRhyWUDh7POlWwdUOWiBDBOFrkgeKNphSC0glYFN+2IW7
             -----END CERTIFICATE-----""";
 
-        X509Certificate x509 = CaUtils.x509Certificate(cert.getBytes());
+        X509Certificate x509 = CertificateUtils.x509Certificate(cert.getBytes());
         assertThat(x509.getSubjectX500Principal().getName(), is("CN=cluster-ca,O=Default Company Ltd,L=Default City,C=XX"));
 
-        String pem = CaUtils.x509CertificateToPem(x509);
+        String pem = CertificateUtils.x509CertificateToPem(x509);
         assertThat(pem, is(cert));
 
-        X509Certificate nextX509 = CaUtils.x509Certificate(pem.getBytes());
+        X509Certificate nextX509 = CertificateUtils.x509Certificate(pem.getBytes());
         assertThat(nextX509.getSubjectX500Principal().getName(), is("CN=cluster-ca,O=Default Company Ltd,L=Default City,C=XX"));
         assertThat(nextX509.getSignature(), is(x509.getSignature()));
     }
@@ -187,8 +187,8 @@ class CaTest {
         X509Certificate x509AlternateRootCert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(alternateRootCert));
         X509Certificate x509Cert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(cert));
 
-        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509RootCert));
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509AlternateRootCert));
+        assertTrue(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509RootCert));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509Cert), x509AlternateRootCert));
     }
 
     @Test
@@ -239,16 +239,16 @@ class CaTest {
         X509Certificate x509IntermediateCert2 = (X509Certificate) certFactory.generateCertificate(new FileInputStream(intermediateCert2));
         X509Certificate x509LeafCert = (X509Certificate) certFactory.generateCertificate(new FileInputStream(leafCert));
 
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509RootCert));
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert1));
-        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert2));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509RootCert));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert1));
+        assertTrue(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert), x509IntermediateCert2));
 
-        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509IntermediateCert1));
-        assertTrue(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2, x509IntermediateCert1), x509RootCert));
+        assertTrue(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509IntermediateCert1));
+        assertTrue(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2, x509IntermediateCert1), x509RootCert));
 
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert1, x509IntermediateCert2), x509RootCert));
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509RootCert));
-        assertFalse(CaUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509IntermediateCert2, x509IntermediateCert1, x509LeafCert), x509RootCert));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert1, x509IntermediateCert2), x509RootCert));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509LeafCert, x509IntermediateCert2), x509RootCert));
+        assertFalse(CertificateUtils.certIsTrusted(Reconciliation.DUMMY_RECONCILIATION, List.of(x509IntermediateCert2, x509IntermediateCert1, x509LeafCert), x509RootCert));
     }
 
     @Test

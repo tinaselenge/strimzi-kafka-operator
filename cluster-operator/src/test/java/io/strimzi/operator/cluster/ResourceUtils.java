@@ -50,7 +50,7 @@ import io.strimzi.operator.common.MicrometerMetricsProvider;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.auth.PemAuthIdentity;
 import io.strimzi.operator.common.auth.PemTrustSet;
-import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
@@ -141,7 +141,7 @@ public class ResourceUtils {
         X509Certificate x509Certificate;
         String certificateHash;
         try {
-            x509Certificate = CaUtils.x509Certificate(Util.decodeBytesFromBase64(caCert));
+            x509Certificate = CertificateUtils.x509Certificate(Util.decodeBytesFromBase64(caCert));
             certificateHash = CertUtils.getCertificateThumbprint(x509Certificate);
         } catch (CertificateException e) {
             throw new RuntimeException("Failed to compute hash of certificate in Secret "  + secretName, e);

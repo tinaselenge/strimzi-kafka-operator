@@ -16,21 +16,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 @ExtendWith(VertxExtension.class)
 public class InternalClusterCaRenewalTest {
-    private static final Function<NodeRef, Subject> SUBJECT_FN = node -> new Subject.Builder().build();
-    private static final Set<NodeRef> NODES = new LinkedHashSet<>();
+    private static final Subject SUBJECT = new Subject.Builder().build();
+    private static final String POD = "pod0";
 
     // This certificate is used for testing purposes only. It is valid until 2119, so it should not cause any issues with the tests.
     private final static String DUMMY_CERT = "-----BEGIN CERTIFICATE-----\n" +
@@ -81,368 +75,160 @@ public class InternalClusterCaRenewalTest {
             "T/DiI+A2t2dGukf5qfzqgiXkq4XqM6+p0zY1Cv0=\n" +
             "-----END CERTIFICATE-----\n";
 
-    // LinkedHashSet is used to maintain ordering and have predictable test results
-    static {
-        NODES.add(new NodeRef("pod0", 0, null, false, true));
-        NODES.add(new NodeRef("pod1", 1, null, false, true));
-        NODES.add(new NodeRef("pod2", 2, null, false, true));
-    }
-
     @Test
     public void renewalOfCertificatesWithNullCertificates() throws IOException {
         InternalCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
+                POD,
+                SUBJECT,
                 null,
                 true,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod0").key()), is("new-key0"));
-        assertThat(new String(newCerts.get("pod0").keyStore()), is("new-keystore0"));
-        assertThat(newCerts.get("pod0").storePassword(), is("new-password0"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key1"));
-        assertThat(new String(newCerts.get("pod1").keyStore()), is("new-keystore1"));
-        assertThat(newCerts.get("pod1").storePassword(), is("new-password1"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key2"));
-        assertThat(new String(newCerts.get("pod2").keyStore()), is("new-keystore2"));
-        assertThat(newCerts.get("pod2").storePassword(), is("new-password2"));
+        assertThat(new String(newCert.cert()), is("new-cert0"));
+        assertThat(new String(newCert.key()), is("new-key0"));
+        assertThat(new String(newCert.keyStore()), is("new-keystore0"));
+        assertThat(newCert.storePassword(), is("new-password0"));
     }
 
     @Test
-    public void renewalOfCertificatesWithCaRenewal() throws IOException {
+    public void renewalOfCertificatesWithCaRenewal() {
         MockedClusterCa mockedCa = new MockedClusterCa();
         mockedCa.setCaCertGeneration(1);
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey initialCert = new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                POD,
+                SUBJECT,
+                initialCert,
                 true,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod0").key()), is("new-key0"));
-        assertThat(new String(newCerts.get("pod0").keyStore()), is("new-keystore0"));
-        assertThat(newCerts.get("pod0").storePassword(), is("new-password0"));
-        assertThat(newCerts.get("pod0").caCertGeneration(), is(1));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key1"));
-        assertThat(new String(newCerts.get("pod1").keyStore()), is("new-keystore1"));
-        assertThat(newCerts.get("pod1").storePassword(), is("new-password1"));
-        assertThat(newCerts.get("pod1").caCertGeneration(), is(1));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key2"));
-        assertThat(new String(newCerts.get("pod2").keyStore()), is("new-keystore2"));
-        assertThat(newCerts.get("pod2").storePassword(), is("new-password2"));
-        assertThat(newCerts.get("pod2").caCertGeneration(), is(1));
+        assertThat(new String(newCert.cert()), is("new-cert0"));
+        assertThat(new String(newCert.key()), is("new-key0"));
+        assertThat(new String(newCert.keyStore()), is("new-keystore0"));
+        assertThat(newCert.storePassword(), is("new-password0"));
+        assertThat(newCert.caCertGeneration(), is(1));
     }
 
     @Test
-    public void renewalOfCertificatesDelayedRenewalInWindow() throws IOException {
+    public void renewalOfCertificatesDelayedRenewalInWindow() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
+        CertAndKey initialCert = new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                POD,
+                SUBJECT,
+                initialCert,
                 true,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod0").key()), is("new-key0"));
-        assertThat(new String(newCerts.get("pod0").keyStore()), is("new-keystore0"));
-        assertThat(newCerts.get("pod0").storePassword(), is("new-password0"));
-        assertThat(newCerts.get("pod0").caCertGeneration(), is(0));
-
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key1"));
-        assertThat(new String(newCerts.get("pod1").keyStore()), is("new-keystore1"));
-        assertThat(newCerts.get("pod1").storePassword(), is("new-password1"));
-        assertThat(newCerts.get("pod1").caCertGeneration(), is(0));
-
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key2"));
-        assertThat(new String(newCerts.get("pod2").keyStore()), is("new-keystore2"));
-        assertThat(newCerts.get("pod2").storePassword(), is("new-password2"));
-        assertThat(newCerts.get("pod2").caCertGeneration(), is(0));
-
+        assertThat(new String(newCert.cert()), is("new-cert0"));
+        assertThat(new String(newCert.key()), is("new-key0"));
+        assertThat(new String(newCert.keyStore()), is("new-keystore0"));
+        assertThat(newCert.storePassword(), is("new-password0"));
+        assertThat(newCert.caCertGeneration(), is(0));
     }
 
     @Test
-    public void renewalOfCertificatesDelayedRenewalOutsideWindow() throws IOException {
+    public void renewalOfCertificatesDelayedRenewalOutsideWindow() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
+        CertAndKey initialCert = new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                POD,
+                SUBJECT,
+                initialCert,
                 false,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is(EXPIRED_DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod0").key()), is("old-key"));
-        assertThat(newCerts.get("pod0").caCertGeneration(), is(0));
-
-
-        assertThat(new String(newCerts.get("pod1").cert()), is(EXPIRED_DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod1").key()), is("old-key"));
-        assertThat(newCerts.get("pod1").caCertGeneration(), is(0));
-
-
-        assertThat(new String(newCerts.get("pod2").cert()), is(EXPIRED_DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod2").key()), is("old-key"));
-        assertThat(newCerts.get("pod1").caCertGeneration(), is(0));
-
+        assertThat(new String(newCert.cert()), is(EXPIRED_DUMMY_CERT));
+        assertThat(new String(newCert.key()), is("old-key"));
+        assertThat(newCert.caCertGeneration(), is(0));
     }
 
     @Test
-    public void renewalOfCertificatesWithNewNodesOutsideWindow() throws IOException {
+    public void noRenewalOfCertificates() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), EXPIRED_DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
+        CertAndKey initialCert = new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
-                false,
-                false
-        );
-
-        assertThat(new String(newCerts.get("pod0").cert()), is(EXPIRED_DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod0").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is(EXPIRED_DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod1").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key0"));
-    }
-
-    @Test
-    public void noRenewalOfCertificates() throws IOException {
-        MockedClusterCa mockedCa = new MockedClusterCa();
-
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
-                Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                POD,
+                SUBJECT,
+                initialCert,
                 true,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod0").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod1").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod2").key()), is("old-key"));
+        assertThat(new String(newCert.cert()), is(DUMMY_CERT));
+        assertThat(new String(newCert.key()), is("old-key"));
     }
 
     @Test
-    public void nosRenewalOfCertificatesWithScaleUp() throws IOException {
+    public void changedSubjectOfCertificates() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
+        CertAndKey initialCert = new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                POD,
+                 new Subject.Builder().addDnsName("pod0.test.com").build(),
+                initialCert,
                 true,
                 false
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod0").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key0"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert1"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key1"));
-    }
-
-    @Test
-    public void noRenewalOfCertificatesWithScaleUpInTheMiddle() throws IOException {
-        MockedClusterCa mockedCa = new MockedClusterCa();
-
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
-                Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
-                true,
-                false
-        );
-
-        assertThat(new String(newCerts.get("pod0").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod0").key()), is("old-key"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key0"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod2").key()), is("old-key"));
-    }
-
-    @Test
-    public void noRenewalOfCertificatesScaleDown() throws IOException {
-        MockedClusterCa mockedCa = new MockedClusterCa();
-
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
-                Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                Set.of(new NodeRef("pod1", 1, null, false, true)),
-                SUBJECT_FN,
-                initialCerts,
-                true,
-                false
-        );
-
-        assertThat(newCerts.get("pod0"), is(nullValue()));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is(DUMMY_CERT));
-        assertThat(new String(newCerts.get("pod1").key()), is("old-key"));
-
-        assertThat(newCerts.get("pod2"), is(nullValue()));
-    }
-
-    @Test
-    public void changedSubjectOfCertificates() throws IOException {
-        MockedClusterCa mockedCa = new MockedClusterCa();
-
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("old-key".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
-                Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                node -> new Subject.Builder().addDnsName(node.podName() + ".test.com").build(),
-                initialCerts,
-                true,
-                false
-        );
-
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0"));
-        assertThat(new String(newCerts.get("pod0").key()), is("new-key0"));
-
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1"));
-        assertThat(new String(newCerts.get("pod1").key()), is("new-key1"));
-
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2"));
-        assertThat(new String(newCerts.get("pod2").key()), is("new-key2"));
+        assertThat(new String(newCert.cert()), is("new-cert0"));
+        assertThat(new String(newCert.key()), is("new-key0"));
     }
 
 
     @Test
-    public void certificatesIncludeCaChain() throws IOException {
+    public void certificatesIncludeCaChain() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
+                POD,
+                SUBJECT,
                 null,
                 true,
                 true
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0CA-CERT"));
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1CA-CERT"));
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2CA-CERT"));
+        assertThat(new String(newCert.cert()), is("new-cert0CA-CERT"));
     }
 
     @Test
-    public void caChainAddedToExistingCertificates() throws IOException {
+    public void caChainAddedToExistingCertificates() {
         MockedClusterCa mockedCa = new MockedClusterCa();
 
-        Map<String, CertAndKey> initialCerts = new HashMap<>();
-        initialCerts.put("pod0", new CertAndKey("new-key0".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod1", new CertAndKey("new-key1".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
-        initialCerts.put("pod2", new CertAndKey("new-key2".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8)));
+        CertAndKey initialCert = new CertAndKey("new-key0".getBytes(), DUMMY_CERT.getBytes(StandardCharsets.UTF_8));
 
-        Map<String, CertAndKey> newCerts = ClusterCaCertificateIssuer.maybeCopyOrGenerateServerCertsWithInternalCa(
+        CertAndKey newCert = mockedCa.maybeCopyOrGenerateServerCerts(
                 Reconciliation.DUMMY_RECONCILIATION,
-                mockedCa,
-                NODES,
-                SUBJECT_FN,
-                initialCerts,
+                "pod0",
+                SUBJECT,
+                initialCert,
                 true,
                 true
-        );
+        ).toCompletableFuture().join();
 
-        assertThat(new String(newCerts.get("pod0").cert()), is("new-cert0CA-CERT"));
-        assertThat(new String(newCerts.get("pod1").cert()), is("new-cert1CA-CERT"));
-        assertThat(new String(newCerts.get("pod2").cert()), is("new-cert2CA-CERT"));
+        assertThat(new String(newCert.cert()), is("new-cert0CA-CERT"));
     }
 
     @Test
@@ -454,7 +240,7 @@ public class InternalClusterCaRenewalTest {
                 "deployment",
                 null,
                 true
-        );
+        ).toCompletableFuture().join();
 
         assertThat(new String(newCert.cert()), is("new-cert0"));
         assertThat(new String(newCert.key()), is("new-key0"));
@@ -473,7 +259,7 @@ public class InternalClusterCaRenewalTest {
                 "deployment",
                 initialCert,
                 true
-        );
+        ).toCompletableFuture().join();
 
         assertThat(new String(newCert.cert()), is("new-cert0"));
         assertThat(new String(newCert.key()), is("new-key0"));
@@ -491,7 +277,7 @@ public class InternalClusterCaRenewalTest {
                 "deployment",
                 initialCert,
                 true
-        );
+        ).toCompletableFuture().join();
 
         assertThat(new String(newCert.cert()), is("new-cert0"));
         assertThat(new String(newCert.key()), is("new-key0"));
@@ -509,7 +295,7 @@ public class InternalClusterCaRenewalTest {
                 "deployment",
                 initialCert,
                 false
-        );
+        ).toCompletableFuture().join();
 
         assertThat(new String(newCert.cert()), is(EXPIRED_DUMMY_CERT));
         assertThat(new String(newCert.key()), is("old-key"));
@@ -528,13 +314,28 @@ public class InternalClusterCaRenewalTest {
                 "deployment",
                 initialCert,
                 true
-        );
+        ).toCompletableFuture().join();
 
         assertThat(new String(newCert.cert()), is(DUMMY_CERT));
         assertThat(new String(newCert.key()), is("old-key"));
         assertThat(new String(newCert.keyStore()), is("old-keystore"));
         assertThat(newCert.storePassword(), is("old-password"));
         assertThat(newCert.caCertGeneration(), is(0));
+    }
+
+    @Test
+    public void testIncludesCaChain()  {
+        String cert = "CERT";
+        String caChain = "CACHAIN";
+        String caChain2 = "CA2CHAIN";
+        String certWithChain = cert + caChain;
+
+        assertThat(InternalCa.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), caChain.getBytes(StandardCharsets.US_ASCII)), is(true));
+        assertThat(InternalCa.includesCaChain(cert.getBytes(StandardCharsets.US_ASCII), caChain.getBytes(StandardCharsets.US_ASCII)), is(false));
+        assertThat(InternalCa.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), caChain2.getBytes(StandardCharsets.US_ASCII)), is(false));
+        assertThat(InternalCa.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), cert.getBytes(StandardCharsets.US_ASCII)), is(false));
+        assertThat(InternalCa.includesCaChain(null, caChain.getBytes(StandardCharsets.US_ASCII)), is(false));
+        assertThat(InternalCa.includesCaChain(cert.getBytes(StandardCharsets.US_ASCII), null), is(false));
     }
 
     public static class MockedClusterCa extends InternalCa {

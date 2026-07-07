@@ -36,6 +36,7 @@ import io.strimzi.api.kafka.model.kafka.cruisecontrol.CruiseControlResources;
 import io.strimzi.api.kafka.model.kafka.cruisecontrol.CruiseControlSpec;
 import io.strimzi.api.kafka.model.kafka.cruisecontrol.CruiseControlTemplate;
 import io.strimzi.certs.CertAndKey;
+import io.strimzi.certs.Subject;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.cruisecontrol.CapacityConfiguration;
 import io.strimzi.operator.cluster.model.cruisecontrol.CruiseControlConfiguration;
@@ -57,7 +58,6 @@ import io.strimzi.operator.common.model.cruisecontrol.CruiseControlApiProperties
 import io.strimzi.operator.common.model.cruisecontrol.CruiseControlConfigurationParameters;
 import io.strimzi.plugin.security.profiles.PodSecurityProviderContext;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -65,7 +65,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 import static io.strimzi.api.kafka.model.common.template.DeploymentStrategy.ROLLING_UPDATE;
@@ -450,32 +449,46 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
      */
     public CompletionStage<Secret> generateCertificatesSecret(String namespace, String clusterName, Ca ca, Secret existingSecret, boolean isMaintenanceTimeWindowsSatisfied) {
         LOGGER.debugCr(reconciliation, "Generating certificates");
-        try {
-            CertAndKey existingCertAndKey = CertUtils.keyStoreCertAndKey(existingSecret, CruiseControl.COMPONENT_TYPE, ca.caCertGenerationAnnotation());
-            return ClusterCaCertificateIssuer.generateCcCerts(
-                    reconciliation,
-                    ca,
+        CertAndKey existingCertAndKey = CertUtils.keyStoreCertAndKey(existingSecret, CruiseControl.COMPONENT_TYPE, ca.caCertGenerationAnnotation());
+
+        Subject subject = buildCruiseControlCertSubject(namespace, clusterName);
+
+        return ca.maybeCopyOrGenerateServerCerts(
+                reconciliation,
+                CruiseControl.COMPONENT_TYPE,
+                subject,
+                existingCertAndKey,
+                isMaintenanceTimeWindowsSatisfied,
+                false
+        ).thenApply(certAndKey -> {
+            LOGGER.debugCr(reconciliation, "End generating certificates");
+            Map<String, CertAndKey> certAndKeys = Map.of(CruiseControl.COMPONENT_TYPE, certAndKey);
+            return ModelUtils.createSecret(
+                    CruiseControlResources.secretName(cluster),
                     namespace,
-                    clusterName,
-                    existingCertAndKey,
-                    new NodeRef(CruiseControl.COMPONENT_TYPE, 0, null, false, false),
-                    isMaintenanceTimeWindowsSatisfied
-            ).thenApply(certAndKeys -> {
-                LOGGER.debugCr(reconciliation, "End generating certificates");
-                return ModelUtils.createSecret(
-                        CruiseControlResources.secretName(cluster),
-                        namespace,
-                        labels,
-                        ownerReference,
-                        CertUtils.buildSecretData(certAndKeys),
-                        Map.of(ca.caCertGenerationAnnotation(), String.valueOf(certAndKeys.get(CruiseControl.COMPONENT_TYPE).caCertGeneration())),
-                        Map.of()
-                );
-            });
-        } catch (IOException e) {
-            LOGGER.errorCr(reconciliation, "Error while generating certificates", e);
-            return CompletableFuture.failedStage(new RuntimeException("Failed to prepare Cruise Control certificate", e));
-        }
+                    labels,
+                    ownerReference,
+                    CertUtils.buildSecretData(certAndKeys),
+                    Map.of(ca.caCertGenerationAnnotation(), String.valueOf(certAndKey.caCertGeneration())),
+                    Map.of()
+            );
+        });
+    }
+
+    private Subject buildCruiseControlCertSubject(String namespace, String clusterName) {
+        DnsNameGenerator ccDnsGenerator = DnsNameGenerator.of(namespace, CruiseControlResources.serviceName(clusterName));
+
+        Subject.Builder subject = new Subject.Builder()
+                .withOrganizationName(Ca.IO_STRIMZI)
+                .withCommonName(CruiseControlResources.serviceName(clusterName));
+
+        subject.addDnsName(CruiseControlResources.serviceName(clusterName));
+        subject.addDnsName(String.format("%s.%s", CruiseControlResources.serviceName(clusterName), namespace));
+        subject.addDnsName(ccDnsGenerator.serviceDnsNameWithoutClusterDomain());
+        subject.addDnsName(ccDnsGenerator.serviceDnsName());
+        subject.addDnsName("localhost");
+
+        return subject.build();
     }
 
     /**

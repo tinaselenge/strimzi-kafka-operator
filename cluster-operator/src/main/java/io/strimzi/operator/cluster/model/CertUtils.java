@@ -13,7 +13,7 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.Ca;
-import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.InvalidResourceException;
 
 import java.math.BigInteger;
@@ -53,7 +53,7 @@ public class CertUtils {
      */
     public static String getCertificateThumbprint(Secret certSecret, String key) {
         try {
-            var cert = CaUtils.cert(certSecret, key);
+            var cert = CertificateUtils.cert(certSecret, key);
             return cert == null ? null : getCertificateThumbprint(cert);
         } catch (CertificateEncodingException e) {
             throw new RuntimeException("Failed to get certificate thumbprint of " + key + " from Secret " + certSecret.getMetadata().getName(), e);

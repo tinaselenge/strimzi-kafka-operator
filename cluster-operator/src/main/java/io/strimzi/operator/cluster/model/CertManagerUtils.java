@@ -11,7 +11,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.certs.CertAndKey;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.ca.Ca;
-import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.Labels;
 
 import java.security.cert.CertificateException;
@@ -162,8 +162,8 @@ public class CertManagerUtils {
      */
     public static boolean certManagerCertUpdated(CertAndKey existingCertAndKey, CertAndKey newCertAndKey) {
         try {
-            String existingCertHash = getCertificateThumbprint(CaUtils.x509Certificate(existingCertAndKey.cert()));
-            String newCertHash = getCertificateThumbprint(CaUtils.x509Certificate(newCertAndKey.cert()));
+            String existingCertHash = getCertificateThumbprint(CertificateUtils.x509Certificate(existingCertAndKey.cert()));
+            String newCertHash = getCertificateThumbprint(CertificateUtils.x509Certificate(newCertAndKey.cert()));
             return !existingCertHash.equals(newCertHash);
         } catch (CertificateException e) {
             throw new RuntimeException(e);

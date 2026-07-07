@@ -83,6 +83,17 @@ public class CertManagerCa extends Ca {
         return INIT_GENERATION;
     }
 
+    @Override
+    public CompletionStage<CertAndKey> maybeCopyOrGenerateServerCerts(Reconciliation reconciliation, String componentName, Subject subject, CertAndKey existingCertAndKey, boolean isMaintenanceTimeWindowsSatisfied, boolean includeCaChain) {
+        return maybeCopyOrGenerateCert(componentName, subject, existingCertAndKey);
+    }
+
+    @Override
+    public CompletionStage<CertAndKey> maybeCopyOrGenerateClientCert(Reconciliation reconciliation, String componentName, CertAndKey existingCertAndKey, boolean isMaintenanceTimeWindowsSatisfied) {
+        Subject subject = CertificateUtils.getSubject(componentName, Ca.IO_STRIMZI);
+        return maybeCopyOrGenerateCert(componentName, subject, existingCertAndKey);
+    }
+
     /**
      * Create or update CA data when cert-manager is managing CA.
      * <p>
@@ -129,7 +140,7 @@ public class CertManagerCa extends Ca {
         X509Certificate x509CaCert;
         String newCaCertHash;
         try {
-            x509CaCert = CaUtils.x509Certificate(Util.decodeBytesFromBase64(newCaCertAsBase64));
+            x509CaCert = CertificateUtils.x509Certificate(Util.decodeBytesFromBase64(newCaCertAsBase64));
             newCaCertHash = String.format("%040x", new BigInteger(1, Util.sha1Digest(x509CaCert.getEncoded())));
         } catch (CertificateException e) {
             throw new RuntimeException(e);
@@ -142,7 +153,7 @@ public class CertManagerCa extends Ca {
                 LOGGER.warnCr(reconciliation, "Cluster CA cert has changed, but operator certificate is missing - cannot determine if key changed. Will retry in next reconciliation.");
                 return  RenewalType.NOOP;
             }
-            if (CaUtils.certIsTrusted(reconciliation, List.of(endEntityCertificate), x509CaCert)) {
+            if (CertificateUtils.certIsTrusted(reconciliation, List.of(endEntityCertificate), x509CaCert)) {
                 // No key replacement
                 return RenewalType.RENEW_CERT;
             } else {
@@ -183,7 +194,7 @@ public class CertManagerCa extends Ca {
                     if (existingCert == null) {
                         return newCertAndKey;
                     } else if (certManagerCertUpdated(existingCert, newCertAndKey)) {
-                        if (CaUtils.certIsTrusted(reconciliation, CaUtils.extractCertChain(entityName, newCertAndKey.cert()), currentCaCertX509())) {
+                        if (CertificateUtils.certIsTrusted(reconciliation, CertificateUtils.extractCertChain(entityName, newCertAndKey.cert()), currentCaCertX509())) {
                             LOGGER.infoCr(reconciliation, "New certificate for {}/{}", reconciliation.namespace(), entityName);
                             return newCertAndKey;
                         } else {
@@ -242,8 +253,8 @@ public class CertManagerCa extends Ca {
                     .withEncoding("PKCS8")
                     .withSize(2048)
                 .endPrivateKey()
-                .withDuration(CaUtils.convertToFabric8Duration(validityDays))
-                .withRenewBefore(CaUtils.convertToFabric8Duration(renewalDays))
+                .withDuration(CertificateUtils.convertToFabric8Duration(validityDays))
+                .withRenewBefore(CertificateUtils.convertToFabric8Duration(renewalDays))
                 .withIsCA(false)
                 .withNewSubject()
                     .withOrganizations(subject.organizationName())
@@ -284,8 +295,8 @@ public class CertManagerCa extends Ca {
      */
     public static boolean certManagerCertUpdated(CertAndKey existingCertAndKey, CertAndKey newCertAndKey) {
         try {
-            String existingCertHash = getCertificateThumbprint(CaUtils.x509Certificate(existingCertAndKey.cert()));
-            String newCertHash = getCertificateThumbprint(CaUtils.x509Certificate(newCertAndKey.cert()));
+            String existingCertHash = getCertificateThumbprint(CertificateUtils.x509Certificate(existingCertAndKey.cert()));
+            String newCertHash = getCertificateThumbprint(CertificateUtils.x509Certificate(newCertAndKey.cert()));
             return !existingCertHash.equals(newCertHash);
         } catch (CertificateException e) {
             throw new RuntimeException(e);

@@ -15,7 +15,7 @@ import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.operator.common.ca.CaConfig;
-import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.Labels;
 
 import java.security.cert.X509Certificate;
@@ -123,7 +123,7 @@ public abstract class CaProvider {
                 .stream()
                 .filter(entry -> Ca.SecretEntry.CRT.matchesType(entry.getKey()))
                 .forEach(entry -> {
-                    List<X509Certificate> certChain = CaUtils.extractCertChain(entry.getKey(), Util.decodeBytesFromBase64(entry.getValue()));
+                    List<X509Certificate> certChain = CertificateUtils.extractCertChain(entry.getKey(), Util.decodeBytesFromBase64(entry.getValue()));
                     if (certChain.isEmpty()) {
                         LOGGER.errorCr(reconciliation, "{} certificate chain in {} is empty", caRole.name(), entry.getKey());
                         throw new RuntimeException("Failed to validate User supplied " + caRole.name() + " cert chain in " + entry.getKey());
@@ -131,7 +131,7 @@ public abstract class CaProvider {
                         LOGGER.debugCr(reconciliation, "{} certificate {} contains a single certificate", caRole.name(), entry.getKey());
                         return;
                     }
-                    if (!CaUtils.certIsTrusted(reconciliation, certChain.subList(0, certChain.size() - 1), certChain.getLast())) {
+                    if (!CertificateUtils.certIsTrusted(reconciliation, certChain.subList(0, certChain.size() - 1), certChain.getLast())) {
                         String errorMessage = "User supplied " + caRole.name() + " cert chain " + entry.getKey() + " is not valid. Certificates must be provided in the correct order.";
                         LOGGER.errorCr(reconciliation, errorMessage);
                         throw new RuntimeException(errorMessage);

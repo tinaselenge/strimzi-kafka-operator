@@ -39,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static io.strimzi.operator.common.ca.Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION;
 import static io.strimzi.operator.common.ca.Ca.CA_CRT;
-import static io.strimzi.operator.common.ca.CaUtils.convertToFabric8Duration;
+import static io.strimzi.operator.common.ca.CertificateUtils.convertToFabric8Duration;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertNull;

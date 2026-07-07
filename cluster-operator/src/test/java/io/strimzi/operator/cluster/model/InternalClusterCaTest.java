@@ -16,7 +16,6 @@ import io.strimzi.operator.common.ca.InternalCa;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
@@ -26,7 +25,7 @@ import java.util.Map;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
-public class ClusterCaTest {
+public class InternalClusterCaTest {
     private final String cluster = "my-cluster";
 
     @Test
@@ -199,21 +198,6 @@ public class ClusterCaTest {
         assertThat(Util.decodeFromBase64(clusterCaCertDataInSecret.get(InternalCa.CA_STORE)).equals("dummy-p12"), is(true));
         assertThat(Util.decodeFromBase64(clusterCaCertDataInSecret.get(InternalCa.CA_STORE_PASSWORD)).equals("dummy-password"), is(true));
         assertThat(Util.decodeFromBase64(clusterCaCertDataInSecret.get("ca-2023-03-23T09-00-00Z.crt")).equals(dummyCert), is(true));
-    }
-
-    @Test
-    public void testIncludesCaChain()  {
-        String cert = "CERT";
-        String caChain = "CACHAIN";
-        String caChain2 = "CA2CHAIN";
-        String certWithChain = cert + caChain;
-
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), caChain.getBytes(StandardCharsets.US_ASCII)), is(true));
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(cert.getBytes(StandardCharsets.US_ASCII), caChain.getBytes(StandardCharsets.US_ASCII)), is(false));
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), caChain2.getBytes(StandardCharsets.US_ASCII)), is(false));
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(certWithChain.getBytes(StandardCharsets.US_ASCII), cert.getBytes(StandardCharsets.US_ASCII)), is(false));
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(null, caChain.getBytes(StandardCharsets.US_ASCII)), is(false));
-        assertThat(ClusterCaCertificateIssuer.includesCaChain(cert.getBytes(StandardCharsets.US_ASCII), null), is(false));
     }
 
     private Secret buildCertSecret(InternalCa strimziCa) {

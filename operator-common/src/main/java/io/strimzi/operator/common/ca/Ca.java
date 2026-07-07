@@ -7,6 +7,8 @@ package io.strimzi.operator.common.ca;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.api.kafka.model.common.CertificateManagerType;
+import io.strimzi.certs.CertAndKey;
+import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
@@ -21,6 +23,7 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.SignStyle;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -405,7 +408,7 @@ public abstract class Ca {
     public X509Certificate currentCaCertX509() {
         if (caCertData.get(CA_CRT) != null) {
             try {
-                return CaUtils.x509Certificate(currentCaCertBytes());
+                return CertificateUtils.x509Certificate(currentCaCertBytes());
             } catch (CertificateException e) {
                 throw new RuntimeException("Failed to decode "  + CA_CRT + " in Secret for " + caName(), e);
             }
@@ -425,7 +428,7 @@ public abstract class Ca {
                 .filter(e -> e.getKey().endsWith(SecretEntry.CRT.suffix) && e.getValue() != null && !e.getValue().isBlank())
                 .map(e -> {
                     try {
-                        return CaUtils.x509CertificateToPem(CaUtils.x509Certificate(Util.decodeBytesFromBase64(e.getValue())));
+                        return CertificateUtils.x509CertificateToPem(CertificateUtils.x509Certificate(Util.decodeBytesFromBase64(e.getValue())));
                     } catch (CertificateException ex) {
                         throw new RuntimeException("Failed to decode " + e.getKey() + " in Secret for " + caName(), ex);
                     }
@@ -501,6 +504,48 @@ public abstract class Ca {
     public int caKeyGeneration() {
         return caKeyGeneration;
     }
+
+
+    /**
+     * Generates or reuses a server certificate signed by this Cluster CA.
+     * Used for Kafka brokers and Cruise Control.
+     *
+     * @param reconciliation                        Reconciliation marker
+     * @param commonName                            Common Name for the certificate
+     * @param subject                               Subject for the certificate
+     * @param existingCertAndKey                    Existing certificate (or null if none exists)
+     * @param isMaintenanceTimeWindowsSatisfied     Whether we are in a maintenance window
+     * @param includeCaChain                        Whether to include CA chain
+     *
+     *
+     * @return CertAndKey object containing the public and private key
+     **/
+    public abstract CompletionStage<CertAndKey> maybeCopyOrGenerateServerCerts(
+            Reconciliation reconciliation,
+            String commonName,
+            Subject subject,
+            CertAndKey existingCertAndKey,
+            boolean isMaintenanceTimeWindowsSatisfied,
+            boolean includeCaChain
+    );
+
+    /**
+     * Generates or reuses a client certificate signed by this Cluster CA.
+     * Used for components that only act as clients, like Entity Operators and Kafka Exporter.
+     *
+     * @param reconciliation                        Reconciliation marker
+     * @param commonName                            Common Name for the certificate
+     * @param existingCertAndKey                    Existing certificate (or null if none exists)
+     * @param isMaintenanceTimeWindowsSatisfied     Whether we are in a maintenance window
+     *
+     * @return CertAndKey object containing the certificate and key with CA generation set
+     */
+    public abstract CompletionStage<CertAndKey> maybeCopyOrGenerateClientCert(
+            Reconciliation reconciliation,
+            String commonName,
+            CertAndKey existingCertAndKey,
+            boolean isMaintenanceTimeWindowsSatisfied
+    );
 
     /**
      * Remove certificates from the CA related Secret and store which match the provided predicate

@@ -20,7 +20,6 @@ import io.strimzi.certs.CertIssuer;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.AbstractModel;
 import io.strimzi.operator.cluster.model.CertUtils;
-import io.strimzi.operator.cluster.model.ClusterCaCertificateIssuer;
 import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.RestartReason;
@@ -301,10 +300,9 @@ public class CaReconciler {
         String componentName = "cluster-operator";
         CertAndKey oldCertAndKey = CertUtils.keyStoreCertAndKey(coSecret, componentName, Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION);
 
-        return VertxUtil.toFuture(ClusterCaCertificateIssuer.maybeCopyOrGenerateClientCert(
+        return VertxUtil.toFuture(clusterCa.maybeCopyOrGenerateClientCert(
                         reconciliation,
                         componentName,
-                        clusterCa,
                         oldCertAndKey,
                         Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))
                 .thenCompose(updatedCert -> {

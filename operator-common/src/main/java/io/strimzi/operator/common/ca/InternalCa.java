@@ -27,12 +27,17 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 
 /**
@@ -86,18 +91,139 @@ public class InternalCa extends Ca {
         return INIT_GENERATION;
     }
 
+    @Override
+    public CompletionStage<CertAndKey> maybeCopyOrGenerateServerCerts(Reconciliation reconciliation,
+                                                                  String podName,
+                                                                  Subject subject,
+                                                                  CertAndKey existingCertAndKey,
+                                                                  boolean isMaintenanceTimeWindowsSatisfied,
+                                                                  boolean includeCaChain) {
+        List<String> reasons = new ArrayList<>();
+
+        if (existingCertAndKey == null) {
+            reasons.add("certificate doesn't exist yet for pod");
+        } else if (hasCaCertGenerationChanged(existingCertAndKey.caCertGeneration(), podName)) {
+            reasons.add("certificate for pod has old cert generation");
+        } else {
+            // A certificate for this node already exists, so we will try to reuse it
+            LOGGER.debugCr(reconciliation, "certificate for node {} already exists", podName);
+
+            if (certSubjectChanged(reconciliation, existingCertAndKey, subject, podName))   {
+                reasons.add("DNS names changed");
+            }
+
+            if (isExpiring(existingCertAndKey.cert()) && isMaintenanceTimeWindowsSatisfied)  {
+                reasons.add("certificate is expiring");
+            }
+
+
+            // In Strimzi 0.48 we moved to using the PEM certificates directly instead of PKCS12 in the Kafka brokers.
+            // But that (unintentionally) removed the full CA chain from the server certificates. We added them back
+            // in Strimzi 0.50. But this logic is needed to actually roll out the updated Secrets with the full CA chain.
+            // For more details, see https://github.com/strimzi/strimzi-kafka-operator/issues/12364.
+            //
+            // After some time - after multiple Strimzi releases, once the CA chains are added in all clusters, we
+            // should be able to remove this logic again.
+            if (includeCaChain && !includesCaChain(existingCertAndKey.cert(), currentCaCertBytes())) {
+                reasons.add("CA chain added");
+            }
+        }
+
+        CertAndKey certAndKey;
+        if (!reasons.isEmpty())  {
+            LOGGER.infoCr(reconciliation, "Certificate for pod {} needs to be regenerated because: {}", podName, String.join(", ", reasons));
+            try {
+                certAndKey = generateSignedCert(subject, includeCaChain);
+            } catch (IOException e) {
+                LOGGER.errorCr(reconciliation, "Error while generating certificates", e);
+                return CompletableFuture.failedStage(new RuntimeException("Failed to prepare certificate for" + podName, e));
+            }
+        }  else {
+            certAndKey = existingCertAndKey;
+        }
+
+        return CompletableFuture.completedFuture(certAndKey);
+    }
+
     /**
-     * Generates or reuses a single certificate signed by this Cluster CA.
-     * Used for components that only act as clients, like Entity Operators and Kafka Exporter.
+     * Checks whether subject alternate names changed and certificate needs a renewal
      *
-     * @param reconciliation                        Reconciliation marker
-     * @param commonName                            Common Name for the certificate
-     * @param existingCertAndKey                    Existing certificate (or null if none exists)
-     * @param isMaintenanceTimeWindowsSatisfied     Whether we are in a maintenance window
+     * @param certAndKey        Current certificate
+     * @param desiredSubject    Desired subject alternate names
+     * @param podName           Name of the pod to which this certificate belongs (used for log messages)
      *
-     * @return CertAndKey object containing the certificate and key with CA generation set
+     * @return  True if the subjects are different, false otherwise
      */
-    public CertAndKey maybeCopyOrGenerateClientCert(
+    /* test */
+    static boolean certSubjectChanged(Reconciliation reconciliation, CertAndKey certAndKey, Subject desiredSubject, String podName)    {
+        Collection<String> desiredAltNames = desiredSubject.subjectAltNames().values();
+        Collection<String> currentAltNames = getSubjectAltNames(reconciliation, certAndKey.cert());
+
+        if (currentAltNames != null && desiredAltNames.containsAll(currentAltNames) && currentAltNames.containsAll(desiredAltNames))   {
+            LOGGER.traceCr(reconciliation, "Alternate subjects match. No need to refresh cert for pod {}.", podName);
+            return false;
+        } else {
+            LOGGER.infoCr(reconciliation, "Alternate subjects for pod {} differ", podName);
+            LOGGER.infoCr(reconciliation, "Current alternate subjects: {}", currentAltNames);
+            LOGGER.infoCr(reconciliation, "Desired alternate subjects: {}", desiredAltNames);
+            return true;
+        }
+    }
+
+    /**
+     * Extracts the alternate subject names out of existing certificate
+     *
+     * @param certificate   Existing X509 certificate as a byte array
+     *
+     * @return  List of certificate Subject Alternate Names
+     */
+    private static List<String> getSubjectAltNames(Reconciliation reconciliation, byte[] certificate) {
+        List<String> subjectAltNames = new ArrayList<>();
+
+        try {
+            X509Certificate cert = CertificateUtils.x509Certificate(certificate);
+            Collection<List<?>> altNames = cert.getSubjectAlternativeNames();
+            if (altNames != null) {
+                subjectAltNames = altNames.stream()
+                        .filter(name -> name.get(1) instanceof String)
+                        .map(item -> (String) item.get(1))
+                        .collect(Collectors.toList());
+            }
+        } catch (CertificateException | RuntimeException e) {
+            LOGGER.debugCr(reconciliation, "Failed to parse existing certificate", e);
+        }
+
+        return subjectAltNames;
+    }
+
+    /**
+     * Checks if the CA chain is contained at the end of the certificate.
+     *
+     * @param cert      The server certificate as a byte array
+     * @param caChain   The CA chain as a byte array
+     *
+     * @return  True if the CA chain is included at the end of the certificate, false otherwise.
+     */
+    /* test */ public static boolean includesCaChain(byte[] cert, byte[] caChain) {
+        if (cert == null || caChain == null || cert.length < caChain.length) {
+            // The CA chain is definitely not included
+            return false;
+        } else {
+            return Arrays.equals(Arrays.copyOfRange(cert, cert.length - caChain.length, cert.length), caChain);
+        }
+    }
+
+    /**
+     * It checks if the current CA certificate generation is changed compared to the one
+     * that signed the CertAndKey.
+     */
+    private boolean hasCaCertGenerationChanged(int certAndKeyCaCertGeneration, String podName) {
+        LOGGER.debugOp("Pod {} generation anno = {}, current CA generation = {}", podName, certAndKeyCaCertGeneration, caCertGeneration());
+        return certAndKeyCaCertGeneration != caCertGeneration;
+    }
+
+    @Override
+    public CompletionStage<CertAndKey> maybeCopyOrGenerateClientCert(
             Reconciliation reconciliation,
             String commonName,
             CertAndKey existingCertAndKey,
@@ -121,8 +247,9 @@ public class InternalCa extends Ca {
             LOGGER.infoCr(reconciliation, "Certificate for component {} needs to be regenerated because: {}", commonName, String.join(", ", reasons));
 
             try {
-                String org = caRole.equals(CaRole.CLIENTS_CA) ? null : InternalCa.IO_STRIMZI;
-                certAndKey = getSignedCert(commonName, org);
+                String org = caRole.equals(CaRole.CLIENTS_CA) ? null : Ca.IO_STRIMZI;
+                Subject subject = CertificateUtils.getSubject(commonName, org);
+                certAndKey = generateSignedCert(subject);
             } catch (IOException e) {
                 LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
             }
@@ -132,16 +259,7 @@ public class InternalCa extends Ca {
             certAndKey = existingCertAndKey;
         }
 
-        return certAndKey;
-    }
-
-    /**
-     * It checks if the current CA certificate generation is changed compared to the one
-     * that signed the CertAndKey.
-     */
-    private boolean hasCaCertGenerationChanged(int certAndKeyCaCertGeneration, String podName) {
-        LOGGER.debugOp("Pod {} generation anno = {}, current CA generation = {}", podName, certAndKeyCaCertGeneration, caCertGeneration());
-        return certAndKeyCaCertGeneration != caCertGeneration;
+        return CompletableFuture.completedFuture(certAndKey);
     }
 
     private static void delete(Reconciliation reconciliation, File file) {
@@ -248,33 +366,19 @@ public class InternalCa extends Ca {
         }
     }
 
-    /**
-     * Gets a certificate signed by this CA
-     *
-     * @param commonName The CN of the certificate to be created.
-     * @param organization The O of the certificate to be created. May be null.
-     * @return The newly created certificate CertAndKey
-     * @throws IOException If the cert could not be created.
-     */
-    public CertAndKey getSignedCert(String commonName, String organization) throws IOException {
-        Subject subject = CaUtils.getSubject(commonName, organization);
-        return generateSignedCert(subject);
+
+    private CertAndKey generateSignedCert(Subject subject) throws IOException {
+        return generateSignedCert(subject, false);
     }
 
-    /**
-     * Generates a certificate signed by this CA
-     *
-     * @param subject The subject of the certificate to be generated.
-     * @return The CertAndKey
-     * @throws IOException If the cert could not be generated.
-     */
-    private CertAndKey generateSignedCert(Subject subject) throws IOException {
+
+    private CertAndKey generateSignedCert(Subject subject, boolean includeCaChain) throws IOException {
         File csrFile = Files.createTempFile("tls", "csr").toFile();
         File keyFile = Files.createTempFile("tls", "key").toFile();
         File certFile = Files.createTempFile("tls", "cert").toFile();
         File keyStoreFile = Files.createTempFile("tls", "p12").toFile();
 
-        CertAndKey result = generateSignedCert(subject, csrFile, keyFile, certFile, keyStoreFile, false);
+        CertAndKey result = generateSignedCert(subject, csrFile, keyFile, certFile, keyStoreFile, includeCaChain);
 
         delete(reconciliation, csrFile);
         delete(reconciliation, keyFile);
@@ -291,7 +395,7 @@ public class InternalCa extends Ca {
      * @return  True when the certificate should be renewed. False otherwise.
      */
     public boolean isExpiring(Secret secret, String certKey)  {
-        X509Certificate currentCert = CaUtils.cert(secret, certKey);
+        X509Certificate currentCert = CertificateUtils.cert(secret, certKey);
         return certNeedsRenewal(currentCert);
     }
 
@@ -304,7 +408,7 @@ public class InternalCa extends Ca {
      */
     public boolean isExpiring(byte[] certificate)  {
         try {
-            X509Certificate currentCert = CaUtils.x509Certificate(certificate);
+            X509Certificate currentCert = CertificateUtils.x509Certificate(certificate);
             return certNeedsRenewal(currentCert);
         } catch (CertificateException e) {
             LOGGER.errorCr(reconciliation, "Failed to parse existing certificate", e);
@@ -473,7 +577,7 @@ public class InternalCa extends Ca {
         String certName = entry.getKey();
         String certText = entry.getValue();
         try {
-            X509Certificate cert = CaUtils.x509Certificate(Util.decodeBytesFromBase64(certText));
+            X509Certificate cert = CertificateUtils.x509Certificate(Util.decodeBytesFromBase64(certText));
             Instant expiryDate = cert.getNotAfter().toInstant();
             remove = expiryDate.isBefore(clock.instant());
             if (remove) {

@@ -18,8 +18,8 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.operator.common.ca.CaConfig;
-import io.strimzi.operator.common.ca.CaUtils;
 import io.strimzi.operator.common.ca.CertManagerCa;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.operator.resource.concurrent.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
@@ -102,7 +102,7 @@ public class CertManagerCaProvider extends CaProvider {
                     certManagerCa.createOrUpdateCa(
                             newCaCertAsBase64,
                             Annotations.stringAnnotation(existingCaCertSecret, Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, ""),
-                            CaUtils.cert(clusterOperatorSecret, "cluster-operator.crt")
+                            CertificateUtils.cert(clusterOperatorSecret, "cluster-operator.crt")
                     );
                     ca = certManagerCa;
                     return ca;
@@ -140,7 +140,7 @@ public class CertManagerCaProvider extends CaProvider {
         Map<String, String> certAnnotations = new HashMap<>(2);
 
         try {
-            certAnnotations.put(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(CaUtils.x509Certificate(Util.decodeBytesFromBase64(caCertData.get(CA_CRT)))));
+            certAnnotations.put(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(CertificateUtils.x509Certificate(Util.decodeBytesFromBase64(caCertData.get(CA_CRT)))));
         } catch (CertificateException e) {
             throw new RuntimeException(e);
         }

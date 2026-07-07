@@ -82,7 +82,7 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.ServiceOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.StrimziPodSetOperator;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
-import io.strimzi.operator.common.ca.CaUtils;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
@@ -668,7 +668,7 @@ public class KafkaAssemblyOperatorTest {
                     // The actual type of the ca does not matter, as MockCertManager is using CLUSTER_CERT for both cluster and client
                     String expectedCa = MockCertIssuer.clusterCaCert();
                     try {
-                        X509Certificate x509Certificate = CaUtils.x509Certificate(Base64.getDecoder().decode(expectedCa));
+                        X509Certificate x509Certificate = CertificateUtils.x509Certificate(Base64.getDecoder().decode(expectedCa));
                         assertThat(metricValue, is(x509Certificate.getNotAfter().getTime()));
                     } catch (CertificateException e) {
                         fail("Failure decoding cluster CA cert");

@@ -40,7 +40,6 @@ import io.fabric8.kubernetes.api.model.rbac.Role;
 import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.RoleRef;
 import io.fabric8.kubernetes.api.model.rbac.RoleRefBuilder;
-import io.fabric8.kubernetes.api.model.rbac.Subject;
 import io.fabric8.kubernetes.api.model.rbac.SubjectBuilder;
 import io.fabric8.openshift.api.model.Route;
 import io.fabric8.openshift.api.model.RouteBuilder;
@@ -73,6 +72,8 @@ import io.strimzi.api.kafka.model.kafka.tieredstorage.TieredStorage;
 import io.strimzi.api.kafka.model.nodepool.KafkaNodePoolStatus;
 import io.strimzi.api.kafka.model.podset.StrimziPodSet;
 import io.strimzi.certs.CertAndKey;
+import io.strimzi.certs.IpAndDnsValidation;
+import io.strimzi.certs.Subject;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.cruisecontrol.CruiseControlMetricsReporter;
 import io.strimzi.operator.cluster.model.jmx.JmxModel;
@@ -89,8 +90,8 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.Ca;
-import io.strimzi.operator.common.ca.CaUtils;
 import io.strimzi.operator.common.ca.CertManagerCa;
+import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.StatusUtils;
@@ -99,7 +100,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import org.apache.kafka.server.common.MetadataVersion;
 
-import java.io.IOException;
 import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -1318,26 +1318,67 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
         Map<String, Secret> existingSecretMap = existingSecrets.stream().collect(Collectors.toMap(secret -> secret.getMetadata().getName(), secret -> secret));
         Map<String, CertAndKey> existingCertificates = extractExistingCertsFromSecret(existingSecretMap, clusterCa);
 
-        try {
-            return ClusterCaCertificateIssuer.generateBrokerCerts(
-                    reconciliation,
-                    clusterCa,
-                    namespace,
-                    cluster,
-                    existingCertificates,
-                    nodes(),
-                    externalBootstrapDnsName,
-                    externalDnsNames,
-                    isMaintenanceTimeWindowsSatisfied
-            ).thenApply(certAndKeys -> buildSecretsFromCertAndKeys(
-                    certAndKeys,
-                    customCertsData,
-                    clusterCa
-            ));
-        } catch (IOException e) {
-            LOGGER.errorCr(reconciliation, "Error while generating certificates", e);
-            return CompletableFuture.failedStage(new RuntimeException("Failed to prepare Kafka certificates", e));
+        List<CompletableFuture<Map.Entry<String, CertAndKey>>> futureList = new ArrayList<>();
+
+        nodes().forEach(node -> {
+            Subject subject = buildKafkaNodeCertsSubject(node, externalBootstrapDnsName, externalDnsNames);
+            String podName = node.podName();
+
+            futureList.add(clusterCa.maybeCopyOrGenerateServerCerts(reconciliation, podName, subject, existingCertificates.getOrDefault(podName, null), isMaintenanceTimeWindowsSatisfied, true)
+                    .thenApply(certAndKey -> Map.entry(podName, certAndKey))
+                    .toCompletableFuture());
+        });
+
+        return CompletableFuture.allOf(futureList.toArray(new CompletableFuture[0]))
+                .thenApply(v -> futureList.stream()
+                        .map(CompletableFuture::join)
+                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+                .thenApply(certAndKeys -> buildSecretsFromCertAndKeys(
+                        certAndKeys,
+                        customCertsData,
+                        clusterCa
+                ));
+    }
+
+    private Subject buildKafkaNodeCertsSubject(NodeRef node,
+                                                                                Set<String> externalBootstrapAddresses,
+                                                                                Map<Integer, Set<String>> externalAddresses
+    ) {
+        Subject.Builder subject = new Subject.Builder()
+                .withOrganizationName(Ca.IO_STRIMZI)
+                .withCommonName(KafkaResources.kafkaComponentName(cluster));
+
+        subject.addDnsNames(ModelUtils.generateAllServiceDnsNames(namespace, KafkaResources.bootstrapServiceName(cluster)));
+        subject.addDnsNames(ModelUtils.generateAllServiceDnsNames(namespace, KafkaResources.brokersServiceName(cluster)));
+
+        subject.addDnsName(DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(cluster), node.podName()));
+        subject.addDnsName(DnsNameGenerator.podDnsNameWithoutClusterDomain(namespace, KafkaResources.brokersServiceName(cluster), node.podName()));
+
+        // Controller-only nodes do not have the SANs for external listeners.
+        // That helps us to avoid unnecessary rolling updates when the SANs change
+        if (node.broker())    {
+            if (externalBootstrapAddresses != null) {
+                for (String dnsName : externalBootstrapAddresses) {
+                    if (IpAndDnsValidation.isValidIpAddress(dnsName)) {
+                        subject.addIpAddress(dnsName);
+                    } else {
+                        subject.addDnsName(dnsName);
+                    }
+                }
+            }
+
+            if (externalAddresses.get(node.nodeId()) != null) {
+                for (String dnsName : externalAddresses.get(node.nodeId())) {
+                    if (IpAndDnsValidation.isValidIpAddress(dnsName)) {
+                        subject.addIpAddress(dnsName);
+                    } else {
+                        subject.addDnsName(dnsName);
+                    }
+                }
+            }
         }
+
+        return subject.build();
     }
 
     private Map<String, CertAndKey> extractExistingCertsFromSecret(Map<String, Secret> existingCertSecrets, Ca ca) {
@@ -1367,7 +1408,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                     if (clusterCa instanceof CertManagerCa) {
                         String certHash;
                         try {
-                            certHash = CertUtils.getCertificateThumbprint(CaUtils.x509Certificate(entry.getValue().cert()));
+                            certHash = CertUtils.getCertificateThumbprint(CertificateUtils.x509Certificate(entry.getValue().cert()));
                         } catch (CertificateException e) {
                             throw new RuntimeException(e);
                         }
@@ -1649,12 +1690,6 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      */
     public ClusterRoleBinding generateClusterRoleBinding(String assemblyNamespace) {
         if (rack instanceof TopologyLabelRack || isExposedWithNodePort()) {
-            Subject subject = new SubjectBuilder()
-                    .withKind("ServiceAccount")
-                    .withName(componentName)
-                    .withNamespace(assemblyNamespace)
-                    .build();
-
             RoleRef roleRef = new RoleRefBuilder()
                     .withName("strimzi-kafka-broker")
                     .withApiGroup("rbac.authorization.k8s.io")
@@ -1662,7 +1697,16 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                     .build();
 
             return RbacUtils
-                    .createClusterRoleBinding(KafkaResources.initContainerClusterRoleBindingName(cluster, namespace), roleRef, List.of(subject), labels, templateInitClusterRoleBinding);
+                    .createClusterRoleBinding(
+                            KafkaResources.initContainerClusterRoleBindingName(cluster, namespace),
+                            roleRef,
+                            List.of(new SubjectBuilder()
+                                    .withKind("ServiceAccount")
+                                    .withName(componentName)
+                                    .withNamespace(assemblyNamespace)
+                                    .build()),
+                            labels,
+                            templateInitClusterRoleBinding);
         } else {
             return null;
         }
@@ -1707,12 +1751,6 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      * @return  Role Binding for the Kafka Cluster
      */
     public RoleBinding generateRoleBindingForRole() {
-        Subject subject = new SubjectBuilder()
-                .withKind("ServiceAccount")
-                .withName(componentName)
-                .withNamespace(namespace)
-                .build();
-
         RoleRef roleRef = new RoleRefBuilder()
                 .withName(componentName)
                 .withApiGroup("rbac.authorization.k8s.io")
@@ -1720,7 +1758,18 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                 .build();
 
         return RbacUtils
-                .createRoleBinding(KafkaResources.kafkaRoleBindingName(cluster), namespace, roleRef, List.of(subject), labels, ownerReference, null);
+                .createRoleBinding(
+                        KafkaResources.kafkaRoleBindingName(cluster),
+                        namespace,
+                        roleRef,
+                        List.of(new SubjectBuilder()
+                                .withKind("ServiceAccount")
+                                .withName(componentName)
+                                .withNamespace(namespace)
+                                .build()),
+                        labels,
+                        ownerReference,
+                        null);
     }
 
     /**

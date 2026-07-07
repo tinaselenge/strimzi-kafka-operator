@@ -45,6 +45,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 
 /**
@@ -228,11 +229,13 @@ public class KafkaUserModel {
      * @param clock                 The clock for supplying the reconciler with the time instant of each reconciliation cycle.
      *                              That time is used for checking maintenance windows
      * @param generatePkcs12Stores  Flag indicating whether PKCS12 keystores should be generated for the user certificates
+     *
+     * @return CompletionStage with empty result
      */
     @SuppressWarnings("checkstyle:BooleanExpressionComplexity")
-    public void maybeGenerateCertificates(Reconciliation reconciliation, CertIssuer certIssuer, PasswordGenerator passwordGenerator,
-                                          Secret clientsCaCertSecret, Secret clientsCaKeySecret, Secret userSecret, int caValidityDays,
-                                          int caRenewalDays, List<String> maintenanceWindows, Clock clock, boolean generatePkcs12Stores) {
+    public CompletionStage<Void> maybeGenerateCertificates(Reconciliation reconciliation, CertIssuer certIssuer, PasswordGenerator passwordGenerator,
+                                                     Secret clientsCaCertSecret, Secret clientsCaKeySecret, Secret userSecret, int caValidityDays,
+                                                     int caRenewalDays, List<String> maintenanceWindows, Clock clock, boolean generatePkcs12Stores) {
         // in case that validityDays and renewalDays are configured inside the authentication part of KafkaUser,
         // use those instead of default Clients CA configuration
         // we are checking it here as we have all needed information about the KafkaUser configuration and also default configuration of Clients CA
@@ -271,7 +274,11 @@ public class KafkaUserModel {
             }
         }
 
-        userCertAndKey = clientsCa.maybeCopyOrGenerateClientCert(reconciliation, name, existingUserCertAndKey, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
+        return clientsCa.maybeCopyOrGenerateClientCert(reconciliation, name, existingUserCertAndKey, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()))
+                .thenApply(certAndKey -> {
+                    userCertAndKey = certAndKey;
+                    return null;
+                });
     }
 
     private CertAndKey getExistingCertificateAndKey(Reconciliation reconciliation, InternalCa clientsStrimziCa, Secret userSecret, boolean generatePkcs12Stores) {
