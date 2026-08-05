@@ -20,12 +20,14 @@ NOTE: Strimzi does not install cert-manager and is not responsible for creating 
 .Prerequisites
 
 * cert-manager is installed in the cluster with a ready `Issuer` or `ClusterIssuer` configured.
-* The RBAC resources in `packaging/install/cert-manager/` have been applied to the cluster.
 * The `CertManagerCaType` feature gate is enabled in the Cluster Operator by setting `+CertManagerCaType` in the `STRIMZI_FEATURE_GATES` environment variable.
-* A `Secret` containing the CA public certificate (in PEM format under the key `ca.crt`) is present in the same namespace as the Kafka cluster.
-This is the certificate that Strimzi components will trust when verifying end-entity certificates issued by cert-manager.
 
 .Procedure
+
+. Apply the RBAC resources required for cert-manager integration.
++
+[source,shell,subs="+quotes"]
+kubectl apply -f packaging/install/cert-manager/
 
 . Create a `Secret` containing the CA public certificate that Strimzi should trust.
 +
@@ -86,7 +88,7 @@ spec:
 . Apply the `Kafka` resource.
 +
 [source,shell,subs="+quotes"]
-kubectl apply -f _<kafka_resource_file>_
+kubectl apply -f _<kafka_resource_file>_ -n _<namespace>_
 
 . Verify that cert-manager `Certificate` resources have been created for each Kafka component.
 +
@@ -94,6 +96,8 @@ kubectl apply -f _<kafka_resource_file>_
 kubectl get certificates -n _<namespace>_
 +
 Strimzi creates one `Certificate` resource per Kafka node and one for each enabled component (Cruise Control, Kafka Exporter, Entity Operator), plus one for the cluster operator.
+cert-manager stores the issued certificates in Secrets with a `-cm` suffix (for example, `my-cluster-dual-role-0-cm`).
+During reconciliation, Strimzi copies the certificates from these Secrets into the component Secrets that are used for TLS configuration.
 
 .CA certificate rotation
 
@@ -101,7 +105,7 @@ When the CA public certificate in the user-provided `Secret` changes, Strimzi de
 
 * If the new certificate was signed by the same private key (cert renewal), Strimzi rolls the Kafka pods once to update the truststore.
 * If the new certificate was signed by a new private key (key replacement), Strimzi performs a phased rolling restart.
-  The old CA certificate is retained alongside the new one until all pods have rolled, ensuring no downtime during the transition.
+  The old CA certificate is retained alongside the new one until all pods have rolled and all components are using certificates issued by the new CA.
 
 .KafkaUser TLS certificates
 
