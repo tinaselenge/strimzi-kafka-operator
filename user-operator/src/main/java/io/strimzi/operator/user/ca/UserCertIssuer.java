@@ -74,7 +74,7 @@ public interface UserCertIssuer {
                         .withKind(config.getCertManagerIssuerKind())
                         .withGroup(config.getCertManagerIssuerGroup())
                         .build();
-                yield new CertManagerCaUserCertIssuer(certManagerOp, secretOperator, issuerRef);
+                yield new CertManagerCaUserCertIssuer(certManagerOp, secretOperator, issuerRef, new PasswordGenerator(config.getScramPasswordLength()));
             }
         };
     }

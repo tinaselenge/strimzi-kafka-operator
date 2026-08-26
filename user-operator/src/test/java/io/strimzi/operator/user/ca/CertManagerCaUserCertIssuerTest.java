@@ -15,6 +15,7 @@ import io.strimzi.certs.StrimziSubject;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.CertificateUtils;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.MockCertIssuer;
 import io.strimzi.operator.common.operator.resource.kubernetes.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.kubernetes.SecretOperator;
@@ -48,6 +49,8 @@ public class CertManagerCaUserCertIssuerTest {
             .build();
 
     private static final OpenSslCertIssuer CERT_ISSUER = new OpenSslCertIssuer();
+    private static final PasswordGenerator PASSWORD_GENERATOR = new PasswordGenerator(10);
+    private static final String DUMMY_PKCS12 = Util.encodeToBase64("dummy-pkcs12");
 
     private CertAndKey generateCa(String cn) throws IOException {
         File caKeyFile = Files.createTempFile("ca", "key").toFile();
@@ -97,10 +100,10 @@ public class CertManagerCaUserCertIssuerTest {
                             .withName(CERT_MANAGER_SECRET_NAME)
                             .withNamespace(ResourceUtils.NAMESPACE)
                         .endMetadata()
-                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
+                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey()), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCert, null,
                 null, ResourceUtils.NAME, 365, 30, true, null)
@@ -121,7 +124,7 @@ public class CertManagerCaUserCertIssuerTest {
         when(secretOp.getAsync(eq(ResourceUtils.NAMESPACE), eq(CERT_MANAGER_SECRET_NAME))).thenReturn(CompletableFuture.completedStage(
                 new SecretBuilder()
                         .withNewMetadata().withName(CERT_MANAGER_SECRET_NAME).withNamespace(ResourceUtils.NAMESPACE).endMetadata()
-                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
+                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey()), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
         Secret userSecret = new SecretBuilder()
@@ -132,7 +135,7 @@ public class CertManagerCaUserCertIssuerTest {
                 .withData(Map.of("user.crt", Util.encodeToBase64(MockCertIssuer.serverCert())))
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCert, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -153,7 +156,7 @@ public class CertManagerCaUserCertIssuerTest {
         when(secretOp.getAsync(eq(ResourceUtils.NAMESPACE), eq(CERT_MANAGER_SECRET_NAME))).thenReturn(CompletableFuture.completedStage(
                 new SecretBuilder()
                         .withNewMetadata().withName(CERT_MANAGER_SECRET_NAME).withNamespace(ResourceUtils.NAMESPACE).endMetadata()
-                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
+                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey()), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
         Secret userSecret = new SecretBuilder()
@@ -164,7 +167,7 @@ public class CertManagerCaUserCertIssuerTest {
                 .withData(Map.of("user.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCert, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -185,7 +188,7 @@ public class CertManagerCaUserCertIssuerTest {
         when(secretOp.getAsync(eq(ResourceUtils.NAMESPACE), eq(CERT_MANAGER_SECRET_NAME))).thenReturn(CompletableFuture.completedStage(
                 new SecretBuilder()
                         .withNewMetadata().withName(CERT_MANAGER_SECRET_NAME).withNamespace(ResourceUtils.NAMESPACE).endMetadata()
-                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
+                        .withData(Map.of("tls.crt", Util.encodeToBase64(MockCertIssuer.serverCert()), "tls.key", Util.encodeToBase64(MockCertIssuer.serverKey()), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
         Secret userSecret = new SecretBuilder()
@@ -197,7 +200,7 @@ public class CertManagerCaUserCertIssuerTest {
                         "user.key", Util.encodeToBase64(MockCertIssuer.serverKey())))
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCert, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -230,7 +233,7 @@ public class CertManagerCaUserCertIssuerTest {
         when(secretOp.getAsync(eq(ResourceUtils.NAMESPACE), eq(CERT_MANAGER_SECRET_NAME))).thenReturn(CompletableFuture.completedStage(
                 new SecretBuilder()
                         .withNewMetadata().withName(CERT_MANAGER_SECRET_NAME).withNamespace(ResourceUtils.NAMESPACE).endMetadata()
-                        .withData(Map.of("tls.crt", newCert.certAsBase64String(), "tls.key", newCert.keyAsBase64String()))
+                        .withData(Map.of("tls.crt", newCert.certAsBase64String(), "tls.key", newCert.keyAsBase64String(), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
         Secret userSecret = new SecretBuilder()
@@ -242,7 +245,7 @@ public class CertManagerCaUserCertIssuerTest {
                         "user.key", existingCertAndKey.keyAsBase64String()))
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCertSecret, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -277,7 +280,7 @@ public class CertManagerCaUserCertIssuerTest {
         when(secretOp.getAsync(eq(ResourceUtils.NAMESPACE), eq(CERT_MANAGER_SECRET_NAME))).thenReturn(CompletableFuture.completedStage(
                 new SecretBuilder()
                         .withNewMetadata().withName(CERT_MANAGER_SECRET_NAME).withNamespace(ResourceUtils.NAMESPACE).endMetadata()
-                        .withData(Map.of("tls.crt", newCert.certAsBase64String(), "tls.key", newCert.keyAsBase64String()))
+                        .withData(Map.of("tls.crt", newCert.certAsBase64String(), "tls.key", newCert.keyAsBase64String(), "keystore.p12", DUMMY_PKCS12))
                         .build()));
 
         Secret userSecret = new SecretBuilder()
@@ -289,7 +292,7 @@ public class CertManagerCaUserCertIssuerTest {
                         "user.key", existingCertAndKey.keyAsBase64String()))
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         UserCertResult result = issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, clientsCaCertSecret, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -313,7 +316,7 @@ public class CertManagerCaUserCertIssuerTest {
                 .withData(Map.of())
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         assertThrows(InvalidCertificateException.class, () -> issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, null, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -340,7 +343,7 @@ public class CertManagerCaUserCertIssuerTest {
                 .withData(Map.of())
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         assertThrows(InvalidCertificateException.class, () -> issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, emptyCaCertSecret, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)
@@ -368,7 +371,7 @@ public class CertManagerCaUserCertIssuerTest {
                 .withData(Map.of())
                 .build();
 
-        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef);
+        CertManagerCaUserCertIssuer issuer = new CertManagerCaUserCertIssuer(certManagerOp, secretOp, issuerRef, PASSWORD_GENERATOR);
         assertThrows(InvalidCertificateException.class, () -> issuer.maybeCopyOrGenerateCert(
                 Reconciliation.DUMMY_RECONCILIATION, caCertSecretWithoutCaCrt, null,
                 userSecret, ResourceUtils.NAME, 365, 30, true, null)

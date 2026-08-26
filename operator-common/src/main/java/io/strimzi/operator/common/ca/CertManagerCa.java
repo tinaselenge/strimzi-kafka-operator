@@ -15,6 +15,7 @@ import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.kubernetes.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.kubernetes.SecretOperator;
 
@@ -45,6 +46,7 @@ public class CertManagerCa extends Ca {
     private final CertManagerCertificateOperator certManagerCertificateOperator;
     private final SecretOperator secretOperator;
     private final OwnerReference ownerReference;
+    private final PasswordGenerator passwordGenerator;
     protected final IssuerRef issuerRef;
 
     /**
@@ -58,6 +60,7 @@ public class CertManagerCa extends Ca {
      * @param secretOperator                 Secret operator
      * @param ownerReference                 Owner reference for Kubernetes resources
      * @param issuerRef                      Reference to issuer for issuing certificates through other services like cert-manager
+     * @param passwordGenerator              Password generator for PKCS12 store passwords
      */
     public CertManagerCa(Reconciliation reconciliation,
                          CaRole caRole,
@@ -66,12 +69,14 @@ public class CertManagerCa extends Ca {
                          CertManagerCertificateOperator certManagerCertificateOperator,
                          SecretOperator secretOperator,
                          OwnerReference ownerReference,
-                         IssuerRef issuerRef) {
+                         IssuerRef issuerRef,
+                         PasswordGenerator passwordGenerator) {
         super(reconciliation, caRole, caCertSecret, null, caConfig);
         this.certManagerCertificateOperator = certManagerCertificateOperator;
         this.secretOperator = secretOperator;
         this.ownerReference = ownerReference;
         this.issuerRef = issuerRef;
+        this.passwordGenerator = passwordGenerator;
     }
 
     @Override
@@ -188,7 +193,14 @@ public class CertManagerCa extends Ca {
     }
 
     CompletionStage<CertAndKey> maybeCopyOrGenerateCert(String entityName, StrimziSubject subject, CertAndKey existingCert) {
-        return generateSignedCert(entityName, subject)
+        String storePassword = null;
+        if (caConfig.isGeneratePkcs12Stores()) {
+            storePassword = (existingCert != null && existingCert.storePassword() != null)
+                    ? existingCert.storePassword()
+                    : passwordGenerator.generate();
+        }
+        final String password = storePassword;
+        return generateSignedCert(entityName, subject, password)
                 .thenApply(newCertAndKey -> {
                     if (existingCert == null) {
                         return newCertAndKey;
@@ -212,10 +224,11 @@ public class CertManagerCa extends Ca {
      *
      * @param entityName            Name of the component the Certificate is for
      * @param subject               Subject for Certificate
+     * @param storePassword         Password for PKCS12 keystore, or null if PKCS12 is not requested
      * @return CompletionStage with CertAndKey
      */
-    private CompletionStage<CertAndKey> generateSignedCert(String entityName, StrimziSubject subject) {
-        Certificate certificate = buildCertificateResource(entityName, subject, caConfig.getValidityDays(), caConfig.getRenewalDays());
+    private CompletionStage<CertAndKey> generateSignedCert(String entityName, StrimziSubject subject, String storePassword) {
+        Certificate certificate = buildCertificateResource(entityName, subject, caConfig.getValidityDays(), caConfig.getRenewalDays(), storePassword);
         return certManagerCertificateOperator.reconcile(reconciliation, reconciliation.namespace(), entityName, certificate)
                 .thenCompose(v -> certManagerCertificateOperator.waitForReady(reconciliation, reconciliation.namespace(), entityName))
                 .thenCompose(v -> secretOperator.getAsync(reconciliation.namespace(), certManagerSecretName(entityName)))
@@ -227,8 +240,18 @@ public class CertManagerCa extends Ca {
                     if (certSecret.getData() == null || certSecret.getData().get("tls.crt") == null || certSecret.getData().get("tls.key") == null) {
                         return CompletableFuture.failedFuture(new RuntimeException(new RuntimeException("cert-manager Certificate '" + entityName + "' is Ready but no certificate data is provided")));
                     }
-                    CertAndKey updatedCert = new CertAndKey(Util.decodeBytesFromBase64(certSecret.getData().get("tls.key")),
-                            Util.decodeBytesFromBase64(certSecret.getData().get("tls.crt")), this.caCertGeneration);
+                    CertAndKey updatedCert;
+                    if (storePassword != null) {
+                        updatedCert = new CertAndKey(Util.decodeBytesFromBase64(certSecret.getData().get("tls.key")),
+                                Util.decodeBytesFromBase64(certSecret.getData().get("tls.crt")),
+                                null,
+                                Util.decodeBytesFromBase64(certSecret.getData().get("keystore.p12")),
+                                storePassword,
+                                this.caCertGeneration);
+                    } else {
+                        updatedCert = new CertAndKey(Util.decodeBytesFromBase64(certSecret.getData().get("tls.key")),
+                                Util.decodeBytesFromBase64(certSecret.getData().get("tls.crt")), this.caCertGeneration);
+                    }
 
                     // Check the subject of the certificate is correct, otherwise fail the reconciliation to wait for the certificate to be issued with correct dns
                     Collection<String> desiredAltNames = subject.subjectAltNames().values();
@@ -250,9 +273,10 @@ public class CertManagerCa extends Ca {
      * @param subject               Subject for Certificate
      * @param validityDays          Validity days for Certificate
      * @param renewalDays           Renewal days for certificate
+     * @param storePassword         Password for PKCS12 keystore, or null if PKCS12 is not requested
      * @return Certificate object
      */
-    private Certificate buildCertificateResource(String entityName, StrimziSubject subject, int validityDays, int renewalDays) {
+    private Certificate buildCertificateResource(String entityName, StrimziSubject subject, int validityDays, int renewalDays, String storePassword) {
         String secretName = certManagerSecretName(entityName);
         CertificateBuilder certificateBuilder = new CertificateBuilder()
                 .withNewMetadata()
@@ -281,8 +305,21 @@ public class CertManagerCa extends Ca {
                 .endIssuerRef()
                 .withSecretName(secretName)
                 .endSpec();
+
         if (ownerReference != null) {
             certificateBuilder.editMetadata().withOwnerReferences(ownerReference).endMetadata();
+        }
+
+        if (storePassword != null) {
+            certificateBuilder
+                    .editSpec()
+                        .withNewKeystores()
+                            .withNewPkcs12()
+                                .withCreate(true)
+                                .withPassword(storePassword)
+                            .endPkcs12()
+                        .endKeystores()
+                    .endSpec();
         }
         return certificateBuilder.build();
     }

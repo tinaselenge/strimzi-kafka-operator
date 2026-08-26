@@ -92,7 +92,7 @@ public abstract class CaProvider {
                 if (caConfig.isGenerateCa()) {
                     throw new IllegalArgumentException("Certificate Manager type is set to " + CertificateManagerType.CERT_MANAGER.toValue() + ", but generateCertificateAuthority is set to true. Set generateCertificateAuthority to false when using cert-manager as the certificate manager type.");
                 }
-                yield new CertManagerCaProvider(reconciliation, caRole, caConfig, kafkaCr, existingCaCertSecret, clusterOperatorCertSecret, certManagerCertificateOperator, secretOperator);
+                yield new CertManagerCaProvider(reconciliation, caRole, caConfig, kafkaCr, existingCaCertSecret, clusterOperatorCertSecret, certManagerCertificateOperator, secretOperator, passwordGenerator);
             }
         };
     }

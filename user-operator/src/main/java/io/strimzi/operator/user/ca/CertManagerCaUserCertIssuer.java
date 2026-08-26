@@ -14,6 +14,7 @@ import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.ca.Ca;
 import io.strimzi.operator.common.ca.CaConfig;
 import io.strimzi.operator.common.ca.CertManagerCa;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.kubernetes.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.kubernetes.SecretOperator;
 import io.strimzi.operator.user.model.InvalidCertificateException;
@@ -27,6 +28,7 @@ public class CertManagerCaUserCertIssuer implements UserCertIssuer {
     private final CertManagerCertificateOperator certManagerCertificateOperator;
     private final SecretOperator secretOperator;
     private final IssuerRef issuerRef;
+    private final PasswordGenerator passwordGenerator;
 
     /**
      * Constructor
@@ -34,13 +36,16 @@ public class CertManagerCaUserCertIssuer implements UserCertIssuer {
      * @param certManagerCertificateOperator    Operator for managing cert-manager Certificate resources
      * @param secretOperator                    Operator for managing Secrets
      * @param issuerRef                         Reference to the cert-manager issuer
+     * @param passwordGenerator                 Password generator for PKCS12 store passwords
      */
     public CertManagerCaUserCertIssuer(CertManagerCertificateOperator certManagerCertificateOperator,
                                        SecretOperator secretOperator,
-                                       IssuerRef issuerRef) {
+                                       IssuerRef issuerRef,
+                                       PasswordGenerator passwordGenerator) {
         this.certManagerCertificateOperator = certManagerCertificateOperator;
         this.secretOperator = secretOperator;
         this.issuerRef = issuerRef;
+        this.passwordGenerator = passwordGenerator;
     }
 
     @Override
@@ -64,7 +69,8 @@ public class CertManagerCaUserCertIssuer implements UserCertIssuer {
                 certManagerCertificateOperator,
                 secretOperator,
                 ownerReference,
-                issuerRef
+                issuerRef,
+                passwordGenerator
         );
 
         CertAndKey existingCertAndKey = null;

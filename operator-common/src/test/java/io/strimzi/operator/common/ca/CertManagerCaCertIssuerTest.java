@@ -205,7 +205,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
                 );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, subject, null)
@@ -258,7 +259,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         StrimziSubject subject = new StrimziSubject.Builder()
@@ -314,7 +316,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, subject, initialCert)
@@ -372,7 +375,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         StrimziSubject expectedSubject = new StrimziSubject.Builder()
@@ -424,7 +428,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, newSubject, initialCert)
@@ -484,7 +489,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, subject, initialCert)
@@ -546,7 +552,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, subject, initialCert)
@@ -608,7 +615,8 @@ public class CertManagerCaCertIssuerTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         certManagerCa.maybeCopyOrGenerateCert(ENTITY_NAME, subject, initialCert)

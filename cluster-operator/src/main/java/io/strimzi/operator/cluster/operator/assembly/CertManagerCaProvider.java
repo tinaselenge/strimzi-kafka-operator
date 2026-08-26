@@ -18,6 +18,7 @@ import io.strimzi.operator.common.ca.CaConfig;
 import io.strimzi.operator.common.ca.CertManagerCa;
 import io.strimzi.operator.common.ca.CertificateUtils;
 import io.strimzi.operator.common.model.InvalidResourceException;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.operator.resource.kubernetes.CertManagerCertificateOperator;
 import io.strimzi.operator.common.operator.resource.kubernetes.SecretOperator;
 
@@ -39,6 +40,7 @@ public class CertManagerCaProvider extends CaProvider {
     private final Secret clusterOperatorSecret;
     private final CertManagerCertificateOperator certificateOperator;
     private final SecretOperator secretOperator;
+    private final PasswordGenerator passwordGenerator;
 
     /**
      * Constructor.
@@ -51,6 +53,7 @@ public class CertManagerCaProvider extends CaProvider {
      * @param clusterOperatorSecret     Cluster operator secret
      * @param certificateOperator       Certificate operator for managing cert-manager certificates
      * @param secretOperator            Secret operator for managing secrets
+     * @param passwordGenerator         Password generator for PKCS12 store passwords
      */
     public CertManagerCaProvider(Reconciliation reconciliation,
                                  Ca.CaRole caRole,
@@ -59,7 +62,8 @@ public class CertManagerCaProvider extends CaProvider {
                                  Secret existingCaCertSecret,
                                  Secret clusterOperatorSecret,
                                  CertManagerCertificateOperator certificateOperator,
-                                 SecretOperator secretOperator) {
+                                 SecretOperator secretOperator,
+                                 PasswordGenerator passwordGenerator) {
         super(reconciliation, caRole, caConfig, kafkaCr, existingCaCertSecret, null);
         this.certificateAuthority = switch (caRole) {
             case CLUSTER_CA -> kafkaCr.getSpec().getClusterCa();
@@ -68,6 +72,7 @@ public class CertManagerCaProvider extends CaProvider {
         this.clusterOperatorSecret = clusterOperatorSecret;
         this.certificateOperator = certificateOperator;
         this.secretOperator = secretOperator;
+        this.passwordGenerator = passwordGenerator;
     }
 
     @Override
@@ -91,7 +96,8 @@ public class CertManagerCaProvider extends CaProvider {
                                     .withController(false)
                                     .build()
                                     : null,
-                            certificateAuthority.getCertManager().getIssuerRef());
+                            certificateAuthority.getCertManager().getIssuerRef(),
+                            passwordGenerator);
                     certManagerCa.maybeUpdateCa(
                             newCaCertAsBase64,
                             existingCaCertSecret == null ? null : Annotations.stringAnnotation(existingCaCertSecret, Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, ""),

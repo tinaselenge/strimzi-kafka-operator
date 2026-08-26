@@ -61,7 +61,8 @@ public class CertManagerCaTest {
                 new IssuerRefBuilder()
                         .withName("cm-issuer")
                         .withKind(IssuerKind.CLUSTER_ISSUER)
-                        .build()
+                        .build(),
+                null
         );
 
         assertThat(certManagerCa.caCertData().size(), is(2));
