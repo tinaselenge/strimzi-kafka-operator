@@ -32,6 +32,7 @@ import io.strimzi.systemtest.templates.crd.KafkaTopicTemplates;
 import io.strimzi.systemtest.templates.crd.KafkaUserTemplates;
 import io.strimzi.systemtest.utils.ClientUtils;
 import io.strimzi.systemtest.utils.RollingUpdateUtils;
+import io.strimzi.systemtest.utils.kafkaUtils.KafkaUtils;
 import io.strimzi.systemtest.utils.kubeUtils.objects.PodUtils;
 import io.strimzi.systemtest.utils.kubeUtils.objects.SecretUtils;
 import io.strimzi.testclients.clients.kafka.KafkaProducerConsumer;
@@ -46,6 +47,7 @@ import java.util.Map;
 
 import static io.strimzi.systemtest.TestTags.REGRESSION;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 
@@ -375,6 +377,499 @@ public class CertManagerST extends AbstractST {
 
         LOGGER.info("TLS producer/consumer successfully exchanged {} messages after cert renewal rolling update",
             testStorage.getMessageCount());
+    }
+
+    @SuppressWarnings("checkstyle:MethodLength")
+    @ParallelNamespaceTest
+    @TestDoc(
+            description = @Desc("Test verifying switch from Strimzi-managed CA to cert-manager CA. " +
+                "A Kafka cluster is first deployed with the default Strimzi-managed CA, then switched to " +
+                "cert-manager by editing the Kafka CR. At each transition the cluster must remain operational " +
+                "and certificates must match the expected CA."),
+            steps = {
+                @Step(value = "Deploy Kafka with default Strimzi-managed CA.",
+                    expected = "Kafka cluster reaches ready state."),
+                @Step(value = "Create the cert-manager CA cert Secret and edit the Kafka CR to switch cluster CA to cert-manager.",
+                    expected = "Kafka CR is updated."),
+                @Step(value = "Wait for broker pods to roll twice (trust new CA, then re-issue certs).",
+                    expected = "All broker pods have new UIDs after both rolling updates."),
+                @Step(value = "Verify broker certificates are signed by the cert-manager CA.",
+                    expected = "Broker certificate issuer DN matches cert-manager CA subject DN."),
+                @Step(value = "Produce and consume messages over TLS after switching to cert-manager.",
+                    expected = "Messages are successfully produced and consumed."),
+                @Step(value = "Edit the Kafka CR to switch cluster CA back to Strimzi-managed CA.",
+                        expected = "Kafka CR is updated."),
+                @Step(value = "Wait for broker pods to roll twice (trust new CA, then re-issue certs).",
+                        expected = "All broker pods have new UIDs after both rolling updates."),
+                @Step(value = "Verify broker certificates are no longer signed by the cert-manager CA.",
+                        expected = "Broker certificate issuer DN does not match cert-manager CA subject DN."),
+                @Step(value = "Produce and consume messages over TLS after switching back to Strimzi.",
+                        expected = "Messages are successfully produced and consumed.")
+            },
+            labels = {
+                @Label(value = TestDocsLabels.SECURITY)
+            }
+    )
+    void testSwitchBetweenStrimziAndCertManagerCa() {
+        final TestStorage testStorage = new TestStorage(KubeResourceManager.get().getTestContext());
+
+        KubeResourceManager.get().createResourceWithWait(
+                KafkaNodePoolTemplates.brokerPoolPersistentStorage(
+                        testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
+                KafkaNodePoolTemplates.controllerPoolPersistentStorage(
+                        testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
+        );
+
+        KubeResourceManager.get().createResourceWithWait(
+                KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3).build()
+        );
+
+        LOGGER.info("Kafka cluster {}/{} is ready with default Strimzi-managed CA",
+                testStorage.getNamespaceName(), testStorage.getClusterName());
+
+        KubeResourceManager.get().createResourceWithWait(KafkaTopicTemplates.topic(testStorage).build());
+        KubeResourceManager.get().createResourceWithWait(KafkaUserTemplates.tlsUser(testStorage).build());
+
+        createCaCertSecret(testStorage.getNamespaceName());
+
+        Map<String, String> brokerPodsSnapshot = PodUtils.podSnapshot(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector());
+
+        LOGGER.info("Editing Kafka CR to switch cluster CA from Strimzi-managed to cert-manager");
+
+        CrdClients.kafkaClient()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(testStorage.getClusterName())
+                .edit(k -> new KafkaBuilder(k)
+                        .editSpec()
+                            .withNewClusterCa()
+                                .withGenerateCertificateAuthority(false)
+                                .withType(CertificateManagerType.CERT_MANAGER)
+                                .withNewCertManager()
+                                    .withNewIssuerRef()
+                                        .withName(SetupCertManager.CLUSTER_ISSUER_NAME)
+                                        .withKind(IssuerKind.CLUSTER_ISSUER)
+                                        .withGroup("cert-manager.io")
+                                    .endIssuerRef()
+                                    .withNewCaCertRef()
+                                        .withSecretName(CA_CERT_SECRET_NAME)
+                                        .withCertificate(CA_CERT_KEY)
+                                    .endCaCertRef()
+                                .endCertManager()
+                            .endClusterCa()
+                        .endSpec().build());
+
+        LOGGER.info("Waiting for first round of rolling update (trust new cert-manager CA)");
+        brokerPodsSnapshot = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        LOGGER.info("Waiting for second round of rolling update (broker certs re-issued by cert-manager)");
+        RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        final String brokerPodName = KubeResourceManager.get().kubeClient()
+                .listPods(testStorage.getNamespaceName(), testStorage.getBrokerSelector())
+                .getFirst().getMetadata().getName();
+
+        final Secret brokerCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(brokerPodName)
+                .get();
+
+        assertThat("Strimzi broker cert Secret must exist", brokerCertSecret, notNullValue());
+
+        final X509Certificate brokerCert = SecretUtils.getCertificateFromSecret(brokerCertSecret, brokerPodName + ".crt");
+        assertThat("Broker cert must not be null", brokerCert, notNullValue());
+
+        assertThat("Broker certificate issuer DN must match the cert-manager CA subject DN after migration",
+                brokerCert.getIssuerX500Principal().getName(), is(certManagerCaCertSubjectDn));
+
+        LOGGER.info("Verified that broker cert is signed by cert-manager CA (issuer '{}')",
+                brokerCert.getIssuerX500Principal().getName());
+
+        KafkaProducerConsumer kafkaProducerConsumer =
+                new KafkaProducerConsumerBuilder()
+                        .withProducerName(testStorage.getProducerName())
+                        .withConsumerName(testStorage.getConsumerName())
+                        .withNamespaceName(testStorage.getNamespaceName())
+                        .withTopicName(testStorage.getTopicName())
+                        .withConsumerGroup(ClientUtils.generateRandomConsumerGroup())
+                        .withBootstrapAddress(KafkaResources.tlsBootstrapAddress(testStorage.getClusterName()))
+                        .withMessageCount(testStorage.getMessageCount())
+                        .withAuthentication(ClientsAuthentication.configureTls(testStorage.getClusterName(), testStorage.getUsername()))
+                        .build();
+
+        KubeResourceManager.get().createResourceWithWait(
+                kafkaProducerConsumer.getProducer().getJob(),
+                kafkaProducerConsumer.getConsumer().getJob()
+        );
+
+        ClientUtils.waitForClientsSuccess(
+                testStorage.getNamespaceName(),
+                testStorage.getConsumerName(),
+                testStorage.getProducerName(),
+                testStorage.getMessageCount()
+        );
+
+        LOGGER.info("TLS producer/consumer successfully exchanged {} messages with cert-manager CA",
+                testStorage.getMessageCount());
+
+        brokerPodsSnapshot = PodUtils.podSnapshot(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector());
+
+        LOGGER.info("Editing Kafka CR to switch cluster CA from cert-manager back to Strimzi-managed");
+
+        CrdClients.kafkaClient()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(testStorage.getClusterName())
+                .edit(k -> new KafkaBuilder(k)
+                        .editSpec()
+                        .withNewClusterCa()
+                        .withGenerateCertificateAuthority(true)
+                        .withType(CertificateManagerType.STRIMZI)
+                        .endClusterCa()
+                        .endSpec()
+                        .build());
+
+        LOGGER.info("Waiting for first round of rolling update (trust new Strimzi CA)");
+        brokerPodsSnapshot = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        LOGGER.info("Waiting for second round of rolling update (broker certs re-issued by Strimzi CA)");
+        RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        final String brokerPodNameAfterSwitch = KubeResourceManager.get().kubeClient()
+                .listPods(testStorage.getNamespaceName(), testStorage.getBrokerSelector())
+                .getFirst().getMetadata().getName();
+
+        final Secret brokerCertSecretAfterSwitch = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(brokerPodNameAfterSwitch)
+                .get();
+
+        assertThat("Strimzi broker cert Secret must exist after switching back",
+                brokerCertSecretAfterSwitch, notNullValue());
+
+        final X509Certificate brokerCertAfterSwitch = SecretUtils.getCertificateFromSecret(
+                brokerCertSecretAfterSwitch, brokerPodNameAfterSwitch + ".crt");
+        assertThat("Broker cert must not be null after switching back", brokerCertAfterSwitch, notNullValue());
+
+        assertThat("Broker certificate issuer DN must NOT match the cert-manager CA subject DN after switching back",
+                brokerCertAfterSwitch.getIssuerX500Principal().getName(), is(not(certManagerCaCertSubjectDn)));
+
+        final Secret strimziCaCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(KafkaResources.clusterCaCertificateSecretName(testStorage.getClusterName()))
+                .get();
+
+        assertThat("Strimzi cluster CA cert Secret must exist", strimziCaCertSecret, notNullValue());
+
+        final X509Certificate strimziCaCert = SecretUtils.getCertificateFromSecret(strimziCaCertSecret, Ca.CA_CRT);
+        assertThat("Strimzi CA cert must not be null", strimziCaCert, notNullValue());
+
+        assertThat("Broker certificate issuer DN must match the Strimzi CA subject DN after switching back",
+                brokerCertAfterSwitch.getIssuerX500Principal().getName(),
+                is(strimziCaCert.getSubjectX500Principal().getName()));
+
+        LOGGER.info("Verified that broker cert is signed by Strimzi CA (issuer '{}'), no longer by cert-manager CA",
+                brokerCertAfterSwitch.getIssuerX500Principal().getName());
+
+        KafkaProducerConsumer strimziProducerConsumer =
+                new KafkaProducerConsumerBuilder()
+                        .withProducerName(testStorage.getProducerName())
+                        .withConsumerName(testStorage.getConsumerName())
+                        .withNamespaceName(testStorage.getNamespaceName())
+                        .withTopicName(testStorage.getTopicName())
+                        .withConsumerGroup(ClientUtils.generateRandomConsumerGroup())
+                        .withBootstrapAddress(KafkaResources.tlsBootstrapAddress(testStorage.getClusterName()))
+                        .withMessageCount(testStorage.getMessageCount())
+                        .withAuthentication(ClientsAuthentication.configureTls(testStorage.getClusterName(), testStorage.getUsername()))
+                        .build();
+
+        KubeResourceManager.get().createResourceWithWait(
+                strimziProducerConsumer.getProducer().getJob(),
+                strimziProducerConsumer.getConsumer().getJob()
+        );
+
+        ClientUtils.waitForClientsSuccess(
+                testStorage.getNamespaceName(),
+                testStorage.getConsumerName(),
+                testStorage.getProducerName(),
+                testStorage.getMessageCount()
+        );
+
+        LOGGER.info("TLS producer/consumer successfully exchanged {} messages after switching back to Strimzi-managed CA",
+                testStorage.getMessageCount());
+
+    }
+
+    @SuppressWarnings("checkstyle:MethodLength")
+    @ParallelNamespaceTest
+    @TestDoc(
+            description = @Desc("Test verifying switch between cert-manager CA to custom CA. " +
+                "A Kafka cluster is deployed with cert-manager cluster CA, then switched to a user-provided custom CA " +
+                "and finally switched back to cert-manager. " +
+                "At each transition the cluster must remain operational and certificates must match the expected CA."),
+            steps = {
+                @Step(value = "Deploy Kafka with cert-manager cluster CA.",
+                    expected = "Kafka cluster reaches ready state with cert-manager CA."),
+                @Step(value = "Pause reconciliation, replace cluster CA secrets with custom CA, edit Kafka CR, resume.",
+                    expected = "Kafka CR and secrets are updated atomically."),
+                @Step(value = "Wait for broker pods to roll twice (trust new CA, then re-issue certs).",
+                    expected = "All broker pods have new UIDs after both rolling updates."),
+                @Step(value = "Verify broker certificates are signed by the custom CA, not cert-manager.",
+                    expected = "Broker certificate issuer DN does not match cert-manager CA subject DN."),
+                @Step(value = "Produce and consume messages over TLS after switching to custom CA.",
+                    expected = "Messages are successfully produced and consumed."),
+                @Step(value = "Edit the Kafka CR to switch cluster CA back to cert-manager.",
+                    expected = "Kafka CR is updated."),
+                @Step(value = "Wait for broker pods to roll twice (trust new CA, then re-issue certs).",
+                    expected = "All broker pods have new UIDs after both rolling updates."),
+                @Step(value = "Verify broker certificates are signed by the cert-manager CA.",
+                    expected = "Broker certificate issuer DN matches cert-manager CA subject DN."),
+                @Step(value = "Produce and consume messages over TLS after switching back to cert-manager.",
+                    expected = "Messages are successfully produced and consumed.")
+            },
+            labels = {
+                @Label(value = TestDocsLabels.SECURITY)
+            }
+    )
+    void testSwitchBetweenCertManagerAndCustomCa() {
+        final TestStorage testStorage = new TestStorage(KubeResourceManager.get().getTestContext());
+
+        // Phase 1: Deploy with cert-manager cluster CA
+        createCaCertSecret(testStorage.getNamespaceName());
+
+        KubeResourceManager.get().createResourceWithWait(
+                KafkaNodePoolTemplates.brokerPoolPersistentStorage(
+                        testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
+                KafkaNodePoolTemplates.controllerPoolPersistentStorage(
+                        testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
+        );
+
+        KubeResourceManager.get().createResourceWithWait(
+                KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3)
+                        .editSpec()
+                            .withNewClusterCa()
+                                .withGenerateCertificateAuthority(false)
+                                .withType(CertificateManagerType.CERT_MANAGER)
+                                .withNewCertManager()
+                                    .withNewIssuerRef()
+                                        .withName(SetupCertManager.CLUSTER_ISSUER_NAME)
+                                        .withKind(IssuerKind.CLUSTER_ISSUER)
+                                        .withGroup("cert-manager.io")
+                                    .endIssuerRef()
+                                    .withNewCaCertRef()
+                                        .withSecretName(CA_CERT_SECRET_NAME)
+                                        .withCertificate(CA_CERT_KEY)
+                                    .endCaCertRef()
+                                .endCertManager()
+                            .endClusterCa()
+                        .endSpec()
+                        .build()
+        );
+
+        LOGGER.info("Kafka cluster {}/{} is ready with cert-manager cluster CA",
+                testStorage.getNamespaceName(), testStorage.getClusterName());
+
+        KubeResourceManager.get().createResourceWithWait(KafkaTopicTemplates.topic(testStorage).build());
+        KubeResourceManager.get().createResourceWithWait(KafkaUserTemplates.tlsUser(testStorage).build());
+
+        LOGGER.info("Switching cluster CA from cert-manager to custom CA");
+
+        final SystemTestCertBundle customClusterCa = SystemTestCertBundle.forClusterCa(testStorage);
+
+        KafkaUtils.annotateKafka(testStorage.getNamespaceName(), testStorage.getClusterName(),
+                Map.of(Annotations.ANNO_STRIMZI_IO_PAUSE_RECONCILIATION, "true"));
+
+        // Read the existing cert-manager CA cert secret before replacing it
+        Secret existingCaCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(KafkaResources.clusterCaCertificateSecretName(testStorage.getClusterName()))
+                .get();
+
+        // Save the old cert-manager CA cert so we can retain it under a timestamped key
+        final String oldCaCertName = customClusterCa.retrieveOldCertificateName(existingCaCertSecret, "ca.crt");
+        final String oldCaCertValue = existingCaCertSecret.getData().get("ca.crt");
+
+        // Replace both CA secrets with custom CA cert and key
+        customClusterCa.createCustomSecretsFromBundles(testStorage.getNamespaceName(), testStorage.getClusterName());
+
+        // Re-read the newly created cert secret and add the old cert-manager CA cert under the renamed key,
+        // so components trust both old and new CAs during the two-phase rolling update
+        Secret clusterCaCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(KafkaResources.clusterCaCertificateSecretName(testStorage.getClusterName()))
+                .get();
+        clusterCaCertSecret.getData().put(oldCaCertName, oldCaCertValue);
+
+        Secret clusterCaKeySecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(KafkaResources.clusterCaKeySecretName(testStorage.getClusterName()))
+                .get();
+
+        // Patch secrets and increment generation to trigger rolling updates
+        SystemTestCertBundle.patchSecretAndIncreaseGeneration(clusterCaCertSecret, testStorage, Ca.ANNO_STRIMZI_IO_CA_CERT_GENERATION);
+        SystemTestCertBundle.patchSecretAndIncreaseGeneration(clusterCaKeySecret, testStorage, Ca.ANNO_STRIMZI_IO_CA_KEY_GENERATION);
+
+        Map<String, String> brokerPodsSnapshot = PodUtils.podSnapshot(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector());
+
+        CrdClients.kafkaClient()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(testStorage.getClusterName())
+                .edit(k -> new KafkaBuilder(k)
+                        .editSpec()
+                            .withNewClusterCa()
+                                .withGenerateCertificateAuthority(false)
+                            .endClusterCa()
+                        .endSpec()
+                        .build());
+
+        KafkaUtils.removeAnnotation(testStorage.getNamespaceName(), testStorage.getClusterName(),
+                Annotations.ANNO_STRIMZI_IO_PAUSE_RECONCILIATION);
+
+        LOGGER.info("Waiting for first round of rolling update (trust new custom CA)");
+        brokerPodsSnapshot = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        LOGGER.info("Waiting for second round of rolling update (broker certs re-issued by custom CA)");
+        RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        String brokerPodName = KubeResourceManager.get().kubeClient()
+                .listPods(testStorage.getNamespaceName(), testStorage.getBrokerSelector())
+                .getFirst().getMetadata().getName();
+
+        Secret brokerCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(brokerPodName)
+                .get();
+        assertThat("Broker cert Secret must exist after switching to custom CA", brokerCertSecret, notNullValue());
+
+        X509Certificate brokerCert = SecretUtils.getCertificateFromSecret(brokerCertSecret, brokerPodName + ".crt");
+        assertThat("Broker cert must not be null after switching to custom CA", brokerCert, notNullValue());
+        assertThat("Broker cert must be signed by custom CA after switching",
+                brokerCert.getIssuerX500Principal().getName(), is(customClusterCa.getSubjectDn()));
+
+        LOGGER.info("Verified broker cert is signed by custom CA (issuer '{}')",
+                brokerCert.getIssuerX500Principal().getName());
+
+        KafkaProducerConsumer customCaProducerConsumer =
+                new KafkaProducerConsumerBuilder()
+                        .withProducerName(testStorage.getProducerName() + "-custom")
+                        .withConsumerName(testStorage.getConsumerName() + "-custom")
+                        .withNamespaceName(testStorage.getNamespaceName())
+                        .withTopicName(testStorage.getTopicName())
+                        .withConsumerGroup(ClientUtils.generateRandomConsumerGroup())
+                        .withBootstrapAddress(KafkaResources.tlsBootstrapAddress(testStorage.getClusterName()))
+                        .withMessageCount(testStorage.getMessageCount())
+                        .withAuthentication(ClientsAuthentication.configureTls(testStorage.getClusterName(), testStorage.getUsername()))
+                        .build();
+
+        KubeResourceManager.get().createResourceWithWait(
+                customCaProducerConsumer.getProducer().getJob(),
+                customCaProducerConsumer.getConsumer().getJob()
+        );
+
+        ClientUtils.waitForClientsSuccess(
+                testStorage.getNamespaceName(),
+                testStorage.getConsumerName() + "-custom",
+                testStorage.getProducerName() + "-custom",
+                testStorage.getMessageCount()
+        );
+
+        LOGGER.info("TLS producer/consumer successfully exchanged {} messages with custom cluster CA",
+                testStorage.getMessageCount());
+
+        LOGGER.info("Switching cluster CA from custom CA back to cert-manager");
+
+        brokerPodsSnapshot = PodUtils.podSnapshot(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector());
+
+        CrdClients.kafkaClient()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(testStorage.getClusterName())
+                .edit(k -> new KafkaBuilder(k)
+                        .editSpec()
+                            .withNewClusterCa()
+                                .withGenerateCertificateAuthority(false)
+                                .withType(CertificateManagerType.CERT_MANAGER)
+                                .withNewCertManager()
+                                    .withNewIssuerRef()
+                                        .withName(SetupCertManager.CLUSTER_ISSUER_NAME)
+                                        .withKind(IssuerKind.CLUSTER_ISSUER)
+                                        .withGroup("cert-manager.io")
+                                    .endIssuerRef()
+                                    .withNewCaCertRef()
+                                        .withSecretName(CA_CERT_SECRET_NAME)
+                                        .withCertificate(CA_CERT_KEY)
+                                    .endCaCertRef()
+                                .endCertManager()
+                            .endClusterCa()
+                        .endSpec().build());
+
+        LOGGER.info("Waiting for first round of rolling update (trust cert-manager CA again)");
+        brokerPodsSnapshot = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        LOGGER.info("Waiting for second round of rolling update (broker certs re-issued by cert-manager)");
+        RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(
+                testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPodsSnapshot);
+
+        brokerPodName = KubeResourceManager.get().kubeClient()
+                .listPods(testStorage.getNamespaceName(), testStorage.getBrokerSelector())
+                .getFirst().getMetadata().getName();
+
+        brokerCertSecret = KubeResourceManager.get().kubeClient().getClient()
+                .secrets()
+                .inNamespace(testStorage.getNamespaceName())
+                .withName(brokerPodName)
+                .get();
+        assertThat("Broker cert Secret must exist after switching back to cert-manager", brokerCertSecret, notNullValue());
+
+        brokerCert = SecretUtils.getCertificateFromSecret(brokerCertSecret, brokerPodName + ".crt");
+        assertThat("Broker cert must not be null after switching back to cert-manager", brokerCert, notNullValue());
+        assertThat("Broker cert must be signed by cert-manager CA after switching back",
+                brokerCert.getIssuerX500Principal().getName(), is(certManagerCaCertSubjectDn));
+
+        LOGGER.info("Verified broker cert is signed by cert-manager CA again (issuer '{}')",
+                brokerCert.getIssuerX500Principal().getName());
+
+        KafkaProducerConsumer cmProducerConsumer =
+                new KafkaProducerConsumerBuilder()
+                        .withProducerName(testStorage.getProducerName())
+                        .withConsumerName(testStorage.getConsumerName())
+                        .withNamespaceName(testStorage.getNamespaceName())
+                        .withTopicName(testStorage.getTopicName())
+                        .withConsumerGroup(ClientUtils.generateRandomConsumerGroup())
+                        .withBootstrapAddress(KafkaResources.tlsBootstrapAddress(testStorage.getClusterName()))
+                        .withMessageCount(testStorage.getMessageCount())
+                        .withAuthentication(ClientsAuthentication.configureTls(testStorage.getClusterName(), testStorage.getUsername()))
+                        .build();
+
+        KubeResourceManager.get().createResourceWithWait(
+                cmProducerConsumer.getProducer().getJob(),
+                cmProducerConsumer.getConsumer().getJob()
+        );
+
+        ClientUtils.waitForClientsSuccess(
+                testStorage.getNamespaceName(),
+                testStorage.getConsumerName(),
+                testStorage.getProducerName(),
+                testStorage.getMessageCount()
+        );
+
+        LOGGER.info("TLS producer/consumer successfully exchanged {} messages after switching back to cert-manager CA",
+                testStorage.getMessageCount());
     }
 
     @BeforeAll

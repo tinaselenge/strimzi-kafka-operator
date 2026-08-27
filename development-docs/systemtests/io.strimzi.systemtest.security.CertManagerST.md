@@ -30,3 +30,45 @@
 
 * [security](labels/security.md)
 
+
+## testMigrationBetweenCertManagerAndCustomCa
+
+**Description:** Test verifying switch between cert-manager CA to custom CA. A Kafka cluster is deployed with cert-manager cluster CA, then switched to a user-provided custom CA and finally switched back to cert-manager. At each transition the cluster must remain operational and certificates must match the expected CA.
+
+**Steps:**
+
+| Step | Action | Result |
+| - | - | - |
+| 1. | Deploy Kafka with cert-manager cluster CA. | Kafka cluster reaches ready state with cert-manager CA. |
+| 2. | Pause reconciliation, replace cluster CA secrets with custom CA, edit Kafka CR, resume. | Kafka CR and secrets are updated atomically. |
+| 3. | Wait for broker pods to roll twice (trust new CA, then re-issue certs). | All broker pods have new UIDs after both rolling updates. |
+| 4. | Verify broker certificates are signed by the custom CA, not cert-manager. | Broker certificate issuer DN does not match cert-manager CA subject DN. |
+| 5. | Produce and consume messages over TLS after switching to custom CA. | Messages are successfully produced and consumed. |
+| 6. | Edit the Kafka CR to switch cluster CA back to cert-manager. | Kafka CR is updated. |
+| 7. | Wait for broker pods to roll twice (trust new CA, then re-issue certs). | All broker pods have new UIDs after both rolling updates. |
+| 8. | Verify broker certificates are signed by the cert-manager CA. | Broker certificate issuer DN matches cert-manager CA subject DN. |
+| 9. | Produce and consume messages over TLS after switching back to cert-manager. | Messages are successfully produced and consumed. |
+
+**Labels:**
+
+* [security](labels/security.md)
+
+
+## testMigrationBetweenStrimziAndCertManagerCa
+
+**Description:** Test verifying switch from Strimzi-managed CA to cert-manager CA. A Kafka cluster is first deployed with the default Strimzi-managed CA, then switched to cert-manager by editing the Kafka CR. At each transition the cluster must remain operational and certificates must match the expected CA.
+
+**Steps:**
+
+| Step | Action | Result |
+| - | - | - |
+| 1. | Deploy Kafka with default Strimzi-managed CA. | Kafka cluster reaches ready state. |
+| 2. | Create the cert-manager CA cert Secret and edit the Kafka CR to switch cluster CA to cert-manager. | Kafka CR is updated. |
+| 3. | Wait for broker pods to roll twice (trust new CA, then re-issue certs). | All broker pods have new UIDs after both rolling updates. |
+| 4. | Verify broker certificates are signed by the cert-manager CA. | Broker certificate issuer DN matches cert-manager CA subject DN. |
+| 5. | Produce and consume messages over TLS after switching to cert-manager. | Messages are successfully produced and consumed. |
+
+**Labels:**
+
+* [security](labels/security.md)
+
